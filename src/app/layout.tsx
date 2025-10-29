@@ -3,7 +3,7 @@ import { Inter } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
-import { Sidebar, SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { ThemeToggle } from "@/components/theme-toggle";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
@@ -28,12 +28,11 @@ export default function RootLayout({
           disableTransitionOnChange
         >
           <SidebarProvider>
-            <Sidebar>
-              <ThemeToggle />
-            </Sidebar>
+            {/* The sidebar is now part of the page content */}
             <SidebarInset>
               {children}
             </SidebarInset>
+            <ThemeToggle /> 
           </SidebarProvider>
           <Toaster />
         </ThemeProvider>

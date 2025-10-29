@@ -14,11 +14,13 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff } from "lucide-react";
+import { Camera, CameraOff, Wifi, WifiOff, Settings, Power, PowerOff } from "lucide-react";
 import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
+import { Sidebar, SidebarContent, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarTrigger } from "@/components/ui/sidebar";
+import { Label } from "@/components/ui/label";
 
 type Prediction = {
   label: "Plastic" | "Metal" | "Paper";
@@ -27,43 +29,81 @@ type Prediction = {
 
 type MqttStatus = "Connected" | "Disconnected" | "Connecting" | "Error";
 
-const MQTT_BROKER_URL = "wss://broker.hivemq.com:8081/mqtt";
-const MQTT_TOPIC = "trash/classification";
 const CONFIDENCE_THRESHOLD = 0.8;
 const CLASSIFICATION_INTERVAL = 1000;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
+const INACTIVITY_TIMEOUT = 60000; // 1 minute
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
   const [mqttStatus, setMqttStatus] = useState<MqttStatus>("Disconnected");
+  const [isHibernating, setIsHibernating] = useState(false);
+
+  // MQTT Settings
+  const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8081/mqtt");
+  const [mqttTopic, setMqttTopic] = useState("trash/classification");
+
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const mqttClientRef = useRef<MqttClient | null>(null);
   const predictionIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { toast } = useToast();
+  
+  // Load MQTT settings from localStorage on initial render
+  useEffect(() => {
+    const savedBrokerUrl = localStorage.getItem("mqttBrokerUrl");
+    const savedMqttTopic = localStorage.getItem("mqttTopic");
+    if (savedBrokerUrl) setMqttBrokerUrl(savedBrokerUrl);
+    if (savedMqttTopic) setMqttTopic(savedMqttTopic);
+  }, []);
+  
+  // Save MQTT settings to localStorage whenever they change
+  const handleMqttBrokerUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newUrl = e.target.value;
+    setMqttBrokerUrl(newUrl);
+    localStorage.setItem("mqttBrokerUrl", newUrl);
+  };
+
+  const handleMqttTopicChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const newTopic = e.target.value;
+    setMqttTopic(newTopic);
+    localStorage.setItem("mqttTopic", newTopic);
+  };
+
 
   const connectToMqtt = useCallback(() => {
-    if (mqttClientRef.current?.connected || mqttClientRef.current?.reconnecting) return;
+    if (mqttClientRef.current?.connected || mqttClientRef.current?.reconnecting) {
+        // If already connected or trying, disconnect first to apply new settings
+        mqttClientRef.current.end(true, () => {
+            setMqttStatus("Disconnected");
+            // Reconnect will be called by the button click again or by effect
+        });
+    }
 
     setMqttStatus("Connecting");
-    const client = mqtt.connect(MQTT_BROKER_URL, {
+    const client = mqtt.connect(mqttBrokerUrl, {
       clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
     });
     mqttClientRef.current = client;
 
-    client.on("connect", () => setMqttStatus("Connected"));
+    client.on("connect", () => {
+      setMqttStatus("Connected")
+      toast({ title: "MQTT Connected", description: `Connected to ${mqttBrokerUrl}`});
+    });
     client.on("error", (err) => {
       console.error("MQTT Connection Error:", err);
       setMqttStatus("Error");
+      toast({ variant: "destructive", title: "MQTT Error", description: err.message });
       client.end();
     });
     client.on("reconnect", () => setMqttStatus("Connecting"));
     client.on("close", () => setMqttStatus("Disconnected"));
-  }, []);
+  }, [mqttBrokerUrl, toast]);
 
   const disconnectFromMqtt = useCallback(() => {
     if (mqttClientRef.current) {
@@ -71,6 +111,22 @@ export default function SortVisionClient() {
       mqttClientRef.current = null;
       setMqttStatus("Disconnected");
     }
+  }, []);
+  
+  const resetInactivityTimer = useCallback(() => {
+    if (inactivityTimerRef.current) {
+        clearTimeout(inactivityTimerRef.current);
+    }
+    setIsHibernating(false);
+    inactivityTimerRef.current = setTimeout(() => {
+        setIsHibernating(true);
+        // We don't stop the camera, just the classification to save CPU
+        if (predictionIntervalRef.current) {
+            clearInterval(predictionIntervalRef.current);
+            predictionIntervalRef.current = null;
+        }
+        setPrediction(null);
+    }, INACTIVITY_TIMEOUT);
   }, []);
 
   const startCamera = async () => {
@@ -85,6 +141,7 @@ export default function SortVisionClient() {
         }
         streamRef.current = stream;
         setIsCameraOn(true);
+        resetInactivityTimer();
       } catch (error) {
         console.error("Error accessing camera:", error);
         toast({
@@ -106,6 +163,8 @@ export default function SortVisionClient() {
     streamRef.current = null;
     setIsCameraOn(false);
     setPrediction(null);
+    setIsHibernating(false);
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
   };
 
   const toggleCamera = () => {
@@ -117,6 +176,7 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(() => {
+    resetInactivityTimer();
     const labels: Prediction["label"][] = ["Plastic", "Metal", "Paper"];
     const label = labels[Math.floor(Math.random() * labels.length)];
     const confidence = Math.random();
@@ -126,15 +186,17 @@ export default function SortVisionClient() {
 
     if (confidence > CONFIDENCE_THRESHOLD) {
       if (mqttClientRef.current?.connected) {
-        mqttClientRef.current.publish(MQTT_TOPIC, label);
+        mqttClientRef.current.publish(mqttTopic, label);
       }
       setLastClassifications((prev) => [...prev, newPrediction]);
     }
-  }, []);
+  }, [resetInactivityTimer, mqttTopic]);
 
   useEffect(() => {
-    if (isCameraOn) {
-      predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL);
+    if (isCameraOn && !isHibernating) {
+      if (!predictionIntervalRef.current) {
+        predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL);
+      }
     } else {
       if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
@@ -147,7 +209,7 @@ export default function SortVisionClient() {
         clearInterval(predictionIntervalRef.current);
       }
     };
-  }, [isCameraOn, runClassification]);
+  }, [isCameraOn, isHibernating, runClassification]);
 
   useEffect(() => {
     const checkModelPerformance = async () => {
@@ -190,9 +252,12 @@ export default function SortVisionClient() {
   }, [lastClassifications, toast]);
   
   useEffect(() => {
+    // Initial connection attempt
     connectToMqtt();
+    
+    // Cleanup on unmount
     return () => disconnectFromMqtt();
-  }, [connectToMqtt, disconnectFromMqtt]);
+  }, []); // Note: connectToMqtt is not a dependency to prevent reconnects on setting changes
 
   const getMqttBadgeVariant = () => {
     switch (mqttStatus) {
@@ -222,7 +287,7 @@ export default function SortVisionClient() {
         </>
       ) : (
         <p className="text-lg text-white/90 shadow-md">
-          {isCameraOn ? "Analyzing..." : "Camera is off"}
+          {isCameraOn ? (isHibernating ? "Hibernating..." : "Analyzing...") : "Camera is off"}
         </p>
       )}
     </div>
@@ -243,57 +308,87 @@ export default function SortVisionClient() {
   };
 
   return (
-    <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20">
-      <CardHeader className="flex-row items-center justify-between">
-        <div>
-          <CardTitle className="text-2xl font-bold">SortVision</CardTitle>
-          <CardDescription>Futuristic AI Trash Sorting</CardDescription>
-        </div>
-        <Badge variant={getMqttBadgeVariant()} className="gap-2 text-xs">
-          MQTT: {mqttStatus}
-        </Badge>
-      </CardHeader>
-      <CardContent>
-        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
-            <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border">
-            <video
-                ref={videoRef}
-                className="h-full w-full object-cover"
-                playsInline
-                muted
-                autoPlay
-            />
-            {!isCameraOn && (
-                <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
-                    <CameraOff className="h-16 w-16 text-muted-foreground" />
-                    <p className="mt-2 text-muted-foreground">Camera is off</p>
-                </div>
-            )}
-            <PredictionDisplay />
+    <>
+      <Sidebar>
+        <SidebarHeader>
+          <div className="flex items-center gap-2">
+            <SidebarTrigger/>
+            <h2 className="text-lg font-semibold">Settings</h2>
+          </div>
+        </SidebarHeader>
+        <SidebarContent className="p-0">
+          <SidebarGroup>
+            <SidebarGroupLabel>MQTT Configuration</SidebarGroupLabel>
+            <div className="space-y-4 p-2">
+              <div className="space-y-2">
+                <Label htmlFor="mqtt-broker">Broker URL</Label>
+                <SidebarInput id="mqtt-broker" value={mqttBrokerUrl} onChange={handleMqttBrokerUrlChange} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="mqtt-topic">Topic</Label>
+                <SidebarInput id="mqtt-topic" value={mqttTopic} onChange={handleMqttTopicChange} />
+              </div>
+               <Button onClick={connectToMqtt} disabled={mqttStatus === "Connecting"} className="w-full">
+                {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
+                {mqttStatus === 'Connected' ? 'Reconnect' : 'Connect'}
+              </Button>
             </div>
-            <div className="hidden md:flex flex-col items-center justify-center p-4">
-                {prediction ? (
-                    <ItemIcon {...prediction} />
-                ) : (
-                    <div className="flex flex-col items-center gap-2">
-                        <PlasticIcon className="h-10 w-10 text-muted-foreground" />
-                        <MetalIcon className="h-10 w-10 text-muted-foreground" />
-                        <PaperIcon className="h-10 w-10 text-muted-foreground" />
-                    </div>
-                )}
-            </div>
-        </div>
-      </CardContent>
-      <CardFooter className="flex flex-col sm:flex-row sm:justify-end gap-2">
-          <Button onClick={toggleCamera} variant="outline" className="w-full sm:w-auto">
-            {isCameraOn ? <CameraOff /> : <Camera />}
-            {isCameraOn ? "Stop Camera" : "Start Camera"}
-          </Button>
-          <Button onClick={connectToMqtt} disabled={mqttStatus === "Connected" || mqttStatus === "Connecting"} className="w-full sm:w-auto">
-            {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
-            Reconnect MQTT
-          </Button>
-      </CardFooter>
-    </Card>
+          </SidebarGroup>
+        </SidebarContent>
+        {/* ThemeToggle remains in the footer */}
+      </Sidebar>
+      <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20">
+        <CardHeader className="flex-row items-center justify-between">
+          <div>
+            <CardTitle className="text-2xl font-bold">SortVision</CardTitle>
+            <CardDescription>Futuristic AI Trash Sorting</CardDescription>
+          </div>
+          <div className="flex items-center gap-2">
+            {isHibernating && <Badge variant="secondary" className="gap-2 text-xs"><PowerOff/> Hibernating</Badge>}
+            <Badge variant={getMqttBadgeVariant()} className="gap-2 text-xs">
+              MQTT: {mqttStatus}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
+              <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border">
+              <video
+                  ref={videoRef}
+                  className="h-full w-full object-cover"
+                  playsInline
+                  muted
+                  autoPlay
+              />
+              {(!isCameraOn || isHibernating) && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
+                      {isHibernating ? <PowerOff className="h-16 w-16 text-muted-foreground" /> : <CameraOff className="h-16 w-16 text-muted-foreground" />}
+                      <p className="mt-2 text-muted-foreground">{isHibernating ? "Hibernating" : "Camera is off"}</p>
+                      {isHibernating && <Button variant="ghost" size="sm" className="mt-2" onClick={resetInactivityTimer}>Wake up</Button>}
+                  </div>
+              )}
+              <PredictionDisplay />
+              </div>
+              <div className="hidden md:flex flex-col items-center justify-center p-4">
+                  {prediction ? (
+                      <ItemIcon {...prediction} />
+                  ) : (
+                      <div className="flex flex-col items-center gap-2">
+                          <PlasticIcon className="h-10 w-10 text-muted-foreground" />
+                          <MetalIcon className="h-10 w-10 text-muted-foreground" />
+                          <PaperIcon className="h-10 w-10 text-muted-foreground" />
+                      </div>
+                  )}
+              </div>
+          </div>
+        </CardContent>
+        <CardFooter className="flex flex-col sm:flex-row sm:justify-end gap-2">
+            <Button onClick={toggleCamera} variant="outline" className="w-full sm:w-auto">
+              {isCameraOn ? <CameraOff /> : <Camera />}
+              {isCameraOn ? "Stop Camera" : "Start Camera"}
+            </Button>
+        </CardFooter>
+      </Card>
+    </>
   );
 }
