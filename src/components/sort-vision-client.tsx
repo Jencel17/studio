@@ -111,7 +111,7 @@ export default function SortVisionClient() {
             const options: IClientOptions = {
                 clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
                 reconnectPeriod: 5000,
-                connectTimeout: 10000,
+                connectTimeout: 20000,
             };
             const client = mqtt.connect(mqttBrokerUrl, options);
             mqttClientRef.current = client;
@@ -576,3 +576,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
