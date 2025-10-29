@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import type { MqttClient } from "mqtt";
+import type { MqttClient, IClientOptions } from "mqtt";
 import mqtt from "mqtt";
 import {
   Card,
@@ -14,7 +14,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff, PowerOff } from "lucide-react";
+import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone } from "lucide-react";
 import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
@@ -22,6 +22,7 @@ import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
+import { Switch } from "@/components/ui/switch";
 
 type Prediction = {
   label: "Plastic" | "Metal" | "Paper";
@@ -41,6 +42,7 @@ export default function SortVisionClient() {
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
   const [mqttStatus, setMqttStatus] = useState<MqttStatus>("Disconnected");
   const [isHibernating, setIsHibernating] = useState(false);
+  const [isWakeLockActive, setIsWakeLockActive] = useState(false);
 
   // MQTT Settings
   const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8081/mqtt");
@@ -52,6 +54,7 @@ export default function SortVisionClient() {
   const mqttClientRef = useRef<MqttClient | null>(null);
   const predictionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
 
   const { toast } = useToast();
   
@@ -77,39 +80,63 @@ export default function SortVisionClient() {
   };
 
   const connectToMqtt = useCallback(() => {
-    if (mqttClientRef.current?.connected || mqttClientRef.current?.reconnecting) {
-      mqttClientRef.current.end(true);
-    }
-
-    setMqttStatus("Connecting");
-    try {
-      const client = mqtt.connect(mqttBrokerUrl, {
-        clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
-        reconnectPeriod: 5000,
-        connectTimeout: 10000,
-      });
-      mqttClientRef.current = client;
-
-      client.on("connect", () => {
-        setMqttStatus("Connected")
-        toast({ title: "MQTT Connected", description: `Connected to ${mqttBrokerUrl}`});
-      });
-      client.on("error", (err) => {
-        console.error("MQTT Connection Error:", err);
-        setMqttStatus("Error");
-        toast({ variant: "destructive", title: "MQTT Error", description: "Failed to connect. Check URL or network." });
-        client.end();
-      });
-      client.on("reconnect", () => setMqttStatus("Connecting"));
-      client.on("close", () => {
-        if (mqttStatus !== 'Connecting') {
-            setMqttStatus("Disconnected");
+    if (mqttClientRef.current) {
+        if (mqttClientRef.current.connected || mqttClientRef.current.reconnecting) {
+            console.log("MQTT client already connecting/connected. Ending old session before creating a new one.");
+            mqttClientRef.current.end(true, () => {
+                console.log("Previous MQTT session ended.");
+                // Ensure a clean state before reconnecting
+                mqttClientRef.current = null;
+                setMqttStatus("Disconnected");
+                // Proceed to connect in the next block.
+                proceedWithConnection();
+            });
+            return; // Exit and wait for the old connection to close.
         }
-      });
-    } catch (error) {
-        console.error("MQTT Initialization Error:", error);
-        setMqttStatus("Error");
-        toast({ variant: "destructive", title: "MQTT Error", description: "Invalid broker URL." });
+    }
+    proceedWithConnection();
+
+
+    function proceedWithConnection() {
+        setMqttStatus("Connecting");
+        try {
+            const options: IClientOptions = {
+                clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
+                reconnectPeriod: 5000,
+                connectTimeout: 10000,
+            };
+            const client = mqtt.connect(mqttBrokerUrl, options);
+            mqttClientRef.current = client;
+
+            client.on("connect", () => {
+                setMqttStatus("Connected");
+                toast({ title: "MQTT Connected", description: `Connected to ${mqttBrokerUrl}` });
+            });
+
+            client.on("error", (err) => {
+                console.error("MQTT Connection Error:", err);
+                if (mqttStatus !== 'Error') {
+                    setMqttStatus("Error");
+                    toast({ variant: "destructive", title: "MQTT Error", description: "Failed to connect. Check URL or network." });
+                    client.end();
+                }
+            });
+
+            client.on("reconnect", () => {
+                setMqttStatus("Connecting");
+            });
+
+            client.on("close", () => {
+                // Only set to disconnected if we are not in the middle of an intentional connection attempt
+                 if (client === mqttClientRef.current) {
+                    setMqttStatus("Disconnected");
+                 }
+            });
+        } catch (error) {
+            console.error("MQTT Initialization Error:", error);
+            setMqttStatus("Error");
+            toast({ variant: "destructive", title: "MQTT Error", description: "Invalid broker URL." });
+        }
     }
   }, [mqttBrokerUrl, toast, mqttStatus]);
 
@@ -118,8 +145,8 @@ export default function SortVisionClient() {
     if (mqttClientRef.current) {
       mqttClientRef.current.end();
       mqttClientRef.current = null;
-      setMqttStatus("Disconnected");
     }
+    setMqttStatus("Disconnected");
   }, []);
   
   const resetInactivityTimer = useCallback(() => {
@@ -136,6 +163,43 @@ export default function SortVisionClient() {
         setPrediction(null);
     }, INACTIVITY_TIMEOUT);
   }, [isHibernating]);
+
+  const requestWakeLock = async () => {
+    if ('wakeLock' in navigator) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+        setIsWakeLockActive(true);
+        wakeLockRef.current.addEventListener('release', () => {
+          setIsWakeLockActive(false);
+        });
+        toast({ title: 'Screen lock activated', description: 'Your screen will stay awake.' });
+      } catch (err: any) {
+        console.error(`${err.name}, ${err.message}`);
+        setIsWakeLockActive(false);
+        toast({ variant: 'destructive', title: 'Wake Lock Error', description: 'Could not activate screen wake lock.' });
+      }
+    } else {
+      toast({ variant: 'destructive', title: 'Wake Lock Not Supported', description: 'Your browser does not support this feature.' });
+    }
+  };
+
+  const releaseWakeLock = async () => {
+    if (wakeLockRef.current) {
+      await wakeLockRef.current.release();
+      wakeLockRef.current = null;
+      setIsWakeLockActive(false);
+      toast({ title: 'Screen lock deactivated', description: 'Your screen will now turn off normally.' });
+    }
+  };
+
+  const handleWakeLockToggle = (checked: boolean) => {
+    if (checked) {
+      requestWakeLock();
+    } else {
+      releaseWakeLock();
+    }
+  };
+
 
   const startCamera = async () => {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -173,6 +237,7 @@ export default function SortVisionClient() {
     setPrediction(null);
     setIsHibernating(false);
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    releaseWakeLock();
   };
 
   const toggleCamera = () => {
@@ -271,12 +336,12 @@ export default function SortVisionClient() {
   }, [lastClassifications, toast]);
   
   useEffect(() => {
-    // Initial connection attempt
     connectToMqtt();
-    
-    // Cleanup on unmount
-    return () => disconnectFromMqtt();
-  }, [connectToMqtt, disconnectFromMqtt]);
+    return () => {
+      disconnectFromMqtt();
+      releaseWakeLock();
+    };
+  }, []);
 
   const getMqttBadgeVariant = () => {
     switch (mqttStatus) {
@@ -353,6 +418,22 @@ export default function SortVisionClient() {
               </Button>
             </div>
           </SidebarGroup>
+          <SidebarGroup>
+            <SidebarGroupLabel>Device Settings</SidebarGroupLabel>
+            <div className="space-y-4 p-4">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="keep-awake" className="flex items-center gap-2">
+                  <Smartphone className="h-4 w-4" />
+                  Keep Screen Awake
+                </Label>
+                <Switch
+                  id="keep-awake"
+                  checked={isWakeLockActive}
+                  onCheckedChange={handleWakeLockToggle}
+                />
+              </div>
+            </div>
+          </SidebarGroup>
         </SidebarContent>
         <SidebarFooter>
           <ThemeToggle />
@@ -405,5 +486,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
