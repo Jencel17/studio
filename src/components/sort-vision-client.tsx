@@ -47,7 +47,7 @@ export default function SortVisionClient() {
   const { toast } = useToast();
 
   const connectToMqtt = useCallback(() => {
-    if (mqttClientRef.current?.connected || mqttStatus === "Connecting") return;
+    if (mqttClientRef.current?.connected || mqttClientRef.current?.reconnecting) return;
 
     setMqttStatus("Connecting");
     const client = mqtt.connect(MQTT_BROKER_URL, {
@@ -63,7 +63,7 @@ export default function SortVisionClient() {
     });
     client.on("reconnect", () => setMqttStatus("Connecting"));
     client.on("close", () => setMqttStatus("Disconnected"));
-  }, [mqttStatus]);
+  }, []);
 
   const disconnectFromMqtt = useCallback(() => {
     if (mqttClientRef.current) {
