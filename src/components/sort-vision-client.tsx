@@ -43,6 +43,8 @@ export default function SortVisionClient() {
   const [mqttStatus, setMqttStatus] = useState<MqttStatus>("Disconnected");
   const [isHibernating, setIsHibernating] = useState(false);
   const [isWakeLockActive, setIsWakeLockActive] = useState(false);
+  const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
+
 
   // MQTT Settings
   const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8081/mqtt");
@@ -143,7 +145,7 @@ export default function SortVisionClient() {
 
   const disconnectFromMqtt = useCallback(() => {
     if (mqttClientRef.current) {
-      mqttClientRef.current.end();
+      mqttClientRef.current.end(true);
       mqttClientRef.current = null;
     }
     setMqttStatus("Disconnected");
@@ -164,39 +166,42 @@ export default function SortVisionClient() {
     }, INACTIVITY_TIMEOUT);
   }, [isHibernating]);
 
-  const requestWakeLock = async () => {
-    if ('wakeLock' in navigator) {
-      try {
-        wakeLockRef.current = await navigator.wakeLock.request('screen');
-        setIsWakeLockActive(true);
-        wakeLockRef.current.addEventListener('release', () => {
-          setIsWakeLockActive(false);
-        });
-        toast({ title: 'Screen lock activated', description: 'Your screen will stay awake.' });
-      } catch (err: any) {
-        console.error(`${err.name}, ${err.message}`);
-        setIsWakeLockActive(false);
-        toast({ variant: 'destructive', title: 'Wake Lock Error', description: 'Could not activate screen wake lock.' });
-      }
-    } else {
-      toast({ variant: 'destructive', title: 'Wake Lock Not Supported', description: 'Your browser does not support this feature.' });
-    }
-  };
-
-  const releaseWakeLock = async () => {
+  const releaseWakeLock = useCallback(async () => {
     if (wakeLockRef.current) {
       await wakeLockRef.current.release();
       wakeLockRef.current = null;
       setIsWakeLockActive(false);
-      toast({ title: 'Screen lock deactivated', description: 'Your screen will now turn off normally.' });
+      // We don't toast here as it can be called automatically
     }
-  };
+  }, []);
+
+  const requestWakeLock = useCallback(async () => {
+    if ('wakeLock' in navigator && wakeLockEnabled) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+        setIsWakeLockActive(true);
+        wakeLockRef.current.addEventListener('release', () => {
+          // The wake lock was released, so we set the state to false.
+          // The lock will be re-acquired automatically by the visibility change handler.
+          setIsWakeLockActive(false);
+          console.log('Wake Lock was released');
+        });
+        console.log('Wake Lock is active');
+      } catch (err: any) {
+        console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+        setIsWakeLockActive(false);
+      }
+    }
+  }, [wakeLockEnabled]);
 
   const handleWakeLockToggle = (checked: boolean) => {
+    setWakeLockEnabled(checked);
     if (checked) {
       requestWakeLock();
+      toast({ title: 'Screen lock enabled', description: 'Your screen will try to stay awake.' });
     } else {
       releaseWakeLock();
+      toast({ title: 'Screen lock disabled', description: 'Your screen will now turn off normally.' });
     }
   };
 
@@ -214,6 +219,9 @@ export default function SortVisionClient() {
         streamRef.current = stream;
         setIsCameraOn(true);
         resetInactivityTimer();
+        if(wakeLockEnabled) {
+          requestWakeLock();
+        }
       } catch (error) {
         console.error("Error accessing camera:", error);
         toast({
@@ -294,6 +302,19 @@ export default function SortVisionClient() {
       }
     };
   }, [isCameraOn, runClassification]);
+  
+  // Effect to handle visibility change for Wake Lock
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        requestWakeLock();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [requestWakeLock]);
 
   useEffect(() => {
     const checkModelPerformance = async () => {
@@ -341,7 +362,7 @@ export default function SortVisionClient() {
       disconnectFromMqtt();
       releaseWakeLock();
     };
-  }, []);
+  }, [disconnectFromMqtt, releaseWakeLock]);
 
   const getMqttBadgeVariant = () => {
     switch (mqttStatus) {
@@ -421,7 +442,7 @@ export default function SortVisionClient() {
                 </Label>
                 <Switch
                   id="keep-awake"
-                  checked={isWakeLockActive}
+                  checked={wakeLockEnabled}
                   onCheckedChange={handleWakeLockToggle}
                 />
               </div>
@@ -473,7 +494,7 @@ export default function SortVisionClient() {
         </CardContent>
         <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 items-center">
             <p className="text-xs text-muted-foreground">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle sidebar.</p>
-            <div className="flex gap-2 w-full sm:w-auto">
+            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
               <Button onClick={toggleCamera} variant="outline" className="w-full sm:w-auto">
                 {isCameraOn ? <CameraOff /> : <Camera />}
                 {isCameraOn ? "Stop Camera" : "Start Camera"}
