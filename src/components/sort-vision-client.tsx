@@ -82,19 +82,8 @@ export default function SortVisionClient() {
   };
 
   const connectToMqtt = useCallback(() => {
-    if (mqttClientRef.current && (mqttClientRef.current.connected || mqttClientRef.current.reconnecting)) {
-        console.log("MQTT client already connecting/connected. Ending old session before creating a new one.");
-        mqttClientRef.current.end(true, () => {
-            console.log("Previous MQTT session ended.");
-            mqttClientRef.current = null;
-            setMqttStatus("Disconnected");
-            proceedWithConnection();
-        });
-        return;
-    }
-    proceedWithConnection();
-
     function proceedWithConnection() {
+        if (mqttClientRef.current) return;
         setMqttStatus("Connecting");
         try {
             const options: IClientOptions = {
@@ -112,20 +101,24 @@ export default function SortVisionClient() {
 
             client.on("error", (err) => {
                 console.error("MQTT Connection Error:", err);
-                if (mqttStatus !== 'Error') {
+                if (mqttClientRef.current === client) {
                     setMqttStatus("Error");
                     toast({ variant: "destructive", title: "MQTT Error", description: "Failed to connect. Check URL or network." });
                     client.end(true); 
+                    mqttClientRef.current = null;
                 }
             });
             
             client.on("reconnect", () => {
-                setMqttStatus("Connecting");
+                if(mqttClientRef.current === client) {
+                    setMqttStatus("Connecting");
+                }
             });
 
             client.on("close", () => {
-                 if (!client.reconnecting) {
+                 if (mqttClientRef.current === client) {
                     setMqttStatus("Disconnected");
+                    mqttClientRef.current = null;
                  }
             });
         } catch (error) {
@@ -134,15 +127,24 @@ export default function SortVisionClient() {
             toast({ variant: "destructive", title: "MQTT Error", description: "Invalid broker URL." });
         }
     }
-  }, [mqttBrokerUrl, toast, mqttStatus]);
+    
+    if (mqttClientRef.current) {
+      mqttClientRef.current.end(true, proceedWithConnection);
+    } else {
+      proceedWithConnection();
+    }
+  }, [mqttBrokerUrl, toast]);
 
 
   const disconnectFromMqtt = useCallback(() => {
     if (mqttClientRef.current) {
-      mqttClientRef.current.end(true);
-      mqttClientRef.current = null;
+      mqttClientRef.current.end(true, () => {
+        if(mqttClientRef.current) {
+            mqttClientRef.current = null;
+            setMqttStatus("Disconnected");
+        }
+      });
     }
-    setMqttStatus("Disconnected");
   }, []);
   
   const resetInactivityTimer = useCallback(() => {
@@ -360,7 +362,8 @@ export default function SortVisionClient() {
       disconnectFromMqtt();
       stopCamera();
     };
-  }, [disconnectFromMqtt, stopCamera, connectToMqtt]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const getMqttBadgeVariant = () => {
     switch (mqttStatus) {
