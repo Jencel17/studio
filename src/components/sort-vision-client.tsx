@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -14,15 +15,18 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone } from "lucide-react";
+import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal } from "lucide-react";
 import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
-import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter } from "@/components/ui/sidebar";
+import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarTitle } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Switch } from "@/components/ui/switch";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { Separator } from "@/components/ui/separator";
 
 type Prediction = {
   label: "Plastic" | "Metal" | "Paper";
@@ -31,10 +35,16 @@ type Prediction = {
 
 type MqttStatus = "Connected" | "Disconnected" | "Connecting" | "Error";
 
+type LogEntry = {
+  timestamp: string;
+  message: string;
+};
+
 const CONFIDENCE_THRESHOLD = 0.8;
 const CLASSIFICATION_INTERVAL = 1000;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
+const MAX_LOGS = 100;
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -44,6 +54,8 @@ export default function SortVisionClient() {
   const [isHibernating, setIsHibernating] = useState(false);
   const [isWakeLockActive, setIsWakeLockActive] = useState(false);
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
+  const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
 
 
   // MQTT Settings
@@ -60,13 +72,22 @@ export default function SortVisionClient() {
 
   const { toast } = useToast();
   
+  const addLog = useCallback((message: string) => {
+    const newLog: LogEntry = {
+        timestamp: new Date().toLocaleTimeString(),
+        message,
+    };
+    setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
+  }, []);
+
   // Load MQTT settings from localStorage on initial render
   useEffect(() => {
     const savedBrokerUrl = localStorage.getItem("mqttBrokerUrl");
     const savedMqttTopic = localStorage.getItem("mqttTopic");
     if (savedBrokerUrl) setMqttBrokerUrl(savedBrokerUrl);
     if (savedMqttTopic) setMqttTopic(savedMqttTopic);
-  }, []);
+    addLog("App initialized.");
+  }, [addLog]);
   
   // Save MQTT settings to localStorage whenever they change
   const handleMqttBrokerUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -85,6 +106,7 @@ export default function SortVisionClient() {
     function proceedWithConnection() {
         if (mqttClientRef.current) return;
         setMqttStatus("Connecting");
+        addLog(`Connecting to MQTT broker at ${mqttBrokerUrl}...`);
         try {
             const options: IClientOptions = {
                 clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
@@ -96,6 +118,7 @@ export default function SortVisionClient() {
 
             client.on("connect", () => {
                 setMqttStatus("Connected");
+                addLog("MQTT Connected.");
                 toast({ title: "MQTT Connected", description: `Connected to ${mqttBrokerUrl}` });
             });
 
@@ -103,6 +126,7 @@ export default function SortVisionClient() {
                 console.error("MQTT Connection Error:", err);
                 if (mqttClientRef.current === client) {
                     setMqttStatus("Error");
+                    addLog(`MQTT Error: ${err.message}`);
                     toast({ variant: "destructive", title: "MQTT Error", description: "Failed to connect. Check URL or network." });
                     client.end(true); 
                     mqttClientRef.current = null;
@@ -112,32 +136,37 @@ export default function SortVisionClient() {
             client.on("reconnect", () => {
                 if(mqttClientRef.current === client) {
                     setMqttStatus("Connecting");
+                    addLog("MQTT Reconnecting...");
                 }
             });
 
             client.on("close", () => {
                  if (mqttClientRef.current === client) {
                     setMqttStatus("Disconnected");
+                    addLog("MQTT Disconnected.");
                     mqttClientRef.current = null;
                  }
             });
-        } catch (error) {
+        } catch (error: any) {
             console.error("MQTT Initialization Error:", error);
             setMqttStatus("Error");
+            addLog(`MQTT Initialization Error: ${error.message}`);
             toast({ variant: "destructive", title: "MQTT Error", description: "Invalid broker URL." });
         }
     }
     
     if (mqttClientRef.current) {
+      addLog("Ending current MQTT connection to reconnect.");
       mqttClientRef.current.end(true, proceedWithConnection);
     } else {
       proceedWithConnection();
     }
-  }, [mqttBrokerUrl, toast]);
+  }, [mqttBrokerUrl, toast, addLog]);
 
 
   const disconnectFromMqtt = useCallback(() => {
     if (mqttClientRef.current) {
+      addLog("Disconnecting from MQTT broker.");
       mqttClientRef.current.end(true, () => {
         if(mqttClientRef.current) {
             mqttClientRef.current = null;
@@ -145,22 +174,22 @@ export default function SortVisionClient() {
         }
       });
     }
-  }, []);
+  }, [addLog]);
   
   const resetInactivityTimer = useCallback(() => {
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
     
-    // If we are hibernating and we get a reset, it means there's activity.
-    // So, we wake up.
     if (isHibernating) {
       setIsHibernating(false);
+      addLog("Activity detected, waking from hibernation.");
     }
 
     inactivityTimerRef.current = setTimeout(() => {
         setIsHibernating(true);
         setPrediction(null);
+        addLog("Inactivity detected, entering hibernation mode.");
     }, INACTIVITY_TIMEOUT);
-  }, [isHibernating]);
+  }, [isHibernating, addLog]);
 
   const releaseWakeLock = useCallback(async () => {
     if (wakeLockRef.current) {
@@ -168,31 +197,34 @@ export default function SortVisionClient() {
         await wakeLockRef.current.release();
         wakeLockRef.current = null;
         setIsWakeLockActive(false);
-      } catch (error) {
+        addLog("Screen wake lock released.");
+      } catch (error: any) {
         console.error("Could not release wake lock:", error);
+        addLog(`Error releasing wake lock: ${error.message}`);
       }
     }
-  }, []);
+  }, [addLog]);
 
   const requestWakeLock = useCallback(async () => {
     if ('wakeLock' in navigator && wakeLockEnabled && !wakeLockRef.current) {
       try {
         wakeLockRef.current = await navigator.wakeLock.request('screen');
         setIsWakeLockActive(true);
+        addLog("Screen wake lock acquired.");
         wakeLockRef.current.addEventListener('release', () => {
-          // The wake lock was released, so we set the state to false.
-          // The lock will be re-acquired automatically by the visibility change handler if needed.
           wakeLockRef.current = null;
           setIsWakeLockActive(false);
+          addLog("Wake Lock was released by the system.");
           console.log('Wake Lock was released');
         });
         console.log('Wake Lock is active');
       } catch (err: any) {
         console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+        addLog(`Wake Lock Error: ${err.message}`);
         setIsWakeLockActive(false);
       }
     }
-  }, [wakeLockEnabled]);
+  }, [wakeLockEnabled, addLog]);
 
   const handleWakeLockToggle = (checked: boolean) => {
     setWakeLockEnabled(checked);
@@ -209,6 +241,7 @@ export default function SortVisionClient() {
   const startCamera = async () => {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       try {
+        addLog("Requesting camera access...");
         const stream = await navigator.mediaDevices.getUserMedia({
           video: { facingMode: "environment" },
         });
@@ -218,12 +251,14 @@ export default function SortVisionClient() {
         }
         streamRef.current = stream;
         setIsCameraOn(true);
+        addLog("Camera started successfully.");
         resetInactivityTimer();
         if(wakeLockEnabled) {
           requestWakeLock();
         }
-      } catch (error) {
+      } catch (error: any) {
         console.error("Error accessing camera:", error);
+        addLog(`Camera Error: ${error.message}`);
         toast({
           variant: "destructive",
           title: "Camera Error",
@@ -244,9 +279,10 @@ export default function SortVisionClient() {
     setIsCameraOn(false);
     setPrediction(null);
     setIsHibernating(false);
+    addLog("Camera stopped.");
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
     releaseWakeLock();
-  }, [releaseWakeLock]);
+  }, [releaseWakeLock, addLog]);
 
   const toggleCamera = () => {
     if (isCameraOn) {
@@ -257,16 +293,12 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(() => {
-    // This simulates activity detection. In a real scenario, this would be
-    // a lightweight motion detection before running the full classification.
-    // We'll use a random check to simulate this.
     const isActivityDetected = Math.random() > 0.5;
 
     if (isActivityDetected) {
       resetInactivityTimer();
     }
 
-    // Only run the heavy classification if not hibernating
     if (!isHibernating) {
         const labels: Prediction["label"][] = ["Plastic", "Metal", "Paper"];
         const label = labels[Math.floor(Math.random() * labels.length)];
@@ -276,13 +308,15 @@ export default function SortVisionClient() {
         setPrediction(newPrediction);
 
         if (confidence > CONFIDENCE_THRESHOLD) {
+            addLog(`Classified: ${label} (Confidence: ${(confidence * 100).toFixed(0)}%)`);
             if (mqttClientRef.current?.connected) {
                 mqttClientRef.current.publish(mqttTopic, label);
+                addLog(`Published '${label}' to MQTT topic '${mqttTopic}'`);
             }
             setLastClassifications((prev) => [...prev, newPrediction]);
         }
     }
-  }, [resetInactivityTimer, mqttTopic, isHibernating]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog]);
 
   useEffect(() => {
     if (isCameraOn) {
@@ -303,7 +337,6 @@ export default function SortVisionClient() {
     };
   }, [isCameraOn, runClassification]);
   
-  // Effect to handle visibility change for Wake Lock
   useEffect(() => {
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'visible' && isCameraOn) {
@@ -319,6 +352,7 @@ export default function SortVisionClient() {
   useEffect(() => {
     const checkModelPerformance = async () => {
       if (lastClassifications.length >= MODEL_SWAP_CHECK_THRESHOLD) {
+        addLog(`Checking model performance with ${lastClassifications.length} classifications.`);
         const classificationsToAnalyze = [...lastClassifications];
         setLastClassifications([]);
 
@@ -338,23 +372,27 @@ export default function SortVisionClient() {
             }
         }
         
+        addLog(`Avg scores: ${JSON.stringify(averageConfidenceScores)}`);
         const result = await handleModelSwapCheck({
             averageConfidenceScores,
             numClassifications: classificationsToAnalyze.length,
         });
 
         if (result.shouldSuggestSwap) {
+          addLog(`AI Suggestion: ${result.reason}`);
           toast({
             title: "Model Performance Suggestion",
             description: result.reason,
             duration: 9000,
           });
+        } else {
+            addLog(`AI Suggestion: No model swap needed. ${result.reason}`);
         }
       }
     };
 
     checkModelPerformance();
-  }, [lastClassifications, toast]);
+  }, [lastClassifications, toast, addLog]);
   
   useEffect(() => {
     connectToMqtt();
@@ -417,7 +455,7 @@ export default function SortVisionClient() {
     <>
       <Sidebar>
         <SidebarHeader>
-          <CardTitle className="px-2">Settings</CardTitle>
+          <SidebarTitle>Settings</SidebarTitle>
         </SidebarHeader>
         <SidebarContent className="p-0">
           <SidebarGroup>
@@ -504,9 +542,37 @@ export default function SortVisionClient() {
                 {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
                 {mqttStatus === 'Connected' ? 'Reconnect' : mqttStatus === "Connecting" ? 'Connecting...' : 'Connect'}
               </Button>
+               <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="w-full sm:w-auto">
+                <Terminal />
+                Console
+              </Button>
             </div>
         </CardFooter>
       </Card>
+      <Sheet open={isConsoleOpen} onOpenChange={setIsConsoleOpen}>
+        <SheetContent side="bottom" className="h-1/2 flex flex-col">
+            <SheetHeader>
+                <SheetTitle>Console Logs</SheetTitle>
+                <SheetDescription>
+                    Real-time logs from the application.
+                </SheetDescription>
+            </SheetHeader>
+            <Separator />
+            <ScrollArea className="flex-1 my-4">
+                <div className="p-4 font-mono text-xs">
+                    {logs.map((log, index) => (
+                        <p key={index}>
+                           <span className="text-muted-foreground/50">{log.timestamp}</span>
+                           <span className="ml-2">{log.message}</span>
+                        </p>
+                    ))}
+                </div>
+            </ScrollArea>
+            <SheetFooter>
+                <Button variant="outline" onClick={() => setLogs([])}>Clear Logs</Button>
+            </SheetFooter>
+        </SheetContent>
+      </Sheet>
     </>
   );
 }

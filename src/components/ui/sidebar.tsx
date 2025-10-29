@@ -365,6 +365,21 @@ const SidebarHeader = React.forwardRef<
 })
 SidebarHeader.displayName = "SidebarHeader"
 
+const SidebarTitle = React.forwardRef<
+  HTMLDivElement,
+  React.HTMLAttributes<HTMLDivElement>
+>(({ className, ...props }, ref) => (
+  <div
+    ref={ref}
+    className={cn(
+      "text-lg font-semibold leading-none tracking-tight p-2 group-data-[collapsible=icon]:hidden",
+      className
+    )}
+    {...props}
+  />
+))
+SidebarTitle.displayName = "SidebarTitle"
+
 const SidebarFooter = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div">
@@ -758,6 +773,7 @@ export {
   SidebarProvider,
   SidebarRail,
   SidebarSeparator,
+  SidebarTitle,
   SidebarTrigger,
   useSidebar,
 }
