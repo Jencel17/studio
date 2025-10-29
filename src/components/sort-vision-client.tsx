@@ -395,10 +395,7 @@ export default function SortVisionClient() {
     <>
       <Sidebar>
         <SidebarHeader>
-          <div className="flex items-center gap-2">
-            <SidebarTrigger/>
-            <h2 className="text-lg font-semibold">Settings</h2>
-          </div>
+          <h2 className="text-lg font-semibold px-2">Settings</h2>
         </SidebarHeader>
         <SidebarContent className="p-0">
           <SidebarGroup>
@@ -412,10 +409,6 @@ export default function SortVisionClient() {
                 <Label htmlFor="mqtt-topic">Topic</Label>
                 <SidebarInput id="mqtt-topic" value={mqttTopic} onChange={handleMqttTopicChange} placeholder="trash/classification" />
               </div>
-               <Button onClick={connectToMqtt} disabled={mqttStatus === "Connecting"} className="w-full">
-                {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
-                {mqttStatus === 'Connected' ? 'Reconnect' : mqttStatus === "Connecting" ? 'Connecting...' : 'Connect'}
-              </Button>
             </div>
           </SidebarGroup>
           <SidebarGroup>
@@ -439,13 +432,16 @@ export default function SortVisionClient() {
           <ThemeToggle />
         </SidebarFooter>
       </Sidebar>
-      <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20">
-        <CardHeader className="flex-row items-start justify-between">
-          <div>
+      <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20 relative">
+        <div className="absolute top-4 left-4 z-10">
+          <SidebarTrigger />
+        </div>
+        <CardHeader className="flex-row items-start justify-between text-center">
+          <div className="w-full">
             <CardTitle className="text-2xl font-bold">SortVision</CardTitle>
             <CardDescription>AI-Powered Waste Classification</CardDescription>
           </div>
-          <div className="flex items-center gap-2 pt-1">
+          <div className="absolute top-4 right-4 flex items-center gap-2 pt-1">
             {isHibernating && <Badge variant="secondary" className="gap-2 text-xs animate-pulse"><PowerOff className="h-3 w-3" /> Hibernating</Badge>}
             <Badge variant={getMqttBadgeVariant()} className="gap-2 text-xs">
               MQTT: {mqttStatus}
@@ -477,10 +473,16 @@ export default function SortVisionClient() {
         </CardContent>
         <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 items-center">
             <p className="text-xs text-muted-foreground">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle sidebar.</p>
-            <Button onClick={toggleCamera} variant="outline" className="w-full sm:w-auto">
-              {isCameraOn ? <CameraOff /> : <Camera />}
-              {isCameraOn ? "Stop Camera" : "Start Camera"}
-            </Button>
+            <div className="flex gap-2 w-full sm:w-auto">
+              <Button onClick={toggleCamera} variant="outline" className="w-full sm:w-auto">
+                {isCameraOn ? <CameraOff /> : <Camera />}
+                {isCameraOn ? "Stop Camera" : "Start Camera"}
+              </Button>
+              <Button onClick={connectToMqtt} disabled={mqttStatus === "Connecting"} variant="outline" className="w-full sm:w-auto">
+                {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
+                {mqttStatus === 'Connected' ? 'Reconnect' : mqttStatus === "Connecting" ? 'Connecting...' : 'Connect'}
+              </Button>
+            </div>
         </CardFooter>
       </Card>
     </>
