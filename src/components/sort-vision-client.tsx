@@ -14,13 +14,14 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff, Settings, Power, PowerOff } from "lucide-react";
+import { Camera, CameraOff, Wifi, WifiOff, PowerOff } from "lucide-react";
 import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
-import { Sidebar, SidebarContent, SidebarHeader, SidebarMenu, SidebarMenuItem, SidebarMenuButton, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarTrigger } from "@/components/ui/sidebar";
+import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
+import { ThemeToggle } from "@/components/theme-toggle";
 
 type Prediction = {
   label: "Plastic" | "Metal" | "Paper";
@@ -75,35 +76,43 @@ export default function SortVisionClient() {
     localStorage.setItem("mqttTopic", newTopic);
   };
 
-
   const connectToMqtt = useCallback(() => {
     if (mqttClientRef.current?.connected || mqttClientRef.current?.reconnecting) {
-        // If already connected or trying, disconnect first to apply new settings
-        mqttClientRef.current.end(true, () => {
-            setMqttStatus("Disconnected");
-            // Reconnect will be called by the button click again or by effect
-        });
+      mqttClientRef.current.end(true);
     }
 
     setMqttStatus("Connecting");
-    const client = mqtt.connect(mqttBrokerUrl, {
-      clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
-    });
-    mqttClientRef.current = client;
+    try {
+      const client = mqtt.connect(mqttBrokerUrl, {
+        clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
+        reconnectPeriod: 5000,
+        connectTimeout: 10000,
+      });
+      mqttClientRef.current = client;
 
-    client.on("connect", () => {
-      setMqttStatus("Connected")
-      toast({ title: "MQTT Connected", description: `Connected to ${mqttBrokerUrl}`});
-    });
-    client.on("error", (err) => {
-      console.error("MQTT Connection Error:", err);
-      setMqttStatus("Error");
-      toast({ variant: "destructive", title: "MQTT Error", description: err.message });
-      client.end();
-    });
-    client.on("reconnect", () => setMqttStatus("Connecting"));
-    client.on("close", () => setMqttStatus("Disconnected"));
-  }, [mqttBrokerUrl, toast]);
+      client.on("connect", () => {
+        setMqttStatus("Connected")
+        toast({ title: "MQTT Connected", description: `Connected to ${mqttBrokerUrl}`});
+      });
+      client.on("error", (err) => {
+        console.error("MQTT Connection Error:", err);
+        setMqttStatus("Error");
+        toast({ variant: "destructive", title: "MQTT Error", description: "Failed to connect. Check URL or network." });
+        client.end();
+      });
+      client.on("reconnect", () => setMqttStatus("Connecting"));
+      client.on("close", () => {
+        if (mqttStatus !== 'Connecting') {
+            setMqttStatus("Disconnected");
+        }
+      });
+    } catch (error) {
+        console.error("MQTT Initialization Error:", error);
+        setMqttStatus("Error");
+        toast({ variant: "destructive", title: "MQTT Error", description: "Invalid broker URL." });
+    }
+  }, [mqttBrokerUrl, toast, mqttStatus]);
+
 
   const disconnectFromMqtt = useCallback(() => {
     if (mqttClientRef.current) {
@@ -114,20 +123,19 @@ export default function SortVisionClient() {
   }, []);
   
   const resetInactivityTimer = useCallback(() => {
-    if (inactivityTimerRef.current) {
-        clearTimeout(inactivityTimerRef.current);
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    
+    // If we are hibernating and we get a reset, it means there's activity.
+    // So, we wake up.
+    if (isHibernating) {
+      setIsHibernating(false);
     }
-    setIsHibernating(false);
+
     inactivityTimerRef.current = setTimeout(() => {
         setIsHibernating(true);
-        // We don't stop the camera, just the classification to save CPU
-        if (predictionIntervalRef.current) {
-            clearInterval(predictionIntervalRef.current);
-            predictionIntervalRef.current = null;
-        }
         setPrediction(null);
     }, INACTIVITY_TIMEOUT);
-  }, []);
+  }, [isHibernating]);
 
   const startCamera = async () => {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -176,24 +184,35 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(() => {
-    resetInactivityTimer();
-    const labels: Prediction["label"][] = ["Plastic", "Metal", "Paper"];
-    const label = labels[Math.floor(Math.random() * labels.length)];
-    const confidence = Math.random();
-    const newPrediction: Prediction = { label, confidence };
+    // This simulates activity detection. In a real scenario, this would be
+    // a lightweight motion detection before running the full classification.
+    // We'll use a random check to simulate this.
+    const isActivityDetected = Math.random() > 0.5;
 
-    setPrediction(newPrediction);
-
-    if (confidence > CONFIDENCE_THRESHOLD) {
-      if (mqttClientRef.current?.connected) {
-        mqttClientRef.current.publish(mqttTopic, label);
-      }
-      setLastClassifications((prev) => [...prev, newPrediction]);
+    if (isActivityDetected) {
+      resetInactivityTimer();
     }
-  }, [resetInactivityTimer, mqttTopic]);
+
+    // Only run the heavy classification if not hibernating
+    if (!isHibernating) {
+        const labels: Prediction["label"][] = ["Plastic", "Metal", "Paper"];
+        const label = labels[Math.floor(Math.random() * labels.length)];
+        const confidence = Math.random();
+        const newPrediction: Prediction = { label, confidence };
+
+        setPrediction(newPrediction);
+
+        if (confidence > CONFIDENCE_THRESHOLD) {
+            if (mqttClientRef.current?.connected) {
+                mqttClientRef.current.publish(mqttTopic, label);
+            }
+            setLastClassifications((prev) => [...prev, newPrediction]);
+        }
+    }
+  }, [resetInactivityTimer, mqttTopic, isHibernating]);
 
   useEffect(() => {
-    if (isCameraOn && !isHibernating) {
+    if (isCameraOn) {
       if (!predictionIntervalRef.current) {
         predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL);
       }
@@ -209,7 +228,7 @@ export default function SortVisionClient() {
         clearInterval(predictionIntervalRef.current);
       }
     };
-  }, [isCameraOn, isHibernating, runClassification]);
+  }, [isCameraOn, runClassification]);
 
   useEffect(() => {
     const checkModelPerformance = async () => {
@@ -257,7 +276,7 @@ export default function SortVisionClient() {
     
     // Cleanup on unmount
     return () => disconnectFromMqtt();
-  }, []); // Note: connectToMqtt is not a dependency to prevent reconnects on setting changes
+  }, [connectToMqtt, disconnectFromMqtt]);
 
   const getMqttBadgeVariant = () => {
     switch (mqttStatus) {
@@ -270,7 +289,7 @@ export default function SortVisionClient() {
 
   const PredictionDisplay = () => (
     <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-      {prediction ? (
+      {prediction && !isHibernating ? (
         <>
           <h3 className="text-2xl font-bold text-white drop-shadow-lg">
             {prediction.label}
@@ -294,17 +313,17 @@ export default function SortVisionClient() {
   );
 
   const ItemIcon = ({ label, confidence }: Prediction) => {
-    const isActive = confidence > CONFIDENCE_THRESHOLD;
-    const activeClass = "text-primary drop-shadow-[0_0_8px_hsl(var(--primary))]";
-    const baseClass = "h-10 w-10 text-muted-foreground transition-all duration-300"
+    const isActive = confidence > CONFIDENCE_THRESHOLD && !isHibernating;
+    const activeClass = "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
+    const baseClass = "h-12 w-12 text-muted-foreground transition-all duration-300";
     
     return (
-        <div className="flex flex-col items-center gap-2">
-            <PlasticIcon className={cn(baseClass, label === 'Plastic' && isActive && activeClass, label === 'Plastic' && 'text-foreground')} />
-            <MetalIcon className={cn(baseClass, label === 'Metal' && isActive && activeClass, label === 'Metal' && 'text-foreground')} />
-            <PaperIcon className={cn(baseClass, label === 'Paper' && isActive && activeClass, label === 'Paper' && 'text-foreground')} />
-        </div>
-    )
+      <div className="flex flex-col items-center gap-6 p-4">
+        <PlasticIcon className={cn(baseClass, label === 'Plastic' && "text-foreground", isActive && label === 'Plastic' && activeClass)} />
+        <MetalIcon className={cn(baseClass, label === 'Metal' && "text-foreground", isActive && label === 'Metal' && activeClass)} />
+        <PaperIcon className={cn(baseClass, label === 'Paper' && "text-foreground", isActive && label === 'Paper' && activeClass)} />
+      </div>
+    );
   };
 
   return (
@@ -319,32 +338,34 @@ export default function SortVisionClient() {
         <SidebarContent className="p-0">
           <SidebarGroup>
             <SidebarGroupLabel>MQTT Configuration</SidebarGroupLabel>
-            <div className="space-y-4 p-2">
+            <div className="space-y-4 p-4">
               <div className="space-y-2">
                 <Label htmlFor="mqtt-broker">Broker URL</Label>
-                <SidebarInput id="mqtt-broker" value={mqttBrokerUrl} onChange={handleMqttBrokerUrlChange} />
+                <SidebarInput id="mqtt-broker" value={mqttBrokerUrl} onChange={handleMqttBrokerUrlChange} placeholder="wss://broker.hivemq.com:8081/mqtt" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="mqtt-topic">Topic</Label>
-                <SidebarInput id="mqtt-topic" value={mqttTopic} onChange={handleMqttTopicChange} />
+                <SidebarInput id="mqtt-topic" value={mqttTopic} onChange={handleMqttTopicChange} placeholder="trash/classification" />
               </div>
                <Button onClick={connectToMqtt} disabled={mqttStatus === "Connecting"} className="w-full">
                 {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
-                {mqttStatus === 'Connected' ? 'Reconnect' : 'Connect'}
+                {mqttStatus === 'Connected' ? 'Reconnect' : mqttStatus === "Connecting" ? 'Connecting...' : 'Connect'}
               </Button>
             </div>
           </SidebarGroup>
         </SidebarContent>
-        {/* ThemeToggle remains in the footer */}
+        <SidebarFooter>
+          <ThemeToggle />
+        </SidebarFooter>
       </Sidebar>
       <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20">
-        <CardHeader className="flex-row items-center justify-between">
+        <CardHeader className="flex-row items-start justify-between">
           <div>
             <CardTitle className="text-2xl font-bold">SortVision</CardTitle>
-            <CardDescription>Futuristic AI Trash Sorting</CardDescription>
+            <CardDescription>AI-Powered Waste Classification</CardDescription>
           </div>
-          <div className="flex items-center gap-2">
-            {isHibernating && <Badge variant="secondary" className="gap-2 text-xs"><PowerOff/> Hibernating</Badge>}
+          <div className="flex items-center gap-2 pt-1">
+            {isHibernating && <Badge variant="secondary" className="gap-2 text-xs animate-pulse"><PowerOff className="h-3 w-3" /> Hibernating</Badge>}
             <Badge variant={getMqttBadgeVariant()} className="gap-2 text-xs">
               MQTT: {mqttStatus}
             </Badge>
@@ -352,7 +373,7 @@ export default function SortVisionClient() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
-              <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border">
+              <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border-2 border-border/30">
               <video
                   ref={videoRef}
                   className="h-full w-full object-cover"
@@ -360,29 +381,21 @@ export default function SortVisionClient() {
                   muted
                   autoPlay
               />
-              {(!isCameraOn || isHibernating) && (
+              {!isCameraOn && (
                   <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
-                      {isHibernating ? <PowerOff className="h-16 w-16 text-muted-foreground" /> : <CameraOff className="h-16 w-16 text-muted-foreground" />}
-                      <p className="mt-2 text-muted-foreground">{isHibernating ? "Hibernating" : "Camera is off"}</p>
-                      {isHibernating && <Button variant="ghost" size="sm" className="mt-2" onClick={resetInactivityTimer}>Wake up</Button>}
+                      <CameraOff className="h-16 w-16 text-muted-foreground" />
+                      <p className="mt-2 text-muted-foreground">Camera is off</p>
                   </div>
               )}
               <PredictionDisplay />
               </div>
-              <div className="hidden md:flex flex-col items-center justify-center p-4">
-                  {prediction ? (
-                      <ItemIcon {...prediction} />
-                  ) : (
-                      <div className="flex flex-col items-center gap-2">
-                          <PlasticIcon className="h-10 w-10 text-muted-foreground" />
-                          <MetalIcon className="h-10 w-10 text-muted-foreground" />
-                          <PaperIcon className="h-10 w-10 text-muted-foreground" />
-                      </div>
-                  )}
+              <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20">
+                <ItemIcon {...(prediction || {label: 'Plastic', confidence: 0})} />
               </div>
           </div>
         </CardContent>
-        <CardFooter className="flex flex-col sm:flex-row sm:justify-end gap-2">
+        <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 items-center">
+            <p className="text-xs text-muted-foreground">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle sidebar.</p>
             <Button onClick={toggleCamera} variant="outline" className="w-full sm:w-auto">
               {isCameraOn ? <CameraOff /> : <Camera />}
               {isCameraOn ? "Stop Camera" : "Start Camera"}
@@ -392,3 +405,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
