@@ -30,7 +30,7 @@ type MqttStatus = "Connected" | "Disconnected" | "Connecting" | "Error";
 const MQTT_BROKER_URL = "wss://broker.hivemq.com:8081/mqtt";
 const MQTT_TOPIC = "trash/classification";
 const CONFIDENCE_THRESHOLD = 0.8;
-const CLASSIFICATION_INTERVAL = 1000; // ms
+const CLASSIFICATION_INTERVAL = 1000;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 
 export default function SortVisionClient() {
@@ -207,13 +207,18 @@ export default function SortVisionClient() {
     <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
       {prediction ? (
         <>
-          <h3 className="text-2xl font-bold text-white shadow-lg">
+          <h3 className="text-2xl font-bold text-white drop-shadow-lg">
             {prediction.label}
           </h3>
-          <p className="text-lg text-white/90 shadow-md">
-            Confidence: {(prediction.confidence * 100).toFixed(0)}%
-          </p>
-          <Progress value={prediction.confidence * 100} className="mt-2 h-2" />
+          <div className="flex items-center gap-2">
+            <p className="text-sm text-white/90 drop-shadow-md">
+                Confidence:
+            </p>
+            <Progress value={prediction.confidence * 100} className="h-2 w-24 bg-white/30" />
+            <span className="text-sm font-semibold text-white">
+                {(prediction.confidence * 100).toFixed(0)}%
+            </span>
+          </div>
         </>
       ) : (
         <p className="text-lg text-white/90 shadow-md">
@@ -225,70 +230,69 @@ export default function SortVisionClient() {
 
   const ItemIcon = ({ label, confidence }: Prediction) => {
     const isActive = confidence > CONFIDENCE_THRESHOLD;
-    const activeClass = "text-primary drop-shadow-[0_0_5px_hsl(var(--primary))]";
-    switch (label) {
-      case "Plastic":
-        return <PlasticIcon className={cn("h-8 w-8 transition-all", isActive && activeClass)} />;
-      case "Metal":
-        return <MetalIcon className={cn("h-8 w-8 transition-all", isActive && activeClass)} />;
-      case "Paper":
-        return <PaperIcon className={cn("h-8 w-8 transition-all", isActive && activeClass)} />;
-      default:
-        return null;
-    }
+    const activeClass = "text-primary drop-shadow-[0_0_8px_hsl(var(--primary))]";
+    const baseClass = "h-10 w-10 text-muted-foreground transition-all duration-300"
+    
+    return (
+        <div className="flex flex-col items-center gap-2">
+            <PlasticIcon className={cn(baseClass, label === 'Plastic' && isActive && activeClass, label === 'Plastic' && 'text-foreground')} />
+            <MetalIcon className={cn(baseClass, label === 'Metal' && isActive && activeClass, label === 'Metal' && 'text-foreground')} />
+            <PaperIcon className={cn(baseClass, label === 'Paper' && isActive && activeClass, label === 'Paper' && 'text-foreground')} />
+        </div>
+    )
   };
 
   return (
-    <Card className="w-full max-w-2xl shadow-2xl">
+    <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20">
       <CardHeader className="flex-row items-center justify-between">
         <div>
-          <CardTitle className="text-2xl font-headline">SortVision</CardTitle>
-          <CardDescription>AI Trash Sorting Assistant</CardDescription>
+          <CardTitle className="text-2xl font-bold">SortVision</CardTitle>
+          <CardDescription>Futuristic AI Trash Sorting</CardDescription>
         </div>
-        <Badge variant={getMqttBadgeVariant()} className="gap-2">
+        <Badge variant={getMqttBadgeVariant()} className="gap-2 text-xs">
           MQTT: {mqttStatus}
         </Badge>
       </CardHeader>
       <CardContent>
-        <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted">
-          <video
-            ref={videoRef}
-            className="h-full w-full object-cover"
-            playsInline
-            muted
-            autoPlay
-          />
-          {!isCameraOn && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
-                <CameraOff className="h-16 w-16 text-muted-foreground" />
-                <p className="mt-2 text-muted-foreground">Camera is off</p>
+        <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
+            <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border">
+            <video
+                ref={videoRef}
+                className="h-full w-full object-cover"
+                playsInline
+                muted
+                autoPlay
+            />
+            {!isCameraOn && (
+                <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
+                    <CameraOff className="h-16 w-16 text-muted-foreground" />
+                    <p className="mt-2 text-muted-foreground">Camera is off</p>
+                </div>
+            )}
+            <PredictionDisplay />
             </div>
-          )}
-          <PredictionDisplay />
+            <div className="hidden md:flex flex-col items-center justify-center p-4">
+                {prediction ? (
+                    <ItemIcon {...prediction} />
+                ) : (
+                    <div className="flex flex-col items-center gap-2">
+                        <PlasticIcon className="h-10 w-10 text-muted-foreground" />
+                        <MetalIcon className="h-10 w-10 text-muted-foreground" />
+                        <PaperIcon className="h-10 w-10 text-muted-foreground" />
+                    </div>
+                )}
+            </div>
         </div>
       </CardContent>
-      <CardFooter className="flex flex-col gap-4 sm:flex-row sm:justify-between">
-        <div className="flex items-center gap-4 text-muted-foreground">
-          {prediction ? (
-            <ItemIcon {...prediction} />
-          ) : (
-            <>
-                <PlasticIcon className="h-8 w-8" />
-                <MetalIcon className="h-8 w-8" />
-                <PaperIcon className="h-8 w-8" />
-            </>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <Button onClick={toggleCamera} variant="outline">
+      <CardFooter className="flex flex-col sm:flex-row sm:justify-end gap-2">
+          <Button onClick={toggleCamera} variant="outline" className="w-full sm:w-auto">
             {isCameraOn ? <CameraOff /> : <Camera />}
             {isCameraOn ? "Stop Camera" : "Start Camera"}
           </Button>
-          <Button onClick={connectToMqtt} disabled={mqttStatus === "Connected" || mqttStatus === "Connecting"}>
+          <Button onClick={connectToMqtt} disabled={mqttStatus === "Connected" || mqttStatus === "Connecting"} className="w-full sm:w-auto">
             {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
             Reconnect MQTT
           </Button>
-        </div>
       </CardFooter>
     </Card>
   );
