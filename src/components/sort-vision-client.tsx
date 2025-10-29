@@ -82,22 +82,17 @@ export default function SortVisionClient() {
   };
 
   const connectToMqtt = useCallback(() => {
-    if (mqttClientRef.current) {
-        if (mqttClientRef.current.connected || mqttClientRef.current.reconnecting) {
-            console.log("MQTT client already connecting/connected. Ending old session before creating a new one.");
-            mqttClientRef.current.end(true, () => {
-                console.log("Previous MQTT session ended.");
-                // Ensure a clean state before reconnecting
-                mqttClientRef.current = null;
-                setMqttStatus("Disconnected");
-                // Proceed to connect in the next block.
-                proceedWithConnection();
-            });
-            return; // Exit and wait for the old connection to close.
-        }
+    if (mqttClientRef.current && (mqttClientRef.current.connected || mqttClientRef.current.reconnecting)) {
+        console.log("MQTT client already connecting/connected. Ending old session before creating a new one.");
+        mqttClientRef.current.end(true, () => {
+            console.log("Previous MQTT session ended.");
+            mqttClientRef.current = null;
+            setMqttStatus("Disconnected");
+            proceedWithConnection();
+        });
+        return;
     }
     proceedWithConnection();
-
 
     function proceedWithConnection() {
         setMqttStatus("Connecting");
@@ -120,17 +115,16 @@ export default function SortVisionClient() {
                 if (mqttStatus !== 'Error') {
                     setMqttStatus("Error");
                     toast({ variant: "destructive", title: "MQTT Error", description: "Failed to connect. Check URL or network." });
-                    client.end();
+                    client.end(true); 
                 }
             });
-
+            
             client.on("reconnect", () => {
                 setMqttStatus("Connecting");
             });
 
             client.on("close", () => {
-                // Only set to disconnected if we are not in the middle of an intentional connection attempt
-                 if (client === mqttClientRef.current) {
+                 if (!client.reconnecting) {
                     setMqttStatus("Disconnected");
                  }
             });
@@ -168,21 +162,25 @@ export default function SortVisionClient() {
 
   const releaseWakeLock = useCallback(async () => {
     if (wakeLockRef.current) {
-      await wakeLockRef.current.release();
-      wakeLockRef.current = null;
-      setIsWakeLockActive(false);
-      // We don't toast here as it can be called automatically
+      try {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+        setIsWakeLockActive(false);
+      } catch (error) {
+        console.error("Could not release wake lock:", error);
+      }
     }
   }, []);
 
   const requestWakeLock = useCallback(async () => {
-    if ('wakeLock' in navigator && wakeLockEnabled) {
+    if ('wakeLock' in navigator && wakeLockEnabled && !wakeLockRef.current) {
       try {
         wakeLockRef.current = await navigator.wakeLock.request('screen');
         setIsWakeLockActive(true);
         wakeLockRef.current.addEventListener('release', () => {
           // The wake lock was released, so we set the state to false.
-          // The lock will be re-acquired automatically by the visibility change handler.
+          // The lock will be re-acquired automatically by the visibility change handler if needed.
+          wakeLockRef.current = null;
           setIsWakeLockActive(false);
           console.log('Wake Lock was released');
         });
@@ -233,7 +231,7 @@ export default function SortVisionClient() {
     }
   };
 
-  const stopCamera = () => {
+  const stopCamera = useCallback(() => {
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
     }
@@ -246,7 +244,7 @@ export default function SortVisionClient() {
     setIsHibernating(false);
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
     releaseWakeLock();
-  };
+  }, [releaseWakeLock]);
 
   const toggleCamera = () => {
     if (isCameraOn) {
@@ -306,7 +304,7 @@ export default function SortVisionClient() {
   // Effect to handle visibility change for Wake Lock
   useEffect(() => {
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && isCameraOn) {
         requestWakeLock();
       }
     };
@@ -314,7 +312,7 @@ export default function SortVisionClient() {
     return () => {
       document.removeEventListener('visibilitychange', handleVisibilityChange);
     };
-  }, [requestWakeLock]);
+  }, [requestWakeLock, isCameraOn]);
 
   useEffect(() => {
     const checkModelPerformance = async () => {
@@ -360,9 +358,9 @@ export default function SortVisionClient() {
     connectToMqtt();
     return () => {
       disconnectFromMqtt();
-      releaseWakeLock();
+      stopCamera();
     };
-  }, [disconnectFromMqtt, releaseWakeLock]);
+  }, [disconnectFromMqtt, stopCamera, connectToMqtt]);
 
   const getMqttBadgeVariant = () => {
     switch (mqttStatus) {
@@ -416,7 +414,7 @@ export default function SortVisionClient() {
     <>
       <Sidebar>
         <SidebarHeader>
-          <h2 className="text-lg font-semibold px-2">Settings</h2>
+          <CardTitle className="px-2">Settings</CardTitle>
         </SidebarHeader>
         <SidebarContent className="p-0">
           <SidebarGroup>
