@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { MqttClient } from "mqtt";
-import { connect } from "mqtt";
+import mqtt from "mqtt";
 import {
   Card,
   CardContent,
@@ -50,7 +50,7 @@ export default function SortVisionClient() {
     if (mqttClientRef.current?.connected || mqttStatus === "Connecting") return;
 
     setMqttStatus("Connecting");
-    const client = connect(MQTT_BROKER_URL, {
+    const client = mqtt.connect(MQTT_BROKER_URL, {
       clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
     });
     mqttClientRef.current = client;
