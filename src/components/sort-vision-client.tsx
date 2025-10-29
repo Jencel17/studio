@@ -30,7 +30,7 @@ type MqttStatus = "Connected" | "Disconnected" | "Connecting" | "Error";
 const MQTT_BROKER_URL = "wss://broker.hivemq.com:8081/mqtt";
 const MQTT_TOPIC = "trash/classification";
 const CONFIDENCE_THRESHOLD = 0.8;
-const CLASSIFICATION_INTERVAL = 2000; // ms
+const CLASSIFICATION_INTERVAL = 1000; // ms
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 
 export default function SortVisionClient() {
