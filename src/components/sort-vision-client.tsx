@@ -2,11 +2,12 @@
 
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
 import type { MqttClient, IClientOptions } from "mqtt";
 import mqtt from "mqtt";
 import * as tmImage from "@teachablemachine/image";
 import * as tf from "@tensorflow/tfjs";
+import JSZip from "jszip";
 import {
   Card,
   CardContent,
@@ -18,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload } from "lucide-react";
+import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp } from "lucide-react";
 import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
@@ -73,6 +74,7 @@ export default function SortVisionClient() {
   const [detectedObjects, setDetectedObjects] = useState<DetectedObject[]>([]);
   const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(false);
+  const [isDragging, setIsDragging] = useState(false);
 
   // MQTT Settings
   const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8081/mqtt");
@@ -84,8 +86,7 @@ export default function SortVisionClient() {
   const predictionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
-  const modelJSONRef = useRef<HTMLInputElement>(null);
-  const modelMetadataRef = useRef<HTMLInputElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const { toast } = useToast();
   
@@ -97,26 +98,21 @@ export default function SortVisionClient() {
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
 
-  const loadModel = async (modelFile: File, metadataFile: File) => {
-    if (!modelFile || !metadataFile) {
-        toast({ variant: "destructive", title: "Model Load Error", description: "Please provide both model.json and metadata.json files." });
-        return;
-    }
-    
+  const loadModel = useCallback(async (modelFile: File | Blob, metadataFile: File | Blob) => {
     setIsModelLoading(true);
     addLog("Loading Teachable Machine model...");
     try {
-        const modelURL = URL.createObjectURL(modelFile);
-        const metadataURL = URL.createObjectURL(metadataFile);
-        
-        await tf.setBackend('cpu');
-        await tf.ready();
+      const modelURL = URL.createObjectURL(modelFile);
+      const metadataURL = URL.createObjectURL(metadataFile);
 
-        const loadedModel = await tmImage.load(modelURL, metadataURL);
-        setModel(loadedModel);
-        
-        addLog(`Model loaded successfully. Classes: ${loadedModel.getClassLabels().join(', ')}`);
-        toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
+      await tf.setBackend('cpu');
+      await tf.ready();
+
+      const loadedModel = await tmImage.load(modelURL, metadataURL);
+      setModel(loadedModel);
+      
+      addLog(`Model loaded successfully. Classes: ${loadedModel.getClassLabels().join(', ')}`);
+      toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
 
     } catch (error: any) {
         console.error("Model loading error:", error);
@@ -126,7 +122,91 @@ export default function SortVisionClient() {
     } finally {
         setIsModelLoading(false);
     }
-};
+  }, [addLog, toast]);
+
+  const handleFileDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(false);
+    addLog("File dropped.");
+
+    const file = event.dataTransfer.files?.[0];
+    if (!file) {
+      addLog("No file found in drop event.");
+      return;
+    }
+    
+    if (file.name.endsWith('.zip')) {
+        addLog(`Zip file detected: ${file.name}. Unpacking...`);
+        try {
+            const zip = await JSZip.loadAsync(file);
+            const modelFile = zip.file("model.json");
+            const metadataFile = zip.file("metadata.json");
+
+            if (!modelFile || !metadataFile) {
+                throw new Error("model.json or metadata.json not found in the zip file.");
+            }
+
+            const modelBlob = await modelFile.async("blob");
+            const metadataBlob = await metadataFile.async("blob");
+            
+            await loadModel(modelBlob, metadataBlob);
+
+        } catch (error: any) {
+            console.error("Zip file processing error:", error);
+            addLog(`Error processing zip file: ${error.message}`);
+            toast({ variant: "destructive", title: "Zip File Error", description: "Could not process the zip file. Ensure it's a valid Teachable Machine export." });
+        }
+    } else {
+        addLog("Dropped file is not a zip file. Please use the file picker for individual files.");
+        toast({ variant: "destructive", title: "Invalid File Type", description: "Please drop a .zip file exported from Teachable Machine." });
+    }
+  }, [addLog, toast, loadModel]);
+
+  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(true);
+  };
+
+  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDragging(false);
+  };
+
+  const handleFileSelect = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+     if (!file) return;
+
+    if (file.name.endsWith('.zip')) {
+      addLog(`Zip file selected: ${file.name}. Unpacking...`);
+      try {
+        const zip = await JSZip.loadAsync(file);
+        const modelFile = zip.file("model.json");
+        const metadataFile = zip.file("metadata.json");
+
+        if (!modelFile || !metadataFile) {
+          throw new Error("model.json or metadata.json not found in the zip file.");
+        }
+
+        const modelBlob = await modelFile.async("blob");
+        const metadataBlob = await metadataFile.async("blob");
+
+        await loadModel(modelBlob, metadataBlob);
+      } catch (error: any) {
+        console.error("Zip file processing error:", error);
+        addLog(`Error processing zip file: ${error.message}`);
+        toast({ variant: "destructive", title: "Zip File Error", description: "Could not process the zip file." });
+      }
+    } else {
+      addLog("Invalid file type selected. Please select a .zip file.");
+      toast({ variant: "destructive", title: "Invalid File Type", description: "Please select a .zip file." });
+    }
+     // Reset file input to allow selecting the same file again
+    event.target.value = '';
+  };
+
 
   // Load MQTT settings from localStorage on initial render
   useEffect(() => {
@@ -640,31 +720,41 @@ export default function SortVisionClient() {
         <SidebarContent className="p-0">
           <SidebarGroup>
             <SidebarGroupLabel>Teachable Machine Model</SidebarGroupLabel>
-            <div className="space-y-4 p-4">
-              <div className="space-y-2">
-                <Label htmlFor="model-json">Model File (model.json)</Label>
-                <SidebarInput id="model-json" type="file" accept=".json" ref={modelJSONRef} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="model-metadata">Metadata File (metadata.json)</Label>
-                <SidebarInput id="model-metadata" type="file" accept=".json" ref={modelMetadataRef} />
-              </div>
+            <div 
+              onDrop={handleFileDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              className={cn(
+                "m-4 mt-0 p-4 border-2 border-dashed rounded-lg text-center transition-colors duration-200",
+                isDragging ? "border-primary bg-primary/10" : "border-border",
+                isModelLoading && "pointer-events-none opacity-50"
+              )}
+            >
+              <FileUp className="mx-auto h-10 w-10 text-muted-foreground" />
+              <p className="mt-2 text-sm text-muted-foreground">
+                {isModelLoading 
+                  ? "Loading model..." 
+                  : isDragging 
+                  ? "Release to upload" 
+                  : "Drag & drop a .zip file"}
+              </p>
+              <p className="text-xs text-muted-foreground/80">or</p>
               <Button 
-                className="w-full"
-                onClick={() => {
-                  const modelFile = modelJSONRef.current?.files?.[0];
-                  const metadataFile = modelMetadataRef.current?.files?.[0];
-                  if (modelFile && metadataFile) {
-                    loadModel(modelFile, metadataFile);
-                  } else {
-                    toast({ variant: "destructive", title: "Missing Files", description: "Please select both model and metadata files." });
-                  }
-                }}
+                variant="link" 
+                className="p-0 h-auto text-sm"
+                onClick={() => fileInputRef.current?.click()}
                 disabled={isModelLoading}
               >
-                <Upload className="mr-2" />
-                {isModelLoading ? "Loading Model..." : "Load Model"}
+                click to browse
               </Button>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                className="hidden" 
+                accept=".zip"
+                onChange={handleFileSelect}
+                disabled={isModelLoading}
+              />
             </div>
           </SidebarGroup>
           <SidebarGroup>
