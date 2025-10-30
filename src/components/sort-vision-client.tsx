@@ -20,10 +20,6 @@ import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
-import {
-  SuggestAiModelSwapInputSchema,
-  InterpretDetectionsInputSchema,
-} from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
@@ -549,16 +545,17 @@ export default function SortVisionClient() {
       return;
     }
     resetInactivityTimer();
+
     try {
       const predictions = await model.predict(videoRef.current);
       setCurrentPredictions(predictions);
       if (predictions.length > 0) {
-        setLastClassifications(prev => [...prev, ...predictions].slice(-MODEL_SWAP_CHECK_THRESHOLD * 2));
+        setLastClassifications((prev) => [...prev, ...predictions].slice(-MODEL_SWAP_CHECK_THRESHOLD * 2));
       }
 
       // --- UI Update Logic (Always Runs) ---
-      const highConfidencePrediction = predictions.find(p => p.probability > 0.9);
-      const multipleDetections = predictions.filter(p => p.probability > 0.5).length > 1;
+      const highConfidencePrediction = predictions.find((p) => p.probability > 0.9);
+      const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
 
       if (highConfidencePrediction) {
         setDetectionState("SINGLE_OBJECT");
@@ -567,19 +564,28 @@ export default function SortVisionClient() {
       } else if (multipleDetections) {
         setDetectionState("MULTIPLE_OBJECTS");
         setPrimaryPrediction(null);
-        setDetectedObjects(currentObjects => {
-          const significantDetections = predictions.filter(p => p.probability > 0.5);
-          return significantDetections.map(det => {
-            const existing = currentObjects.find(o => o.id === det.className);
+        setDetectedObjects((currentObjects) => {
+          const significantDetections = predictions.filter((p) => p.probability > 0.5);
+          return significantDetections.map((det) => {
+            const existing = currentObjects.find((o) => o.id === det.className);
             if (existing) {
               return { ...existing, confidence: det.probability, label: det.className };
             }
             const size = 0.3 + Math.random() * 0.3;
             return {
-              id: det.className, label: det.className, confidence: det.probability,
-              bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
-              vx: (Math.random() - 0.5) * 0.005, vy: (Math.random() - 0.5) * 0.005,
-              vw: (Math.random() - 0.5) * 0.001, vh: (Math.random() - 0.5) * 0.001,
+              id: det.className,
+              label: det.className,
+              confidence: det.probability,
+              bbox: [
+                Math.random() * (1 - size),
+                Math.random() * (1 - size),
+                size,
+                size,
+              ],
+              vx: (Math.random() - 0.5) * 0.005,
+              vy: (Math.random() - 0.5) * 0.005,
+              vw: (Math.random() - 0.5) * 0.001,
+              vh: (Math.random() - 0.5) * 0.001,
             };
           });
         });
@@ -589,38 +595,46 @@ export default function SortVisionClient() {
         setDetectedObjects([]);
       }
 
-      // --- MQTT Publishing Logic ---
+      // --- MQTT Publishing Logic (Decoupled from UI) ---
       if (mqttClientRef.current?.connected && !isMqttOnCooldown) {
-        let currentLabel: string | null = null;
+        let labelToSend: string | null = null;
         if (highConfidencePrediction) {
-          currentLabel = highConfidencePrediction.className;
+          labelToSend = highConfidencePrediction.className;
         } else if (multipleDetections) {
-          currentLabel = "Multiple Objects";
+          labelToSend = "Multiple Objects";
         }
         
-        if (currentLabel) {
-            mqttClientRef.current.publish(mqttTopic, currentLabel);
-            addLog(`Published '${currentLabel}' to MQTT topic '${mqttTopic}'`);
-            toast({
-              title: "MQTT Message Sent",
-              description: `Sent classification: ${currentLabel}`,
-            });
+        if (labelToSend) {
+          mqttClientRef.current.publish(mqttTopic, labelToSend);
+          addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
+          toast({
+            title: "MQTT Message Sent",
+            description: `Sent classification: ${labelToSend}`,
+          });
 
-            setIsMqttOnCooldown(true);
-            addLog("MQTT cooldown started (5s).");
-            cooldownTimerRef.current = setTimeout(() => {
-              setIsMqttOnCooldown(false);
-              addLog("MQTT cooldown finished.");
-              cooldownTimerRef.current = null;
-            }, MQTT_COOLDOWN_MS);
+          setIsMqttOnCooldown(true);
+          addLog("MQTT cooldown started (5s).");
+          cooldownTimerRef.current = setTimeout(() => {
+            setIsMqttOnCooldown(false);
+            addLog("MQTT cooldown finished.");
+            cooldownTimerRef.current = null;
+          }, MQTT_COOLDOWN_MS);
         }
       }
-
     } catch (error) {
       console.error("Error during prediction:", error);
       addLog("Prediction error. Check console.");
     }
-  }, [isHibernating, isCameraOn, model, resetInactivityTimer, mqttTopic, addLog, toast, isMqttOnCooldown]);
+  }, [
+    isHibernating,
+    isCameraOn,
+    model,
+    resetInactivityTimer,
+    mqttTopic,
+    addLog,
+    toast,
+    isMqttOnCooldown,
+  ]);
 
 
   useEffect(() => {
@@ -729,20 +743,24 @@ export default function SortVisionClient() {
         }
         
         addLog(`Avg scores: ${JSON.stringify(averageConfidenceScores)}`);
-        const result = await handleModelSwapCheck({
-            averageConfidenceScores,
-            numClassifications: classificationsToAnalyze.length,
-        });
-
-        if (result.shouldSuggestSwap) {
-          addLog(`AI Suggestion: ${result.reason}`);
-          toast({
-            title: "Model Performance Suggestion",
-            description: result.reason,
-            duration: 9000,
+        try {
+          const result = await handleModelSwapCheck({
+              averageConfidenceScores,
+              numClassifications: classificationsToAnalyze.length,
           });
-        } else {
-            addLog(`AI Suggestion: No model swap needed. ${result.reason}`);
+
+          if (result.shouldSuggestSwap) {
+            addLog(`AI Suggestion: ${result.reason}`);
+            toast({
+              title: "Model Performance Suggestion",
+              description: result.reason,
+              duration: 9000,
+            });
+          } else {
+              addLog(`AI Suggestion: No model swap needed. ${result.reason}`);
+          }
+        } catch (e) {
+          addLog("Could not get model performance suggestion.");
         }
       }
     };
@@ -1096,3 +1114,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    

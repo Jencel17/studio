@@ -1,12 +1,9 @@
 'use server';
 
 import {suggestAiModelSwap as suggestAiModelSwapFlow} from '@/ai/flows/suggest-ai-model-swap';
-import {interpretDetections as interpretDetectionsFlow} from '@/ai/flows/interpret-detections-flow';
 import {
   type SuggestAiModelSwapInput,
   type SuggestAiModelSwapOutput,
-  type InterpretDetectionsInput,
-  type InterpretDetectionsOutput,
 } from './ai-schemas';
 
 export async function handleModelSwapCheck(
@@ -25,17 +22,4 @@ export async function handleModelSwapCheck(
   }
 }
 
-export async function handleInterpretDetections(
-  input: InterpretDetectionsInput
-): Promise<InterpretDetectionsOutput> {
-  try {
-    const result = await interpretDetectionsFlow(input);
-    return result;
-  } catch (error) {
-    console.error('Error interpreting detections:', error);
-    return {
-      detectionState: 'NO_DETECTION',
-      reason: 'An error occurred while analyzing the scene.',
-    };
-  }
-}
+    
