@@ -79,6 +79,7 @@ export default function SortVisionClient() {
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [modelLabels, setModelLabels] = useState<string[]>([]);
+  const [lastPublishedLabel, setLastPublishedLabel] = useState<string | null>(null);
 
   // MQTT Settings
   const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8884/mqtt");
@@ -591,19 +592,26 @@ export default function SortVisionClient() {
             const distinctLabels = [...new Set(highConfidenceDetections.map(d => d.className))];
             if (distinctLabels.length === 1) {
               const labelToSend = distinctLabels[0];
-              mqttClientRef.current.publish(mqttTopic, labelToSend);
-              addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
-              toast({
-                title: "MQTT Message Sent",
-                description: `Sent classification: ${labelToSend}`,
-              });
+              if (labelToSend !== lastPublishedLabel) {
+                mqttClientRef.current.publish(mqttTopic, labelToSend);
+                addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
+                toast({
+                  title: "MQTT Message Sent",
+                  description: `Sent classification: ${labelToSend}`,
+                });
+                setLastPublishedLabel(labelToSend);
+              }
             } else if (distinctLabels.length > 1) {
               addLog(`Multiple distinct objects detected (${distinctLabels.join(', ')}). MQTT message not sent.`);
+              setLastPublishedLabel(null);
             }
           }
           setLastClassifications((prev) => [...prev, finalPrediction]);
       } else {
           setPrediction(null);
+          if (lastPublishedLabel) {
+            setLastPublishedLabel(null);
+          }
       }
     } catch (error) {
       console.error("Error during prediction:", error);
@@ -612,7 +620,7 @@ export default function SortVisionClient() {
       setDetectedObjects([]);
     }
   
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, lastPublishedLabel]);
 
   useEffect(() => {
     const animate = () => {
@@ -1079,5 +1087,7 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
 
     
