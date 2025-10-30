@@ -18,7 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp } from "lucide-react";
+import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck, handleInterpretDetections, type InterpretDetectionsInput } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
@@ -64,6 +64,7 @@ const CLASSIFICATION_INTERVAL = 2000;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
+const MQTT_COOLDOWN_MS = 5000;
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -83,6 +84,7 @@ export default function SortVisionClient() {
   const [lastPublishedLabel, setLastPublishedLabel] = useState<string | null>(null);
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
+  const [isMqttOnCooldown, setIsMqttOnCooldown] = useState(false);
 
 
   // MQTT Settings
@@ -97,6 +99,7 @@ export default function SortVisionClient() {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const animationFrameRef = useRef<number>();
+  const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { toast } = useToast();
   
@@ -461,6 +464,7 @@ export default function SortVisionClient() {
     setIsHibernating(false);
     addLog("Camera stopped.");
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
     releaseWakeLock();
   }, [releaseWakeLock, addLog]);
 
@@ -552,18 +556,13 @@ export default function SortVisionClient() {
         confidenceThreshold: CONFIDENCE_THRESHOLD,
       });
 
+      // Update UI state based on AI result first
       setDetectionState(aiResult.detectionState);
-      addLog(`AI decision: ${aiResult.detectionState} - ${aiResult.reason}`);
-
-      let currentLabel: string | null = null;
-      
       if (aiResult.detectionState === "SINGLE_OBJECT" && aiResult.primaryObject) {
         const prediction = modelPredictions.find(p => p.className === aiResult.primaryObject);
         if (prediction) {
           setPrimaryPrediction(prediction);
           setDetectedObjects([]);
-          currentLabel = prediction.className;
-          setLastClassifications(prev => [...prev, prediction]);
         }
       } else if (aiResult.detectionState === "MULTIPLE_OBJECTS") {
         setPrimaryPrediction(null);
@@ -575,8 +574,7 @@ export default function SortVisionClient() {
               if (existing) {
                 return { ...existing, confidence: p.probability, label: p.className };
               }
-              // New item
-              const size = 0.3 + Math.random() * 0.3; // 30% to 60% of view
+              const size = 0.3 + Math.random() * 0.3;
               return {
                 id: p.className,
                 label: p.className,
@@ -590,24 +588,54 @@ export default function SortVisionClient() {
             });
           });
         }
-        currentLabel = "Multiple Objects";
-      } else {
+      } else { // NO_DETECTION or AMBIGUOUS
         setPrimaryPrediction(null);
         setDetectedObjects([]);
-        currentLabel = null;
+      }
+      
+      addLog(`AI decision: ${aiResult.detectionState} - ${aiResult.reason}`);
+
+      // Collect last classifications for performance check
+      const significantPrediction = modelPredictions.find(p => p.probability > CONFIDENCE_THRESHOLD);
+      if (significantPrediction) {
+        setLastClassifications(prev => [...prev, significantPrediction]);
       }
 
       // MQTT Publishing Logic
-      if (mqttClientRef.current?.connected && currentLabel !== lastPublishedLabel) {
-        if (currentLabel) {
-            mqttClientRef.current.publish(mqttTopic, currentLabel);
-            addLog(`Published '${currentLabel}' to MQTT topic '${mqttTopic}'`);
-            toast({
-              title: "MQTT Message Sent",
-              description: `Sent classification: ${currentLabel}`,
-            });
-        }
+      let currentLabel: string | null = null;
+      let isMultiObjectSameCategory = false;
+      
+      if (aiResult.detectionState === "SINGLE_OBJECT" && aiResult.primaryObject) {
+        currentLabel = aiResult.primaryObject;
+      } else if (aiResult.detectionState === "MULTIPLE_OBJECTS" && aiResult.detectedObjects) {
+          const distinctCategories = new Set(aiResult.detectedObjects);
+          if (distinctCategories.size === 1) {
+            currentLabel = aiResult.detectedObjects[0];
+            isMultiObjectSameCategory = true;
+          } else {
+            currentLabel = "Multiple Objects";
+          }
+      } else {
+        setLastPublishedLabel(null); // Clear last published label when no object is detected
+      }
+
+      const shouldPublish = mqttClientRef.current?.connected && !isMqttOnCooldown && currentLabel;
+
+      if (shouldPublish && (currentLabel !== lastPublishedLabel || (currentLabel === lastPublishedLabel && isMultiObjectSameCategory))) {
+        mqttClientRef.current.publish(mqttTopic, currentLabel);
+        addLog(`Published '${currentLabel}' to MQTT topic '${mqttTopic}'`);
+        toast({
+          title: "MQTT Message Sent",
+          description: `Sent classification: ${currentLabel}`,
+        });
         setLastPublishedLabel(currentLabel);
+        setIsMqttOnCooldown(true);
+        addLog("MQTT cooldown started (5s).");
+        cooldownTimerRef.current = setTimeout(() => {
+            setIsMqttOnCooldown(false);
+            addLog("MQTT cooldown finished.");
+            cooldownTimerRef.current = null;
+        }, MQTT_COOLDOWN_MS);
       }
       
     } catch (error) {
@@ -617,7 +645,7 @@ export default function SortVisionClient() {
       setDetectedObjects([]);
     }
   
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, lastPublishedLabel]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, lastPublishedLabel, isMqttOnCooldown]);
 
   useEffect(() => {
     const animate = () => {
@@ -752,6 +780,9 @@ export default function SortVisionClient() {
     return () => {
       stopCamera();
       disconnectFromMqtt();
+      if (cooldownTimerRef.current) {
+        clearTimeout(cooldownTimerRef.current);
+      }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -895,7 +926,7 @@ export default function SortVisionClient() {
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                accept=".zip,.json,application/octet-stream"
+                accept=".zip,model.json,metadata.json,application/octet-stream"
                 multiple
                 onChange={handleFileSelect}
                 disabled={isModelLoading}
@@ -947,6 +978,7 @@ export default function SortVisionClient() {
           </div>
           <div className="absolute top-4 right-4 flex items-center gap-2 pt-1">
             {isHibernating && <Badge variant="secondary" className="gap-2 text-xs animate-pulse"><PowerOff className="h-3 w-3" /> Hibernating</Badge>}
+            {isMqttOnCooldown && <Badge variant="secondary" className="gap-2 text-xs"><Hourglass className="h-3 w-3 animate-spin" /> Cooldown</Badge>}
             <Badge variant={getMqttBadgeVariant()} className="gap-2 text-xs">
               MQTT: {mqttStatus}
             </Badge>
@@ -1081,5 +1113,6 @@ export default function SortVisionClient() {
     </>
   );
 }
+
 
     
