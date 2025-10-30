@@ -3,6 +3,7 @@ import type {NextConfig} from 'next';
 const nextConfig: NextConfig = {
   devIndicators: {
     buildActivity: false,
+    allowedDevOrigins: ['*'],
   },
   /* config options here */
   typescript: {
@@ -32,6 +33,11 @@ const nextConfig: NextConfig = {
         pathname: '/**',
       },
     ],
+  },
+  experimental: {
+    turbopack: {
+      externals: ['@tensorflow/tfjs-core/dist/ops/ops_for_converter'],
+    },
   },
 };
 
