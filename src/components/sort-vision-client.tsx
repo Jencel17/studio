@@ -391,12 +391,14 @@ export default function SortVisionClient() {
     }
 
     inactivityTimerRef.current = setTimeout(() => {
-        setIsHibernating(true);
-        setPrimaryPrediction(null);
-        setDetectedObjects([]);
-        addLog("Inactivity detected, entering hibernation mode.");
+        if (isCameraOn) {
+            setIsHibernating(true);
+            setPrimaryPrediction(null);
+            setDetectedObjects([]);
+            addLog("Inactivity detected, entering hibernation mode.");
+        }
     }, INACTIVITY_TIMEOUT);
-  }, [isHibernating, addLog]);
+  }, [isHibernating, addLog, isCameraOn]);
 
   const releaseWakeLock = useCallback(async () => {
     if (wakeLockRef.current) {
