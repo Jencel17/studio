@@ -19,7 +19,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck } from "@/app/actions/ai";
+import { handleModelSwapCheck, handleInterpretDetections } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
@@ -543,82 +543,85 @@ export default function SortVisionClient() {
 
   const runClassification = useCallback(async () => {
     if (isHibernating || !isCameraOn || !videoRef.current || !model) {
-        return;
+      return;
     }
 
     resetInactivityTimer();
 
     try {
-        const predictions = await model.predict(videoRef.current);
-        setCurrentPredictions(predictions);
-        if (predictions.length > 0) {
-            setLastClassifications(prev => [...prev, ...predictions]);
-        }
-        
-        let mqttLabel: string | null = null;
+      const predictions = await model.predict(videoRef.current);
+      setCurrentPredictions(predictions); // Always update for the live-view list
+      if (predictions.length > 0) {
+        setLastClassifications(prev => [...prev, ...predictions]);
+      }
 
-        const highConfidencePrediction = predictions.find(p => p.probability > 0.9);
-        const multipleDetections = predictions.filter(p => p.probability > 0.5).length > 1;
+      // --- UI UPDATE LOGIC ---
+      const highConfidencePrediction = predictions.find(p => p.probability > 0.9);
+      const multipleDetections = predictions.filter(p => p.probability > 0.5).length > 1;
 
-        // UI Update Logic - runs on every frame
-        if (highConfidencePrediction) {
-            setDetectionState("SINGLE_OBJECT");
-            setPrimaryPrediction(highConfidencePrediction);
-            setDetectedObjects([]);
-            mqttLabel = highConfidencePrediction.className;
-        } else if (multipleDetections) {
-            setDetectionState("MULTIPLE_OBJECTS");
-            setPrimaryPrediction(null);
-            mqttLabel = "Multiple Objects";
-            setDetectedObjects(currentObjects => {
-                const significantDetections = predictions.filter(p => p.probability > 0.5);
-                return significantDetections.map(det => {
-                    const existing = currentObjects.find(o => o.id === det.className);
-                    if (existing) {
-                        return { ...existing, confidence: det.probability, label: det.className };
-                    }
-                    const size = 0.3 + Math.random() * 0.3;
-                    return {
-                        id: det.className, label: det.className, confidence: det.probability,
-                        bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
-                        vx: (Math.random() - 0.5) * 0.005, vy: (Math.random() - 0.5) * 0.005,
-                        vw: (Math.random() - 0.5) * 0.001, vh: (Math.random() - 0.5) * 0.001,
-                    };
-                });
-            });
-        } else {
-            setDetectionState("NO_DETECTION");
-            setPrimaryPrediction(null);
-            setDetectedObjects([]);
-            mqttLabel = null;
-        }
-        
-        // MQTT Publishing Logic - runs only when not on cooldown
-        const shouldPublish = mqttClientRef.current?.connected && !isMqttOnCooldown && mqttLabel;
-
-        if (shouldPublish) {
-            mqttClientRef.current!.publish(mqttTopic, mqttLabel);
-            addLog(`Published '${mqttLabel}' to MQTT topic '${mqttTopic}'`);
-            toast({
-                title: "MQTT Message Sent",
-                description: `Sent classification: ${mqttLabel}`,
-            });
-            setIsMqttOnCooldown(true);
-            addLog("MQTT cooldown started (5s).");
-            cooldownTimerRef.current = setTimeout(() => {
-                setIsMqttOnCooldown(false);
-                addLog("MQTT cooldown finished.");
-                cooldownTimerRef.current = null;
-            }, MQTT_COOLDOWN_MS);
-        }
-
-    } catch (error) {
-        console.error("Error during prediction:", error);
-        addLog("Prediction error. Check console.");
+      if (highConfidencePrediction) {
+        setDetectionState("SINGLE_OBJECT");
+        setPrimaryPrediction(highConfidencePrediction);
+        setDetectedObjects([]);
+      } else if (multipleDetections) {
+        setDetectionState("MULTIPLE_OBJECTS");
+        setPrimaryPrediction(null);
+        setDetectedObjects(currentObjects => {
+          const significantDetections = predictions.filter(p => p.probability > 0.5);
+          return significantDetections.map(det => {
+            const existing = currentObjects.find(o => o.id === det.className);
+            if (existing) {
+              return { ...existing, confidence: det.probability, label: det.className };
+            }
+            const size = 0.3 + Math.random() * 0.3;
+            return {
+              id: det.className, label: det.className, confidence: det.probability,
+              bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
+              vx: (Math.random() - 0.5) * 0.005, vy: (Math.random() - 0.5) * 0.005,
+              vw: (Math.random() - 0.5) * 0.001, vh: (Math.random() - 0.5) * 0.001,
+            };
+          });
+        });
+      } else {
+        setDetectionState("NO_DETECTION");
         setPrimaryPrediction(null);
         setDetectedObjects([]);
+      }
+      
+      // --- MQTT PUBLISHING LOGIC ---
+      if (mqttClientRef.current?.connected && !isMqttOnCooldown) {
+        let mqttLabel: string | null = null;
+        if (highConfidencePrediction) {
+          mqttLabel = highConfidencePrediction.className;
+        } else if (multipleDetections) {
+          mqttLabel = "Multiple Objects";
+        }
+        
+        if (mqttLabel) {
+          mqttClientRef.current!.publish(mqttTopic, mqttLabel);
+          addLog(`Published '${mqttLabel}' to MQTT topic '${mqttTopic}'`);
+          toast({
+            title: "MQTT Message Sent",
+            description: `Sent classification: ${mqttLabel}`,
+          });
+          
+          setIsMqttOnCooldown(true);
+          addLog("MQTT cooldown started (5s).");
+          cooldownTimerRef.current = setTimeout(() => {
+            setIsMqttOnCooldown(false);
+            addLog("MQTT cooldown finished.");
+            cooldownTimerRef.current = null;
+          }, MQTT_COOLDOWN_MS);
+        }
+      }
+
+    } catch (error) {
+      console.error("Error during prediction:", error);
+      addLog("Prediction error. Check console.");
+      setPrimaryPrediction(null);
+      setDetectedObjects([]);
     }
-}, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, isMqttOnCooldown]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, isMqttOnCooldown]);
 
 
   useEffect(() => {
