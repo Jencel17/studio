@@ -2,8 +2,6 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
-import type { MqttClient, IClientOptions } from "mqtt";
-import mqtt from "mqtt";
 import * as tmImage from "@teachablemachine/image";
 import * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
@@ -18,11 +16,11 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass } from "lucide-react";
+import { Camera, CameraOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
-import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
+import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Switch } from "@/components/ui/switch";
@@ -50,10 +48,15 @@ type DetectedObject = {
   vh: number;
 };
 
-type MqttStatus = "Connected" | "Disconnected" | "Connecting" | "Error";
-
 type LogEntry = {
   timestamp: string;
+  message: string;
+};
+
+type AppStatus = "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "COOLDOWN_ACTIVE";
+
+type CommandStatus = {
+  status: "IDLE" | "SUCCESS" | "ERROR";
   message: string;
 };
 
@@ -63,13 +66,13 @@ const CLASSIFICATION_INTERVAL = 200;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
-const MQTT_COOLDOWN_MS = 5000;
+const COMMAND_COOLDOWN_MS = 2000;
+const ESP32_IP = "http://192.168.4.1";
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
-  const [mqttStatus, setMqttStatus] = useState<MqttStatus>("Disconnected");
   const [isHibernating, setIsHibernating] = useState(false);
   const [isWakeLockActive, setIsWakeLockActive] = useState(false);
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
@@ -83,16 +86,14 @@ export default function SortVisionClient() {
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
   const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
-  const [isMqttOnCooldown, setIsMqttOnCooldown] = useState(false);
-
-
-  // MQTT Settings
-  const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8884/mqtt");
-  const [mqttTopic, setMqttTopic] = useState("trash/classification");
+  
+  // New state for HTTP communication
+  const [isCooldownActive, setIsCooldownActive] = useState(false);
+  const [appStatus, setAppStatus] = useState<AppStatus>("AWAITING_OBJECT");
+  const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const mqttClientRef = useRef<MqttClient | null>(null);
   const predictionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -276,117 +277,32 @@ export default function SortVisionClient() {
 
 
   useEffect(() => {
-    const savedBrokerUrl = localStorage.getItem("mqttBrokerUrl");
-    const savedMqttTopic = localStorage.getItem("mqttTopic");
-    if (savedBrokerUrl) setMqttBrokerUrl(savedBrokerUrl);
-    if (savedMqttTopic) setMqttTopic(savedMqttTopic);
     addLog("App initialized.");
   }, [addLog]);
   
-  const handleMqttBrokerUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newUrl = e.target.value;
-    setMqttBrokerUrl(newUrl);
-    localStorage.setItem("mqttBrokerUrl", newUrl);
-  };
 
-  const handleMqttTopicChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTopic = e.target.value;
-    setMqttTopic(newTopic);
-    localStorage.setItem("mqttTopic", newTopic);
-  };
-
-  const connectToMqtt = useCallback(() => {
-    function proceedWithConnection() {
-        if (mqttClientRef.current && mqttClientRef.current.connected) return;
-
-        if (mqttClientRef.current) {
-            mqttClientRef.current.end(true);
-            mqttClientRef.current = null;
-        }
-        
-        let urlToConnect = mqttBrokerUrl;
-        if (window.location.protocol === 'https:' && mqttBrokerUrl.startsWith('ws://')) {
-            urlToConnect = mqttBrokerUrl.replace('ws://', 'wss://');
-            addLog(`Insecure URL detected. Upgrading to wss:// for connection.`);
-        }
-
-
-        setMqttStatus("Connecting");
-        addLog(`Connecting to MQTT broker at ${urlToConnect}...`);
-        try {
-            const options: IClientOptions = {
-                clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
-                reconnectPeriod: 5000,
-                connectTimeout: 60000,
-            };
-            const client = mqtt.connect(urlToConnect, options);
-            mqttClientRef.current = client;
-
-            client.on("connect", () => {
-                setMqttStatus("Connected");
-                addLog("MQTT Connected.");
-                toast({ title: "MQTT Connected", description: `Connected to ${urlToConnect}` });
-            });
-
-            client.on("error", (err) => {
-                console.error("MQTT Connection Error:", err);
-                if (mqttClientRef.current === client) {
-                    setMqttStatus("Error");
-                    addLog(`MQTT Error: ${err.message}`);
-                    toast({ variant: "destructive", title: "MQTT Error", description: "Failed to connect. Check URL or network." });
-                    client.end(true);
-                    mqttClientRef.current = null;
-                }
-            });
-            
-            client.on("reconnect", () => {
-                if(mqttClientRef.current === client) {
-                    setMqttStatus("Connecting");
-                    addLog("MQTT Reconnecting...");
-                }
-            });
-
-            client.on("close", () => {
-                 if (mqttClientRef.current === client) {
-                    setMqttStatus("Disconnected");
-                    addLog("MQTT Disconnected.");
-                    mqttClientRef.current = null;
-                 }
-            });
-        } catch (error: any) {
-            console.error("MQTT Initialization Error:", error);
-            setMqttStatus("Error");
-            addLog(`MQTT Initialization Error: ${error.message}`);
-            toast({ variant: "destructive", title: "MQTT Error", description: "Invalid broker URL." });
-        }
-    }
-
-    if (!mqttBrokerUrl) {
-      addLog("MQTT Broker URL is empty. Cannot connect.");
-      setMqttStatus("Error");
-      return;
-    }
+  const sendSortCommand = useCallback(async (classificationLabel: string) => {
+    const url = `${ESP32_IP}/sort?class=${classificationLabel.toUpperCase()}`;
+    addLog(`Sending command to ESP32: ${url}`);
     
-    if (mqttStatus !== "Connecting" && mqttStatus !== "Connected") {
-        proceedWithConnection();
-    } else if(mqttStatus === "Connected"){
-        const currentUrl = mqttClientRef.current?.options.href;
-        if(currentUrl && mqttBrokerUrl && currentUrl !== mqttBrokerUrl) {
-            addLog("Broker URL changed, reconnecting...");
-            proceedWithConnection();
-        }
+    try {
+      const response = await fetch(url, { method: 'GET' });
+      
+      if (response.ok) {
+        setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
+        addLog(`Successfully sent command for ${classificationLabel}`);
+        toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
+      } else {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+    } catch (error: any) {
+      console.error("Failed to send command to ESP32:", error);
+      setCommandStatus({ status: "ERROR", message: `Error: Cannot reach ESP32. ${error.message}` });
+      addLog(`ERROR: Cannot reach ESP32. ${error.message}`);
+      toast({ variant: "destructive", title: "ESP32 Error", description: "Could not send command." });
     }
-  }, [mqttBrokerUrl, toast, addLog, mqttStatus]);
+  }, [addLog, toast]);
 
-
-  const disconnectFromMqtt = useCallback(() => {
-    if (mqttClientRef.current) {
-      addLog("Disconnecting from MQTT broker.");
-      mqttClientRef.current.end(true, () => {});
-      mqttClientRef.current = null;
-      setMqttStatus("Disconnected");
-    }
-  }, [addLog]);
   
   const resetInactivityTimer = useCallback(() => {
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
@@ -552,90 +468,47 @@ export default function SortVisionClient() {
 
   const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current || !model || isHibernating) {
-      return;
+        return;
     }
-  
     resetInactivityTimer();
-  
-    try {
-      // Step 1: Always get fresh predictions and update the UI state.
-      const predictions = await model.predict(videoRef.current);
-      setCurrentPredictions(predictions); // Update for the side panel display
-  
-      const highConfidencePrediction = predictions.find((p) => p.probability > 0.9);
-      const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
-  
-      if (highConfidencePrediction) {
-        setDetectionState("SINGLE_OBJECT");
-        setPrimaryPrediction(highConfidencePrediction);
-        setDetectedObjects([]);
-      } else if (multipleDetections) {
-        setDetectionState("MULTIPLE_OBJECTS");
-        setPrimaryPrediction(null);
-        setDetectedObjects((currentObjects) => {
-          const significantDetections = predictions.filter((p) => p.probability > 0.5);
-          return significantDetections.map((det) => {
-            const existing = currentObjects.find((o) => o.id === det.className);
-            if (existing) {
-              return { ...existing, confidence: det.probability, label: det.className };
-            }
-            const size = 0.3 + Math.random() * 0.3;
-            return {
-              id: det.className,
-              label: det.className,
-              confidence: det.probability,
-              bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
-              vx: (Math.random() - 0.5) * 0.005,
-              vy: (Math.random() - 0.5) * 0.005,
-              vw: (Math.random() - 0.5) * 0.001,
-              vh: (Math.random() - 0.5) * 0.001,
-            };
-          });
-        });
-      } else {
-        setDetectionState("NO_DETECTION");
-        setPrimaryPrediction(null);
-        setDetectedObjects([]);
-      }
-  
-      // Step 2: Handle MQTT messaging based on the latest state, respecting the cooldown.
-      if (highConfidencePrediction && mqttClientRef.current?.connected && !isMqttOnCooldown) {
-        const labelToSend = highConfidencePrediction.className;
-        mqttClientRef.current.publish(mqttTopic, labelToSend);
-        addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
-        toast({
-          title: "MQTT Message Sent",
-          description: `Sent classification: ${labelToSend}`,
-        });
-  
-        setIsMqttOnCooldown(true); // Start cooldown
-        cooldownTimerRef.current = setTimeout(() => {
-          setIsMqttOnCooldown(false);
-          addLog("MQTT cooldown finished. Restarting camera to prevent freeze...");
-          stopCamera();
-          // Short delay to ensure camera resources are released before restarting
-          setTimeout(() => {
-            startCamera(isFlashOn);
-          }, 100);
-        }, MQTT_COOLDOWN_MS);
-      }
-    } catch (error) {
-      console.error("Error during prediction:", error);
-      addLog("Prediction error. Check console.");
+
+    const predictions = await model.predict(videoRef.current);
+    setCurrentPredictions(predictions);
+
+    if (isCooldownActive) {
+        setAppStatus("COOLDOWN_ACTIVE");
+        return;
     }
-  }, [
-    isCameraOn,
-    model,
-    isHibernating,
-    isMqttOnCooldown,
-    mqttTopic,
-    resetInactivityTimer,
-    addLog,
-    toast,
-    stopCamera,
-    startCamera,
-    isFlashOn
-  ]);
+
+    const topPrediction = predictions.reduce((prev, current) => (prev.probability > current.probability) ? prev : current);
+
+    if (topPrediction && topPrediction.probability >= 0.90) {
+        setAppStatus("READY_TO_SEND");
+        setPrimaryPrediction(topPrediction);
+        setDetectionState("SINGLE_OBJECT");
+        
+        await sendSortCommand(topPrediction.className);
+        
+        setIsCooldownActive(true);
+        cooldownTimerRef.current = setTimeout(() => {
+            setIsCooldownActive(false);
+        }, COMMAND_COOLDOWN_MS);
+
+    } else if (topPrediction && topPrediction.probability > 0.5) {
+        setAppStatus("CONFIDENCE_TOO_LOW");
+        setPrimaryPrediction(topPrediction);
+        setDetectionState("SINGLE_OBJECT");
+    } else {
+        const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
+        if (multipleDetections) {
+          setDetectionState("MULTIPLE_OBJECTS");
+        } else {
+          setDetectionState("NO_DETECTION");
+        }
+        setAppStatus("AWAITING_OBJECT");
+        setPrimaryPrediction(null);
+    }
+  }, [isCameraOn, model, isHibernating, isCooldownActive, resetInactivityTimer, sendSortCommand]);
 
 
   useEffect(() => {
@@ -770,11 +643,8 @@ export default function SortVisionClient() {
   }, [lastClassifications, toast, addLog, model]);
   
    useEffect(() => {
-    if (mqttBrokerUrl) connectToMqtt();
-
     return () => {
       stopCamera();
-      disconnectFromMqtt();
       if (cooldownTimerRef.current) {
         clearTimeout(cooldownTimerRef.current);
       }
@@ -782,42 +652,48 @@ export default function SortVisionClient() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  useEffect(() => {
-    if (!mqttBrokerUrl) return;
-
-    if (!mqttClientRef.current || !mqttClientRef.current.connected) {
-        connectToMqtt();
-        return;
-    }
-
-    try {
-        const clientHref = mqttClientRef.current.options.href;
-        if (!clientHref) {
-             addLog("MQTT client URL is not available, reconnecting...");
-             connectToMqtt();
-             return;
+  const StatusDisplay = () => {
+    const getStatusText = () => {
+        switch (appStatus) {
+            case "AWAITING_OBJECT": return "Awaiting Object";
+            case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
+            case "READY_TO_SEND":
+                return `Ready to Send: ${primaryPrediction?.className || '...'}`;
+            case "COOLDOWN_ACTIVE": return "COOLDOWN ACTIVE";
+            default: return "Analyzing...";
         }
-        const clientUrl = new URL(clientHref);
-        const stateUrl = new URL(mqttBrokerUrl);
+    };
 
-        if (clientUrl.href !== stateUrl.href) {
-             addLog("MQTT broker details changed, reconnecting...");
-             connectToMqtt();
+    const getStatusBadgeVariant = () => {
+        switch (appStatus) {
+            case "READY_TO_SEND": return "default";
+            case "COOLDOWN_ACTIVE": return "secondary";
+            case "CONFIDENCE_TOO_LOW": return "destructive";
+            default: return "outline";
         }
-    } catch (error) {
-        addLog("Invalid MQTT URL format. Cannot compare for reconnection.");
-    }
-  }, [mqttBrokerUrl, connectToMqtt, addLog]);
+    };
 
+    return (
+        <div className="flex flex-col gap-2">
+            <div className="flex items-center gap-2">
+                <Badge variant={getStatusBadgeVariant()} className="text-xs">
+                    {appStatus === 'COOLDOWN_ACTIVE' && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
+                    {getStatusText()}
+                </Badge>
+                <Badge variant="outline" className="gap-2 text-xs">
+                    <Wifi className="h-3 w-3"/> {ESP32_IP}
+                </Badge>
+            </div>
+             <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                {commandStatus.status === 'IDLE' && <p>{commandStatus.message}</p>}
+                {commandStatus.status === 'SUCCESS' && <CheckCircle className="h-4 w-4 text-green-500" />}
+                {commandStatus.status === 'ERROR' && <XCircle className="h-4 w-4 text-red-500" />}
+                <p className="truncate">{commandStatus.status !== 'IDLE' && commandStatus.message}</p>
+            </div>
+        </div>
+    );
+};
 
-  const getMqttBadgeVariant = () => {
-    switch (mqttStatus) {
-      case "Connected": return "default";
-      case "Connecting": return "secondary";
-      case "Error": return "destructive";
-      case "Disconnected": return "outline";
-    }
-  };
 
   const PredictionDisplay = () => {
     return (
@@ -829,7 +705,7 @@ export default function SortVisionClient() {
                     Multiple objects detected
                 </h3>
             </div>
-        ) : detectionState === "SINGLE_OBJECT" && primaryPrediction && !isHibernating ? (
+        ) : (detectionState === "SINGLE_OBJECT" || appStatus === "CONFIDENCE_TOO_LOW") && primaryPrediction && !isHibernating ? (
             <>
             <h3 className="text-2xl font-bold text-white drop-shadow-lg">
                 {primaryPrediction.className}
@@ -846,7 +722,7 @@ export default function SortVisionClient() {
             </>
         ) : (
             <p className="text-lg text-white/90 shadow-md">
-            {isCameraOn ? (isHibernating ? "Hibernating..." : isMqttOnCooldown ? "Cooldown..." : model ? "Analyzing..." : "Awaiting model...") : "Camera is off"}
+            {isCameraOn ? (isHibernating ? "Hibernating..." : model ? "Analyzing..." : "Awaiting model...") : "Camera is off"}
             </p>
         )}
         </div>
@@ -935,19 +811,6 @@ export default function SortVisionClient() {
             </div>
           </SidebarGroup>
           <SidebarGroup>
-            <SidebarGroupLabel>MQTT Configuration</SidebarGroupLabel>
-            <div className="space-y-4 p-4">
-              <div className="space-y-2">
-                <Label htmlFor="mqtt-broker">Broker URL</Label>
-                <SidebarInput id="mqtt-broker" value={mqttBrokerUrl} onChange={handleMqttBrokerUrlChange} placeholder="wss://broker.hivemq.com:8884/mqtt" />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="mqtt-topic">Topic</Label>
-                <SidebarInput id="mqtt-topic" value={mqttTopic} onChange={handleMqttTopicChange} placeholder="trash/classification" />
-              </div>
-            </div>
-          </SidebarGroup>
-          <SidebarGroup>
             <SidebarGroupLabel>Device Settings</SidebarGroupLabel>
             <div className="space-y-4 p-4">
               <div className="flex items-center justify-between">
@@ -977,12 +840,8 @@ export default function SortVisionClient() {
             <CardTitle className="text-2xl font-bold">SortVision</CardTitle>
             <CardDescription>AI-Powered Waste Classification</CardDescription>
           </div>
-          <div className="absolute top-4 right-4 flex items-center gap-2 pt-1">
-            {isHibernating && <Badge variant="secondary" className="gap-2 text-xs animate-pulse"><PowerOff className="h-3 w-3" /> Hibernating</Badge>}
-            {isMqttOnCooldown && <Badge variant="secondary" className="gap-2 text-xs"><Hourglass className="h-3 w-3 animate-spin" /> Cooldown</Badge>}
-            <Badge variant={getMqttBadgeVariant()} className="gap-2 text-xs">
-              MQTT: {mqttStatus}
-            </Badge>
+           <div className="absolute top-4 right-4 flex items-center gap-2 pt-1">
+              <StatusDisplay />
           </div>
         </CardHeader>
         <CardContent>
@@ -1076,10 +935,6 @@ export default function SortVisionClient() {
                 {isFlashOn ? <FlashlightOff /> : <Flashlight />}
               </Button>
               <div className="flex flex-col gap-2 w-full sm:w-auto">
-                  <Button onClick={connectToMqtt} disabled={mqttStatus === "Connecting"} variant="outline" className="w-full">
-                    {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
-                    {mqttStatus === 'Connected' ? 'Reconnect' : mqttStatus === "Connecting" ? 'Connecting...' : 'Connect'}
-                  </Button>
                   <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="w-full">
                     <Terminal />
                     Console
