@@ -544,8 +544,8 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(async () => {
-    // Exit if camera is off, model not loaded, or on cooldown
-    if (!isCameraOn || !videoRef.current || !model || isMqttOnCooldown) {
+    // Exit if camera is off or model not loaded
+    if (!isCameraOn || !videoRef.current || !model) {
       return;
     }
   
@@ -601,7 +601,7 @@ export default function SortVisionClient() {
       }
   
       // --- 3. Handle MQTT messaging ---
-      if (highConfidencePrediction && mqttClientRef.current?.connected) {
+      if (highConfidencePrediction && mqttClientRef.current?.connected && !isMqttOnCooldown) {
         const labelToSend = highConfidencePrediction.className;
         mqttClientRef.current.publish(mqttTopic, labelToSend);
         addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
@@ -610,7 +610,11 @@ export default function SortVisionClient() {
           description: `Sent classification: ${labelToSend}`,
         });
   
-        // Cooldown is temporarily disabled
+        setIsMqttOnCooldown(true);
+        cooldownTimerRef.current = setTimeout(() => {
+            setIsMqttOnCooldown(false);
+            addLog("MQTT cooldown finished.");
+        }, MQTT_COOLDOWN_MS);
       }
     } catch (error) {
       console.error("Error during prediction:", error);
