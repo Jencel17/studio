@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
@@ -7,6 +6,7 @@ import mqtt from "mqtt";
 import * as tmImage from "@teachablemachine/image";
 import * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
+import { z } from "zod";
 import {
   Card,
   CardContent,
@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck, handleInterpretDetections, type InterpretDetectionsInput } from "@/app/actions/ai";
+import { handleModelSwapCheck, handleInterpretDetections, type InterpretDetectionsInput, type SuggestAiModelSwapInput } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
@@ -29,6 +29,29 @@ import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+
+const SuggestAiModelSwapInputSchema = z.object({
+  averageConfidenceScores: z
+    .record(z.number())
+    .describe(
+      'A record of the average confidence scores for each classification label (Plastic, Metal, Paper) over a recent period.'
+    ),
+  numClassifications: z
+    .number()
+    .describe(
+      'Number of classifications made in the recent period.'
+    ),
+});
+
+const PredictionSchema = z.object({
+  className: z.string(),
+  probability: z.number(),
+});
+
+const InterpretDetectionsInputSchema = z.object({
+  predictions: z.array(PredictionSchema).describe('An array of classification predictions from the Teachable Machine model.'),
+  confidenceThreshold: z.number().describe('The minimum confidence score to consider a prediction significant.'),
+});
 
 
 type Prediction = {
@@ -60,7 +83,7 @@ type LogEntry = {
 type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "AMBIGUOUS";
 
 const CONFIDENCE_THRESHOLD = 0.8;
-const CLASSIFICATION_INTERVAL = 2000;
+const CLASSIFICATION_INTERVAL = 200;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
@@ -126,7 +149,7 @@ export default function SortVisionClient() {
       
       addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
       toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
-
+      
     } catch (error: any) {
         console.error("Model loading error:", error);
         addLog(`Model loading failed: ${error.message}`);
@@ -543,85 +566,54 @@ export default function SortVisionClient() {
     resetInactivityTimer();
   
     if (isHibernating || !isCameraOn || !videoRef.current || !model) {
-      setPrimaryPrediction(null);
-      setDetectedObjects([]);
       return;
     }
   
     try {
       const modelPredictions = await model.predict(videoRef.current);
       
-      const aiResult = await handleInterpretDetections({
+      const result = await handleInterpretDetections({
         predictions: modelPredictions,
         confidenceThreshold: CONFIDENCE_THRESHOLD,
       });
 
-      // Update UI state based on AI result first
-      setDetectionState(aiResult.detectionState);
-      if (aiResult.detectionState === "SINGLE_OBJECT" && aiResult.primaryObject) {
-        const prediction = modelPredictions.find(p => p.className === aiResult.primaryObject);
-        if (prediction) {
-          setPrimaryPrediction(prediction);
-          setDetectedObjects([]);
-        }
-      } else if (aiResult.detectionState === "MULTIPLE_OBJECTS") {
+      // Update UI state immediately
+      setDetectionState(result.detectionState);
+      if (result.detectionState === "SINGLE_OBJECT" && result.primaryObject) {
+        const prediction = modelPredictions.find(p => p.className === result.primaryObject);
+        setPrimaryPrediction(prediction || null);
+        setDetectedObjects([]);
+      } else if (result.detectionState === "MULTIPLE_OBJECTS" && result.detectedObjects) {
         setPrimaryPrediction(null);
-        if (aiResult.detectedObjects) {
-          setDetectedObjects(currentObjects => {
-            return aiResult.detectedObjects!.map(label => {
-              const p = modelPredictions.find(pred => pred.className === label)!;
-              const existing = currentObjects.find(o => o.id === p.className);
-              if (existing) {
-                return { ...existing, confidence: p.probability, label: p.className };
-              }
-              const size = 0.3 + Math.random() * 0.3;
-              return {
-                id: p.className,
-                label: p.className,
-                confidence: p.probability,
-                bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
-                vx: (Math.random() - 0.5) * 0.005,
-                vy: (Math.random() - 0.5) * 0.005,
-                vw: (Math.random() - 0.5) * 0.001,
-                vh: (Math.random() - 0.5) * 0.001,
-              };
-            });
+        setDetectedObjects(currentObjects => {
+          return result.detectedObjects!.map(label => {
+            const existing = currentObjects.find(o => o.id === label);
+            const prediction = modelPredictions.find(p => p.className === label);
+            if (existing) {
+              return { ...existing, confidence: prediction?.probability || 0, label: label };
+            }
+            const size = 0.3 + Math.random() * 0.3;
+            return {
+              id: label, label: label, confidence: prediction?.probability || 0,
+              bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
+              vx: (Math.random() - 0.5) * 0.005, vy: (Math.random() - 0.5) * 0.005,
+              vw: (Math.random() - 0.5) * 0.001, vh: (Math.random() - 0.5) * 0.001,
+            };
           });
-        }
-      } else { // NO_DETECTION or AMBIGUOUS
+        });
+      } else {
         setPrimaryPrediction(null);
         setDetectedObjects([]);
       }
       
-      addLog(`AI decision: ${aiResult.detectionState} - ${aiResult.reason}`);
-
-      // Collect last classifications for performance check
-      const significantPrediction = modelPredictions.find(p => p.probability > CONFIDENCE_THRESHOLD);
-      if (significantPrediction) {
-        setLastClassifications(prev => [...prev, significantPrediction]);
+      if (modelPredictions.length > 0) {
+        setLastClassifications(prev => [...prev, ...modelPredictions]);
       }
-
-      // MQTT Publishing Logic
-      let currentLabel: string | null = null;
-      let isMultiObjectSameCategory = false;
       
-      if (aiResult.detectionState === "SINGLE_OBJECT" && aiResult.primaryObject) {
-        currentLabel = aiResult.primaryObject;
-      } else if (aiResult.detectionState === "MULTIPLE_OBJECTS" && aiResult.detectedObjects) {
-          const distinctCategories = new Set(aiResult.detectedObjects);
-          if (distinctCategories.size === 1) {
-            currentLabel = aiResult.detectedObjects[0];
-            isMultiObjectSameCategory = true;
-          } else {
-            currentLabel = "Multiple Objects";
-          }
-      } else {
-        setLastPublishedLabel(null); // Clear last published label when no object is detected
-      }
-
+      const currentLabel = result.detectionState === 'SINGLE_OBJECT' ? result.primaryObject : result.detectionState === 'MULTIPLE_OBJECTS' ? 'Multiple Objects' : null;
       const shouldPublish = mqttClientRef.current?.connected && !isMqttOnCooldown && currentLabel;
 
-      if (shouldPublish && (currentLabel !== lastPublishedLabel || (currentLabel === lastPublishedLabel && isMultiObjectSameCategory))) {
+      if (shouldPublish && currentLabel !== lastPublishedLabel) {
         mqttClientRef.current.publish(mqttTopic, currentLabel);
         addLog(`Published '${currentLabel}' to MQTT topic '${mqttTopic}'`);
         toast({
@@ -636,6 +628,8 @@ export default function SortVisionClient() {
             addLog("MQTT cooldown finished.");
             cooldownTimerRef.current = null;
         }, MQTT_COOLDOWN_MS);
+      } else if (!currentLabel) {
+        setLastPublishedLabel(null);
       }
       
     } catch (error) {
@@ -1009,20 +1003,21 @@ export default function SortVisionClient() {
               <PredictionDisplay />
               {isCameraOn && !isHibernating && detectedObjects.map((obj) => {
                 const [x, y, w, h] = obj.bbox;
+                
                 const colors = {
-                  Plastic: 'border-blue-400',
-                  Metal: 'border-yellow-400',
-                  Paper: 'border-green-400',
+                  [modelLabels[0]]: 'border-blue-400',
+                  [modelLabels[1]]: 'border-yellow-400',
+                  [modelLabels[2]]: 'border-green-400',
                 };
                 const textColors = {
-                  Plastic: 'bg-blue-400',
-                  Metal: 'bg-yellow-400',
-                  Paper: 'bg-green-400',
+                  [modelLabels[0]]: 'bg-blue-400',
+                  [modelLabels[1]]: 'bg-yellow-400',
+                  [modelLabels[2]]: 'bg-green-400',
                 };
                  const bgColors = {
-                  Plastic: 'bg-blue-400/10',
-                  Metal: 'bg-yellow-400/10',
-                  Paper: 'bg-green-400/10',
+                  [modelLabels[0]]: 'bg-blue-400/10',
+                  [modelLabels[1]]: 'bg-yellow-400/10',
+                  [modelLabels[2]]: 'bg-green-400/10',
                 };
 
                 const borderColor = colors[obj.label as keyof typeof colors] || 'border-gray-400';
@@ -1113,6 +1108,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-
-    

@@ -4,39 +4,15 @@
  * @fileOverview An AI flow to interpret results from an image classification model.
  *
  * - interpretDetections - A function that analyzes a list of predictions to determine the overall state.
- * - InterpretDetectionsInputSchema - Zod schema for the input.
- * - InterpretDetectionsInput - The TypeScript type for the input.
  */
 
 import { ai } from '@/ai/genkit';
-import { z } from 'genkit';
-
-const PredictionSchema = z.object({
-  className: z.string(),
-  probability: z.number(),
-});
-
-const InterpretDetectionsInputSchema = z.object({
-  predictions: z.array(PredictionSchema).describe('An array of classification predictions from the Teachable Machine model.'),
-  confidenceThreshold: z.number().describe('The minimum confidence score to consider a prediction significant.'),
-});
-export type InterpretDetectionsInput = z.infer<typeof InterpretDetectionsInputSchema>;
-
-
-const InterpretDetectionsOutputSchema = z.object({
-  detectionState: z
-    .enum(['SINGLE_OBJECT', 'MULTIPLE_OBJECTS', 'NO_DETECTION', 'AMBIGUOUS'])
-    .describe('The overall state of detection.'),
-  primaryObject: z.string().optional().describe('The name of the single object detected, if applicable.'),
-  detectedObjects: z.array(z.string()).optional().describe('A list of objects detected, if multiple are present.'),
-  reason: z.string().describe('A brief explanation for the decision.'),
-});
-type InterpretDetectionsOutput = z.infer<typeof InterpretDetectionsOutputSchema>;
+import { InterpretDetectionsInputSchema, InterpretDetectionsOutputSchema, type InterpretDetectionsInput } from '@/app/actions/ai';
 
 
 export async function interpretDetections(
   input: InterpretDetectionsInput
-): Promise<InterpretDetectionsOutput> {
+) {
   return interpretDetectionsFlow(input);
 }
 

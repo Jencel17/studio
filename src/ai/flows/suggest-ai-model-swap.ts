@@ -4,48 +4,14 @@
  * @fileOverview An AI model suggestion flow.
  *
  * - suggestAiModelSwap - A function that determines whether to suggest swapping the AI model.
- * - SuggestAiModelSwapInput - The input type for the suggestAiModelSwap function.
- * - SuggestAiModelSwapOutput - The return type for the suggestAiModelSwap function.
  */
 
 import {ai} from '@/ai/genkit';
-import {z} from 'genkit';
-
-const SuggestAiModelSwapInputSchema = z.object({
-  averageConfidenceScores: z
-    .record(z.number())
-    .describe(
-      'A record of the average confidence scores for each classification label (Plastic, Metal, Paper) over a recent period.'
-    ),
-  numClassifications: z
-    .number()
-    .describe(
-      'Number of classifications made in the recent period.'
-    ),
-});
-export type SuggestAiModelSwapInput = z.infer<
-  typeof SuggestAiModelSwapInputSchema
->;
-
-const SuggestAiModelSwapOutputSchema = z.object({
-  shouldSuggestSwap: z
-    .boolean()
-    .describe(
-      'Whether or not the app should suggest swapping in a different trained model.'
-    ),
-  reason: z
-    .string()
-    .describe(
-      'The reason for suggesting or not suggesting a model swap, providing context for the decision.'
-    ),
-});
-export type SuggestAiModelSwapOutput = z.infer<
-  typeof SuggestAiModelSwapOutputSchema
->;
+import { type SuggestAiModelSwapInput, SuggestAiModelSwapInputSchema, SuggestAiModelSwapOutputSchema } from '@/app/actions/ai';
 
 export async function suggestAiModelSwap(
   input: SuggestAiModelSwapInput
-): Promise<SuggestAiModelSwapOutput> {
+) {
   return suggestAiModelSwapFlow(input);
 }
 
