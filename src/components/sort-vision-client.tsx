@@ -284,7 +284,10 @@ export default function SortVisionClient() {
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
     if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
+        const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
+        addLog(errorMsg);
         setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
+        toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security. See console." });
         return;
     }
 
@@ -397,10 +400,14 @@ export default function SortVisionClient() {
       clearInterval(predictionIntervalRef.current);
       predictionIntervalRef.current = null;
     }
+    if (cooldownTimerRef.current) {
+        clearTimeout(cooldownTimerRef.current);
+        cooldownTimerRef.current = null;
+    }
+    setIsCooldownActive(false);
     setIsHibernating(false);
     addLog("Camera stopped.");
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-    if (cooldownTimerRef.current) clearTimeout(cooldownTimerRef.current);
     releaseWakeLock();
   }, [releaseWakeLock, addLog]);
 
@@ -501,6 +508,7 @@ export default function SortVisionClient() {
         setIsCooldownActive(true);
         cooldownTimerRef.current = setTimeout(() => {
             setIsCooldownActive(false);
+            cooldownTimerRef.current = null;
         }, COMMAND_COOLDOWN_MS);
 
     } else if (topPrediction && topPrediction.probability > 0.5) {
@@ -652,11 +660,9 @@ export default function SortVisionClient() {
   }, [lastClassifications, toast, addLog, model]);
   
    useEffect(() => {
+    // ComponentWillUnmount
     return () => {
       stopCamera();
-      if (cooldownTimerRef.current) {
-        clearTimeout(cooldownTimerRef.current);
-      }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -992,3 +998,5 @@ export default function SortVisionClient() {
   );
 }
 
+
+    
