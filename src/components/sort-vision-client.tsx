@@ -552,32 +552,41 @@ export default function SortVisionClient() {
   
     try {
       const modelPredictions = await model.predict(videoRef.current);
-      const highConfidenceDetections = modelPredictions
+      
+      const potentialDetections = modelPredictions
         .map((p, i) => ({
           id: i,
           label: p.className,
           confidence: p.probability,
-          bbox: [0.1, 0.1, 0.8, 0.8] as BoundingBox, // Default bbox, update if model provides it
-          rotation: 0,
+          // Assign a random-ish bounding box for simulation
+          bbox: [
+            0.1 + (i * 0.15) % 0.5, 
+            0.2 + (i * 0.2) % 0.6, 
+            0.25 + Math.random() * 0.1, 
+            0.25 + Math.random() * 0.1
+          ] as BoundingBox,
+          rotation: Math.random() * 10 - 5,
         }))
-        .filter(p => p.confidence > 0.1); // Lower threshold to see what model is "thinking"
+        .filter(p => p.confidence > 0.2); // Lower threshold to see what model is "thinking"
 
-        setDetectedObjects(highConfidenceDetections.map(p => ({
-          ...p,
-          rotation: Math.random() * 10 - 5 // slight rotation for visual effect
-        })));
+      setDetectedObjects(potentialDetections);
 
-
-      const primaryPrediction = highConfidenceDetections.reduce((max, p) => p.confidence > max.confidence ? p : max, highConfidenceDetections[0]);
-
-      if (primaryPrediction && primaryPrediction.confidence > CONFIDENCE_THRESHOLD) {
+      const highConfidenceDetections = potentialDetections.filter(p => p.confidence > CONFIDENCE_THRESHOLD);
+      
+      let primaryPrediction = null;
+      if (highConfidenceDetections.length > 0) {
+        primaryPrediction = highConfidenceDetections.reduce((max, p) => p.confidence > max.confidence ? p : max);
+      }
+      
+      if (primaryPrediction) {
           setPrediction(primaryPrediction);
           addLog(`Classified: ${primaryPrediction.label} (Confidence: ${(primaryPrediction.confidence * 100).toFixed(0)}%)`);
+
           if (mqttClientRef.current?.connected && highConfidenceDetections.length === 1) {
               mqttClientRef.current.publish(mqttTopic, primaryPrediction.label);
               addLog(`Published '${primaryPrediction.label}' to MQTT topic '${mqttTopic}'`);
           }
-          setLastClassifications((prev) => [...prev, primaryPrediction]);
+          setLastClassifications((prev) => [...prev, primaryPrediction!]);
       } else {
           setPrediction(null);
       }
@@ -722,7 +731,7 @@ export default function SortVisionClient() {
 
   const PredictionDisplay = () => (
     <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-      {detectedObjects.length > 1 && !prediction && !isHibernating ? (
+      {detectedObjects.filter(o => o.confidence > CONFIDENCE_THRESHOLD).length > 1 ? (
         <div className="flex items-center gap-2">
             <AlertTriangle className="h-6 w-6 text-yellow-400" />
             <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
@@ -999,3 +1008,4 @@ export default function SortVisionClient() {
   );
 }
 
+    
