@@ -5,6 +5,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import type { MqttClient, IClientOptions } from "mqtt";
 import mqtt from "mqtt";
+import * as tmImage from "@teachablemachine/image";
+import * as tf from "@tensorflow/tfjs";
 import {
   Card,
   CardContent,
@@ -16,7 +18,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle } from "lucide-react";
+import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload } from "lucide-react";
 import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
@@ -30,7 +32,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
 type Prediction = {
-  label: "Plastic" | "Metal" | "Paper";
+  label: "Plastic" | "Metal" | "Paper" | string;
   confidence: number;
 };
 
@@ -38,7 +40,7 @@ type BoundingBox = [number, number, number, number]; // [x, y, width, height]
 
 type DetectedObject = {
   id: number;
-  label: "Plastic" | "Metal" | "Paper";
+  label: Prediction['label'];
   confidence: number;
   bbox: BoundingBox;
   rotation: number; // For tilt effect
@@ -69,12 +71,12 @@ export default function SortVisionClient() {
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [detectedObjects, setDetectedObjects] = useState<DetectedObject[]>([]);
-
+  const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
+  const [isModelLoading, setIsModelLoading] = useState(false);
 
   // MQTT Settings
   const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8081/mqtt");
   const [mqttTopic, setMqttTopic] = useState("trash/classification");
-
 
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -82,6 +84,8 @@ export default function SortVisionClient() {
   const predictionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const modelJSONRef = useRef<HTMLInputElement>(null);
+  const modelMetadataRef = useRef<HTMLInputElement>(null);
 
   const { toast } = useToast();
   
@@ -92,6 +96,37 @@ export default function SortVisionClient() {
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
+
+  const loadModel = async (modelFile: File, metadataFile: File) => {
+    if (!modelFile || !metadataFile) {
+        toast({ variant: "destructive", title: "Model Load Error", description: "Please provide both model.json and metadata.json files." });
+        return;
+    }
+    
+    setIsModelLoading(true);
+    addLog("Loading Teachable Machine model...");
+    try {
+        const modelURL = URL.createObjectURL(modelFile);
+        const metadataURL = URL.createObjectURL(metadataFile);
+        
+        await tf.setBackend('cpu');
+        await tf.ready();
+
+        const loadedModel = await tmImage.load(modelURL, metadataURL);
+        setModel(loadedModel);
+        
+        addLog(`Model loaded successfully. Classes: ${loadedModel.getClassLabels().join(', ')}`);
+        toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
+
+    } catch (error: any) {
+        console.error("Model loading error:", error);
+        addLog(`Model loading failed: ${error.message}`);
+        toast({ variant: "destructive", title: "Model Load Error", description: "Could not load the model. Check console for details." });
+        setModel(null);
+    } finally {
+        setIsModelLoading(false);
+    }
+};
 
   // Load MQTT settings from localStorage on initial render
   useEffect(() => {
@@ -361,71 +396,60 @@ export default function SortVisionClient() {
     }
   };
 
-  const runClassification = useCallback(() => {
+  const runClassification = useCallback(async () => {
     resetInactivityTimer();
   
-    if (isHibernating || !isCameraOn) {
+    if (isHibernating || !isCameraOn || !videoRef.current || !model) {
       setPrediction(null);
       setDetectedObjects([]);
       return;
     }
   
-    const labels: DetectedObject["label"][] = ["Plastic", "Metal", "Paper"];
-    const scenario = Math.random();
-    let newObjects: DetectedObject[] = [];
-  
-    if (scenario < 0.6) { // Single item
-      const size = 0.4 + Math.random() * 0.2;
-      newObjects = [{
-        id: Date.now(),
-        label: labels[Math.floor(Math.random() * labels.length)],
-        confidence: Math.random() * 0.2 + 0.8,
-        bbox: [(1 - size) / 2 + (Math.random() * 0.2 - 0.1), (1 - size) / 2 + (Math.random() * 0.2 - 0.1), size, size], // Centered with jitter
-        rotation: Math.random() * 30 - 15,
-      }];
-    } else if (scenario < 0.85) { // Multiple items
-      newObjects.push({
-        id: Date.now(),
-        label: labels[Math.floor(Math.random() * labels.length)],
-        confidence: Math.random() * 0.3 + 0.7,
-        bbox: [0.1 + (Math.random() * 0.1), 0.25, 0.3, 0.3],
-        rotation: Math.random() * 30 - 15,
-      });
-      newObjects.push({
-        id: Date.now() + 1,
-        label: labels[Math.floor(Math.random() * labels.length)],
-        confidence: Math.random() * 0.3 + 0.7,
-        bbox: [0.6 - (Math.random() * 0.1), 0.45, 0.3, 0.3],
-        rotation: Math.random() * 30 - 15,
-      });
-    }
-    // Else: No items
-  
-    setDetectedObjects(newObjects);
-    const highConfidenceDetections = newObjects.filter(d => d.confidence > CONFIDENCE_THRESHOLD);
-  
-    if (highConfidenceDetections.length > 1) {
-      setPrediction(null); // Clear main prediction if multiple objects
-      addLog(`Multiple items detected: ${highConfidenceDetections.map(p => p.label).join(', ')}. No signal sent.`);
-    } else if (highConfidenceDetections.length === 1) {
-      const currentPrediction = highConfidenceDetections[0];
-      setPrediction(currentPrediction);
-  
-      addLog(`Classified: ${currentPrediction.label} (Confidence: ${(currentPrediction.confidence * 100).toFixed(0)}%)`);
-      if (mqttClientRef.current?.connected) {
-        mqttClientRef.current.publish(mqttTopic, currentPrediction.label);
-        addLog(`Published '${currentPrediction.label}' to MQTT topic '${mqttTopic}'`);
+    try {
+      const modelPredictions = await model.predict(videoRef.current);
+      const highConfidenceDetections = modelPredictions
+        .map((p, i) => ({
+          id: i,
+          label: p.className,
+          confidence: p.probability,
+          bbox: [0.1, 0.1, 0.8, 0.8] as BoundingBox, // Default bbox, update if model provides it
+          rotation: 0,
+        }))
+        .filter(p => p.confidence > 0.1); // Lower threshold to see what model is "thinking"
+
+        setDetectedObjects(highConfidenceDetections.map(p => ({
+          ...p,
+          rotation: Math.random() * 10 - 5 // slight rotation for visual effect
+        })));
+
+
+      const primaryPrediction = highConfidenceDetections.reduce((max, p) => p.confidence > max.confidence ? p : max, highConfidenceDetections[0]);
+
+      if (primaryPrediction && primaryPrediction.confidence > CONFIDENCE_THRESHOLD) {
+          setPrediction(primaryPrediction);
+          addLog(`Classified: ${primaryPrediction.label} (Confidence: ${(primaryPrediction.confidence * 100).toFixed(0)}%)`);
+          if (mqttClientRef.current?.connected) {
+              mqttClientRef.current.publish(mqttTopic, primaryPrediction.label);
+              addLog(`Published '${primaryPrediction.label}' to MQTT topic '${mqttTopic}'`);
+          }
+          setLastClassifications((prev) => [...prev, primaryPrediction]);
+      } else {
+          setPrediction(null);
       }
-      setLastClassifications((prev) => [...prev, currentPrediction]);
-    } else {
-      setPrediction(null); // No high-confidence object
+    } catch (error) {
+      console.error("Error during prediction:", error);
+      addLog("Prediction error. Check console.");
+      setPrediction(null);
+      setDetectedObjects([]);
     }
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn]);
+  
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model]);
+
 
   useEffect(() => {
-    if (isCameraOn) {
+    if (isCameraOn && model) {
       if (!predictionIntervalRef.current) {
-        predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL);
+        predictionIntervalRef.current = setInterval(runClassification, 500); // Faster loop for real model
       }
     } else {
       if (predictionIntervalRef.current) {
@@ -439,7 +463,7 @@ export default function SortVisionClient() {
         clearInterval(predictionIntervalRef.current);
       }
     };
-  }, [isCameraOn, runClassification]);
+  }, [isCameraOn, model, runClassification]);
   
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -461,6 +485,10 @@ export default function SortVisionClient() {
         setLastClassifications([]);
 
         const scores: { [key: string]: number[] } = { Plastic: [], Metal: [], Paper: [] };
+         model?.getClassLabels().forEach(label => {
+            scores[label] = [];
+        });
+
         classificationsToAnalyze.forEach(p => {
             if (p.label in scores) {
                 scores[p.label].push(p.confidence);
@@ -496,7 +524,7 @@ export default function SortVisionClient() {
     };
 
     checkModelPerformance();
-  }, [lastClassifications, toast, addLog]);
+  }, [lastClassifications, toast, addLog, model]);
   
    useEffect(() => {
     // Initial connection
@@ -544,11 +572,11 @@ export default function SortVisionClient() {
 
   const PredictionDisplay = () => (
     <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-      {detectedObjects.length > 1 && !isHibernating ? (
+      {detectedObjects.length > 1 && !prediction && !isHibernating ? (
         <div className="flex items-center gap-2">
             <AlertTriangle className="h-6 w-6 text-yellow-400" />
             <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
-                Multiple items detected
+                Multiple items possible
             </h3>
         </div>
       ) : prediction && !isHibernating ? (
@@ -568,15 +596,15 @@ export default function SortVisionClient() {
         </>
       ) : (
         <p className="text-lg text-white/90 shadow-md">
-          {isCameraOn ? (isHibernating ? "Hibernating..." : "Analyzing...") : "Camera is off"}
+          {isCameraOn ? (isHibernating ? "Hibernating..." : model ? "Analyzing..." : "Awaiting model...") : "Camera is off"}
         </p>
       )}
     </div>
   );
 
   const ItemIcon = () => {
-    const getActiveClass = (label: Prediction['label']) => {
-        if (prediction?.label === label && prediction.confidence > CONFIDENCE_THRESHOLD && !isHibernating && detectedObjects.length <= 1) {
+    const getActiveClass = (label: string) => {
+        if (prediction?.label.toLowerCase() === label.toLowerCase() && prediction.confidence > CONFIDENCE_THRESHOLD && !isHibernating) {
             return "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
         }
         return "";
@@ -603,6 +631,35 @@ export default function SortVisionClient() {
             <SidebarClose />
         </SidebarHeader>
         <SidebarContent className="p-0">
+          <SidebarGroup>
+            <SidebarGroupLabel>Teachable Machine Model</SidebarGroupLabel>
+            <div className="space-y-4 p-4">
+              <div className="space-y-2">
+                <Label htmlFor="model-json">Model File (model.json)</Label>
+                <SidebarInput id="model-json" type="file" accept=".json" ref={modelJSONRef} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="model-metadata">Metadata File (metadata.json)</Label>
+                <SidebarInput id="model-metadata" type="file" accept=".json" ref={modelMetadataRef} />
+              </div>
+              <Button 
+                className="w-full"
+                onClick={() => {
+                  const modelFile = modelJSONRef.current?.files?.[0];
+                  const metadataFile = modelMetadataRef.current?.files?.[0];
+                  if (modelFile && metadataFile) {
+                    loadModel(modelFile, metadataFile);
+                  } else {
+                    toast({ variant: "destructive", title: "Missing Files", description: "Please select both model and metadata files." });
+                  }
+                }}
+                disabled={isModelLoading}
+              >
+                <Upload className="mr-2" />
+                {isModelLoading ? "Loading Model..." : "Load Model"}
+              </Button>
+            </div>
+          </SidebarGroup>
           <SidebarGroup>
             <SidebarGroupLabel>MQTT Configuration</SidebarGroupLabel>
             <div className="space-y-4 p-4">
@@ -669,6 +726,12 @@ export default function SortVisionClient() {
                       <p className="mt-2 text-muted-foreground">Camera is off</p>
                   </div>
               )}
+              {isCameraOn && !model && (
+                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
+                      <Upload className="h-16 w-16 text-muted-foreground animate-pulse" />
+                      <p className="mt-2 text-muted-foreground">Please load a model from settings.</p>
+                  </div>
+              )}
               <PredictionDisplay />
               {isCameraOn && !isHibernating && detectedObjects.map((obj) => {
                 const [x, y, w, h] = obj.bbox;
@@ -682,12 +745,15 @@ export default function SortVisionClient() {
                   Metal: 'bg-yellow-400',
                   Paper: 'bg-green-400',
                 };
+                const borderColor = colors[obj.label as keyof typeof colors] || 'border-gray-400';
+                const bgColor = textColors[obj.label as keyof typeof textColors] || 'bg-gray-400';
+
                 return (
                   <div
                     key={obj.id}
                     className={cn(
                       'absolute transition-all duration-300 border-2 rounded-md',
-                      colors[obj.label]
+                      borderColor
                     )}
                     style={{
                       left: `${x * 100}%`,
@@ -695,12 +761,13 @@ export default function SortVisionClient() {
                       width: `${w * 100}%`,
                       height: `${h * 100}%`,
                       transform: `rotate(${obj.rotation}deg)`,
+                      opacity: obj.confidence,
                     }}
                   >
                     <div
                       className={cn(
                         'absolute -top-6 left-0 text-xs font-semibold text-white px-2 py-0.5 rounded-t-md',
-                        textColors[obj.label]
+                        bgColor
                       )}
                       style={{
                         transform: `rotate(${-obj.rotation}deg)`,
