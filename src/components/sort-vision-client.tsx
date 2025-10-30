@@ -104,7 +104,14 @@ export default function SortVisionClient() {
 
   const connectToMqtt = useCallback(() => {
     function proceedWithConnection() {
-        if (mqttClientRef.current) return;
+        if (mqttClientRef.current && mqttClientRef.current.connected) return;
+
+        // Disconnect previous client if it exists and is not the same
+        if (mqttClientRef.current) {
+            mqttClientRef.current.end(true);
+            mqttClientRef.current = null;
+        }
+
         setMqttStatus("Connecting");
         addLog(`Connecting to MQTT broker at ${mqttBrokerUrl}...`);
         try {
@@ -128,7 +135,7 @@ export default function SortVisionClient() {
                     setMqttStatus("Error");
                     addLog(`MQTT Error: ${err.message}`);
                     toast({ variant: "destructive", title: "MQTT Error", description: "Failed to connect. Check URL or network." });
-                    client.end(true); 
+                    client.end(true);
                     mqttClientRef.current = null;
                 }
             });
@@ -154,25 +161,29 @@ export default function SortVisionClient() {
             toast({ variant: "destructive", title: "MQTT Error", description: "Invalid broker URL." });
         }
     }
-    
-    if (mqttClientRef.current) {
-      addLog("Ending current MQTT connection to reconnect.");
-      mqttClientRef.current.end(true, proceedWithConnection);
-    } else {
-      proceedWithConnection();
+
+    // This logic ensures we don't create multiple connections
+    if (mqttStatus !== "Connecting" && mqttStatus !== "Connected") {
+        proceedWithConnection();
+    } else if(mqttStatus === "Connected"){
+        // If already connected, but URL changed, reconnect.
+        const currentUrl = mqttClientRef.current?.options.href;
+        if(currentUrl && currentUrl !== mqttBrokerUrl) {
+            addLog("Broker URL changed, reconnecting...");
+            proceedWithConnection();
+        }
     }
-  }, [mqttBrokerUrl, toast, addLog]);
+  }, [mqttBrokerUrl, toast, addLog, mqttStatus]);
 
 
   const disconnectFromMqtt = useCallback(() => {
     if (mqttClientRef.current) {
       addLog("Disconnecting from MQTT broker.");
       mqttClientRef.current.end(true, () => {
-        if(mqttClientRef.current) {
-            mqttClientRef.current = null;
-            setMqttStatus("Disconnected");
-        }
+        // This callback ensures the internal state is updated after disconnection.
       });
+      mqttClientRef.current = null;
+      setMqttStatus("Disconnected");
     }
   }, [addLog]);
   
@@ -215,9 +226,7 @@ export default function SortVisionClient() {
           wakeLockRef.current = null;
           setIsWakeLockActive(false);
           addLog("Wake Lock was released by the system.");
-          console.log('Wake Lock was released');
         });
-        console.log('Wake Lock is active');
       } catch (err: any) {
         console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
         addLog(`Wake Lock Error: ${err.message}`);
@@ -301,19 +310,31 @@ export default function SortVisionClient() {
 
     if (!isHibernating) {
         const labels: Prediction["label"][] = ["Plastic", "Metal", "Paper"];
-        const label = labels[Math.floor(Math.random() * labels.length)];
-        const confidence = Math.random();
-        const newPrediction: Prediction = { label, confidence };
-
-        setPrediction(newPrediction);
-
-        if (confidence > CONFIDENCE_THRESHOLD) {
-            addLog(`Classified: ${label} (Confidence: ${(confidence * 100).toFixed(0)}%)`);
-            if (mqttClientRef.current?.connected) {
-                mqttClientRef.current.publish(mqttTopic, label);
-                addLog(`Published '${label}' to MQTT topic '${mqttTopic}'`);
+        const predictions: Prediction[] = labels.map(label => {
+            let confidence = Math.random() * 0.7; // Base confidence
+            if (label === 'Plastic' && Math.random() > 0.3) {
+              confidence = Math.random() * 0.4 + 0.6; // Higher confidence for Plastic
             }
-            setLastClassifications((prev) => [...prev, newPrediction]);
+             if (label === 'Metal' && Math.random() > 0.7) {
+              confidence = Math.random() * 0.3 + 0.5;
+            }
+            return { label, confidence };
+        });
+
+        const highestPrediction = predictions.reduce(
+            (max, p) => (p.confidence > max.confidence ? p : max),
+            predictions[0]
+        );
+
+        setPrediction(highestPrediction);
+
+        if (highestPrediction.confidence > CONFIDENCE_THRESHOLD) {
+            addLog(`Classified: ${highestPrediction.label} (Confidence: ${(highestPrediction.confidence * 100).toFixed(0)}%)`);
+            if (mqttClientRef.current?.connected) {
+                mqttClientRef.current.publish(mqttTopic, highestPrediction.label);
+                addLog(`Published '${highestPrediction.label}' to MQTT topic '${mqttTopic}'`);
+            }
+            setLastClassifications((prev) => [...prev, highestPrediction]);
         }
     }
   }, [resetInactivityTimer, mqttTopic, isHibernating, addLog]);
@@ -394,14 +415,27 @@ export default function SortVisionClient() {
     checkModelPerformance();
   }, [lastClassifications, toast, addLog]);
   
-  useEffect(() => {
+   useEffect(() => {
+    // Initial connection
     connectToMqtt();
+
     return () => {
-      disconnectFromMqtt();
       stopCamera();
+      disconnectFromMqtt();
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Effect to handle reconnection when settings change
+  useEffect(() => {
+    if (mqttClientRef.current) {
+        const clientUrl = new URL(mqttClientRef.current.options.href || '');
+        const stateUrl = new URL(mqttBrokerUrl);
+        if (clientUrl.host !== stateUrl.host || clientUrl.port !== stateUrl.port) {
+            connectToMqtt();
+        }
+    }
+  }, [mqttBrokerUrl, connectToMqtt]);
 
   const getMqttBadgeVariant = () => {
     switch (mqttStatus) {
@@ -414,7 +448,7 @@ export default function SortVisionClient() {
 
   const PredictionDisplay = () => (
     <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-      {prediction && !isHibernating ? (
+      {prediction && !isHibernating && prediction.confidence > CONFIDENCE_THRESHOLD ? (
         <>
           <h3 className="text-2xl font-bold text-white drop-shadow-lg">
             {prediction.label}
@@ -442,11 +476,23 @@ export default function SortVisionClient() {
     const activeClass = "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
     const baseClass = "h-12 w-12 text-muted-foreground transition-all duration-300";
     
+    const icons = {
+      Plastic: <PlasticIcon className={cn(baseClass, "text-foreground", isActive && label === 'Plastic' && activeClass)} />,
+      Metal: <MetalIcon className={cn(baseClass, "text-foreground", isActive && label === 'Metal' && activeClass)} />,
+      Paper: <PaperIcon className={cn(baseClass, "text-foreground", isActive && label === 'Paper' && activeClass)} />
+    };
+
     return (
-      <div className="flex flex-col items-center gap-6 p-4">
-        <PlasticIcon className={cn(baseClass, label === 'Plastic' && "text-foreground", isActive && label === 'Plastic' && activeClass)} />
-        <MetalIcon className={cn(baseClass, label === 'Metal' && "text-foreground", isActive && label === 'Metal' && activeClass)} />
-        <PaperIcon className={cn(baseClass, label === 'Paper' && "text-foreground", isActive && label === 'Paper' && activeClass)} />
+       <div className="flex flex-col items-center justify-center h-full p-4">
+        {isActive ? (
+            icons[label]
+        ) : (
+          <div className="flex flex-col items-center gap-6 p-4">
+            <PlasticIcon className={cn(baseClass)} />
+            <MetalIcon className={cn(baseClass)} />
+            <PaperIcon className={cn(baseClass)} />
+          </div>
+        )}
       </div>
     );
   };
@@ -526,7 +572,7 @@ export default function SortVisionClient() {
               )}
               <PredictionDisplay />
               </div>
-              <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20">
+              <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full">
                 <ItemIcon {...(prediction || {label: 'Plastic', confidence: 0})} />
               </div>
           </div>
