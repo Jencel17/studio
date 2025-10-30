@@ -544,26 +544,17 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(async () => {
-    // Exit if camera is off or model not loaded
-    if (!isCameraOn || !videoRef.current || !model) {
+    if (!isCameraOn || !videoRef.current || !model || isHibernating) {
       return;
     }
   
-    // Always reset the inactivity timer on each run
     resetInactivityTimer();
   
-    // Stop detection if hibernating
-    if (isHibernating) {
-      // If we are hibernating, we don't do anything else.
-      return;
-    }
-  
     try {
-      // --- 1. Always get the latest predictions ---
+      // Step 1: Always get fresh predictions and update the UI state.
       const predictions = await model.predict(videoRef.current);
-      setCurrentPredictions(predictions); // Keep track of latest predictions for the side panel
+      setCurrentPredictions(predictions); // Update for the side panel display
   
-      // --- 2. Determine Detection State and update UI state ---
       const highConfidencePrediction = predictions.find((p) => p.probability > 0.9);
       const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
   
@@ -600,7 +591,7 @@ export default function SortVisionClient() {
         setDetectedObjects([]);
       }
   
-      // --- 3. Handle MQTT messaging ---
+      // Step 2: Handle MQTT messaging based on the latest state, respecting the cooldown.
       if (highConfidencePrediction && mqttClientRef.current?.connected && !isMqttOnCooldown) {
         const labelToSend = highConfidencePrediction.className;
         mqttClientRef.current.publish(mqttTopic, labelToSend);
@@ -610,17 +601,26 @@ export default function SortVisionClient() {
           description: `Sent classification: ${labelToSend}`,
         });
   
-        setIsMqttOnCooldown(true);
+        setIsMqttOnCooldown(true); // Start cooldown
         cooldownTimerRef.current = setTimeout(() => {
-            setIsMqttOnCooldown(false);
-            addLog("MQTT cooldown finished.");
+          setIsMqttOnCooldown(false); // End cooldown
+          addLog("MQTT cooldown finished.");
         }, MQTT_COOLDOWN_MS);
       }
     } catch (error) {
       console.error("Error during prediction:", error);
       addLog("Prediction error. Check console.");
     }
-  }, [isCameraOn, model, resetInactivityTimer, mqttTopic, addLog, toast, isMqttOnCooldown, isHibernating]);
+  }, [
+    isCameraOn,
+    model,
+    isHibernating,
+    isMqttOnCooldown,
+    mqttTopic,
+    resetInactivityTimer,
+    addLog,
+    toast,
+  ]);
 
 
   useEffect(() => {
