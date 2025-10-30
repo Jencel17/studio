@@ -19,7 +19,6 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp } from "lucide-react";
-import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
@@ -32,7 +31,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
 type Prediction = {
-  label: "Plastic" | "Metal" | "Paper" | string;
+  label: string;
   confidence: number;
 };
 
@@ -79,6 +78,7 @@ export default function SortVisionClient() {
   const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
+  const [modelLabels, setModelLabels] = useState<string[]>([]);
 
   // MQTT Settings
   const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8884/mqtt");
@@ -120,8 +120,10 @@ export default function SortVisionClient() {
       }
       
       setModel(loadedModel);
+      const labels = loadedModel.getClassLabels();
+      setModelLabels(labels);
       
-      addLog(`Model loaded successfully. Classes: ${loadedModel.getClassLabels().join(', ')}`);
+      addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
       toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
 
     } catch (error: any) {
@@ -129,6 +131,7 @@ export default function SortVisionClient() {
         addLog(`Model loading failed: ${error.message}`);
         toast({ variant: "destructive", title: "Model Load Error", description: "Could not load the model. Check console for details." });
         setModel(null);
+        setModelLabels([]);
     } finally {
         setIsModelLoading(false);
     }
@@ -583,9 +586,16 @@ export default function SortVisionClient() {
           setPrediction(finalPrediction);
           addLog(`Classified: ${finalPrediction.label} (Confidence: ${(finalPrediction.confidence * 100).toFixed(0)}%)`);
 
-          if (mqttClientRef.current?.connected && highConfidenceDetections.length === 1) {
-              mqttClientRef.current.publish(mqttTopic, finalPrediction.label);
-              addLog(`Published '${finalPrediction.label}' to MQTT topic '${mqttTopic}'`);
+          // MQTT Publishing Logic
+          if (mqttClientRef.current?.connected) {
+            const distinctLabels = [...new Set(highConfidenceDetections.map(d => d.className))];
+            if (distinctLabels.length === 1) {
+              const labelToSend = distinctLabels[0];
+              mqttClientRef.current.publish(mqttTopic, labelToSend);
+              addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
+            } else if (distinctLabels.length > 1) {
+              addLog(`Multiple distinct objects detected (${distinctLabels.join(', ')}). MQTT message not sent.`);
+            }
           }
           setLastClassifications((prev) => [...prev, finalPrediction]);
       } else {
@@ -774,37 +784,42 @@ export default function SortVisionClient() {
     }
   };
 
-  const PredictionDisplay = () => (
-    <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-      {detectedObjects.filter(o => o.confidence > CONFIDENCE_THRESHOLD).length > 1 ? (
-        <div className="flex items-center gap-2">
-            <AlertTriangle className="h-6 w-6 text-yellow-400" />
-            <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
-                Multiple items detected
+  const PredictionDisplay = () => {
+    const highConfidenceDetections = detectedObjects.filter(o => o.confidence > CONFIDENCE_THRESHOLD);
+    const distinctLabels = [...new Set(highConfidenceDetections.map(d => d.label))];
+    
+    return (
+        <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
+        {distinctLabels.length > 1 ? (
+            <div className="flex items-center gap-2">
+                <AlertTriangle className="h-6 w-6 text-yellow-400" />
+                <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
+                    Multiple items detected
+                </h3>
+            </div>
+        ) : prediction && !isHibernating ? (
+            <>
+            <h3 className="text-2xl font-bold text-white drop-shadow-lg">
+                {prediction.label}
             </h3>
-        </div>
-      ) : prediction && !isHibernating ? (
-        <>
-          <h3 className="text-2xl font-bold text-white drop-shadow-lg">
-            {prediction.label}
-          </h3>
-          <div className="flex items-center gap-2">
-            <p className="text-sm text-white/90 drop-shadow-md">
-                Confidence:
+            <div className="flex items-center gap-2">
+                <p className="text-sm text-white/90 drop-shadow-md">
+                    Confidence:
+                </p>
+                <Progress value={prediction.confidence * 100} className="h-2 w-24 bg-white/30" />
+                <span className="text-sm font-semibold text-white">
+                    {(prediction.confidence * 100).toFixed(0)}%
+                </span>
+            </div>
+            </>
+        ) : (
+            <p className="text-lg text-white/90 shadow-md">
+            {isCameraOn ? (isHibernating ? "Hibernating..." : model ? "Analyzing..." : "Awaiting model...") : "Camera is off"}
             </p>
-            <Progress value={prediction.confidence * 100} className="h-2 w-24 bg-white/30" />
-            <span className="text-sm font-semibold text-white">
-                {(prediction.confidence * 100).toFixed(0)}%
-            </span>
-          </div>
-        </>
-      ) : (
-        <p className="text-lg text-white/90 shadow-md">
-          {isCameraOn ? (isHibernating ? "Hibernating..." : model ? "Analyzing..." : "Awaiting model...") : "Camera is off"}
-        </p>
-      )}
-    </div>
-  );
+        )}
+        </div>
+    );
+  };
 
   const ItemIcon = () => {
     const getActiveClass = (label: string) => {
@@ -814,14 +829,18 @@ export default function SortVisionClient() {
         return "";
     };
     
-    const baseClass = "h-12 w-12 text-muted-foreground transition-all duration-300";
+    const baseClass = "text-xl font-semibold text-muted-foreground transition-all duration-300";
     
     return (
        <div className="flex flex-col items-center justify-center h-full p-4">
           <div className="flex flex-col items-center gap-6 p-4">
-            <PlasticIcon className={cn(baseClass, getActiveClass('Plastic'))} />
-            <MetalIcon className={cn(baseClass, getActiveClass('Metal'))} />
-            <PaperIcon className={cn(baseClass, getActiveClass('Paper'))} />
+            {modelLabels.length > 0 ? (
+                 modelLabels.map(label => (
+                    <p key={label} className={cn(baseClass, getActiveClass(label))}>{label}</p>
+                 ))
+            ) : (
+                <p className="text-sm text-muted-foreground">Load a model to see categories.</p>
+            )}
           </div>
       </div>
     );

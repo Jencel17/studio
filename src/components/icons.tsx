@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 
+// These icons are kept as fallbacks but are no longer directly used in the dynamic UI.
 export const PlasticIcon = ({ className, ...props }: React.SVGProps<SVGSVGElement>) => (
   <svg
     xmlns="http://www.w3.org/2000/svg"
@@ -66,3 +67,5 @@ export const PaperIcon = ({ className, ...props }: React.SVGProps<SVGSVGElement>
     <path d="m3 18.5 5 2 5-2" />
   </svg>
 );
+
+    
