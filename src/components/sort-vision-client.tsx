@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Input } from "@/components/ui/input";
 
 
 type Prediction = {
@@ -67,7 +68,6 @@ const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
 const COMMAND_COOLDOWN_MS = 5000;
-const ESP32_IP = "http://192.168.4.1";
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -91,6 +91,7 @@ export default function SortVisionClient() {
   const [isCooldownActive, setIsCooldownActive] = useState(false);
   const [appStatus, setAppStatus] = useState<AppStatus>("AWAITING_OBJECT");
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
+  const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -282,8 +283,7 @@ export default function SortVisionClient() {
   
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
-    // Security check for mixed content
-    if (window.location.protocol === 'https:' && ESP32_IP.startsWith('http://')) {
+    if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
         const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
         addLog(errorMsg);
         setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
@@ -291,7 +291,7 @@ export default function SortVisionClient() {
         return;
     }
 
-    const url = `${ESP32_IP}/sort?class=${classificationLabel.toUpperCase()}`;
+    const url = `${esp32Ip}/sort?class=${classificationLabel.toUpperCase()}`;
     addLog(`Sending command to ESP32: ${url}`);
     
     try {
@@ -310,7 +310,7 @@ export default function SortVisionClient() {
       addLog(`ERROR: Cannot reach ESP32. ${error.message}`);
       toast({ variant: "destructive", title: "ESP32 Error", description: "Could not send command." });
     }
-  }, [addLog, toast]);
+  }, [addLog, toast, esp32Ip]);
 
   
   const resetInactivityTimer = useCallback(() => {
@@ -690,7 +690,7 @@ export default function SortVisionClient() {
                     {getStatusText()}
                 </Badge>
                 <Badge variant="outline" className="gap-2 text-xs">
-                    <Wifi className="h-3 w-3"/> {ESP32_IP}
+                    <Wifi className="h-3 w-3"/> {esp32Ip}
                 </Badge>
             </div>
              <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -816,6 +816,18 @@ export default function SortVisionClient() {
                 multiple
                 onChange={handleFileSelect}
                 disabled={isModelLoading}
+              />
+            </div>
+          </SidebarGroup>
+           <SidebarGroup>
+            <SidebarGroupLabel>Network Settings</SidebarGroupLabel>
+            <div className="space-y-2 p-4">
+              <Label htmlFor="esp32-ip">ESP32 IP Address</Label>
+              <Input
+                id="esp32-ip"
+                value={esp32Ip}
+                onChange={(e) => setEsp32Ip(e.target.value)}
+                placeholder="e.g., http://192.168.4.1"
               />
             </div>
           </SidebarGroup>
@@ -979,3 +991,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
