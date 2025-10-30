@@ -604,6 +604,7 @@ export default function SortVisionClient() {
         setIsMqttOnCooldown(true); // Start cooldown
         cooldownTimerRef.current = setTimeout(() => {
           addLog("MQTT cooldown finished. Restarting camera to prevent freeze...");
+          setIsMqttOnCooldown(false);
           stopCamera();
           // Short delay to ensure camera resources are released before restarting
           setTimeout(() => {
