@@ -541,11 +541,17 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(async () => {
-    // Exit if hibernating, camera is off, model not loaded
+    // Exit if hibernating, camera is off, model not loaded, or on MQTT cooldown
     if (isHibernating || !isCameraOn || !videoRef.current || !model) {
-      if (isCameraOn) resetInactivityTimer();
       return;
     }
+    
+    // If on cooldown, just reset inactivity timer and exit. Don't do new predictions.
+    if (isMqttOnCooldown) {
+        resetInactivityTimer();
+        return;
+    }
+    
     resetInactivityTimer();
   
     try {
@@ -554,7 +560,6 @@ export default function SortVisionClient() {
       setCurrentPredictions(predictions);
   
       // --- 2. Always update the UI based on predictions ---
-      // This part runs regardless of the cooldown state
       const highConfidencePrediction = predictions.find((p) => p.probability > 0.9);
       const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
   
@@ -592,7 +597,7 @@ export default function SortVisionClient() {
       }
   
       // --- 3. Handle MQTT logic separately, only if not on cooldown ---
-      if (!isMqttOnCooldown && mqttClientRef.current?.connected && highConfidencePrediction) {
+      if (mqttClientRef.current?.connected && highConfidencePrediction) {
         const labelToSend = highConfidencePrediction.className;
         mqttClientRef.current.publish(mqttTopic, labelToSend);
         addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
@@ -607,10 +612,6 @@ export default function SortVisionClient() {
         cooldownTimerRef.current = setTimeout(() => {
           setIsMqttOnCooldown(false);
           addLog("MQTT cooldown finished. Resuming detection.");
-          // Explicitly reset UI to "analyzing" to be ready for the next detection
-          setDetectionState("NO_DETECTION");
-          setPrimaryPrediction(null);
-          setDetectedObjects([]);
           cooldownTimerRef.current = null;
         }, MQTT_COOLDOWN_MS);
       }
