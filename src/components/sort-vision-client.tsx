@@ -66,7 +66,7 @@ const CLASSIFICATION_INTERVAL = 200;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
-const COMMAND_COOLDOWN_MS = 2000;
+const COMMAND_COOLDOWN_MS = 5000;
 const ESP32_IP = "http://192.168.4.1";
 
 export default function SortVisionClient() {
