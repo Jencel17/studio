@@ -544,8 +544,8 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(async () => {
-    // Exit if camera is off, model not loaded
-    if (!isCameraOn || !videoRef.current || !model) {
+    // Exit if camera is off, model not loaded, or on cooldown
+    if (!isCameraOn || !videoRef.current || !model || isMqttOnCooldown) {
       return;
     }
   
@@ -600,8 +600,8 @@ export default function SortVisionClient() {
         setDetectedObjects([]);
       }
   
-      // --- 3. Handle MQTT messaging, only if there's a single, high-confidence object and not on cooldown ---
-      if (highConfidencePrediction && mqttClientRef.current?.connected && !isMqttOnCooldown) {
+      // --- 3. Handle MQTT messaging ---
+      if (highConfidencePrediction && mqttClientRef.current?.connected) {
         const labelToSend = highConfidencePrediction.className;
         mqttClientRef.current.publish(mqttTopic, labelToSend);
         addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
@@ -610,17 +610,7 @@ export default function SortVisionClient() {
           description: `Sent classification: ${labelToSend}`,
         });
   
-        // Start cooldown
-        setIsMqttOnCooldown(true);
-        addLog(`MQTT cooldown started (${MQTT_COOLDOWN_MS / 1000}s).`);
-        cooldownTimerRef.current = setTimeout(() => {
-          setIsMqttOnCooldown(false);
-          addLog("MQTT cooldown finished. Resuming messaging.");
-          // Clear the UI from the last successful send
-          setPrimaryPrediction(null); 
-          setDetectionState("NO_DETECTION");
-          cooldownTimerRef.current = null;
-        }, MQTT_COOLDOWN_MS);
+        // Cooldown is temporarily disabled
       }
     } catch (error) {
       console.error("Error during prediction:", error);
@@ -1106,3 +1096,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
