@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle } from "lucide-react";
+import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
@@ -92,6 +92,7 @@ export default function SortVisionClient() {
   const [appStatus, setAppStatus] = useState<AppStatus>("AWAITING_OBJECT");
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
+  const [isTestMode, setIsTestMode] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -283,10 +284,18 @@ export default function SortVisionClient() {
   
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
+    if (isTestMode) {
+      addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
+      setCommandStatus({ status: "SUCCESS", message: `Success (Test): Sorted ${classificationLabel}` });
+      toast({ title: "Command Sent (Test Mode)", description: `Sorted: ${classificationLabel}` });
+      return;
+    }
+
     if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
         const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
         addLog(errorMsg);
         setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
+        toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security. See console." });
         return;
     }
 
@@ -308,11 +317,12 @@ export default function SortVisionClient() {
       }
     } catch (error: any) {
       console.error("Failed to send command to ESP32:", error);
-      setCommandStatus({ status: "ERROR", message: `Error: Cannot reach ESP32. ${error.message}` });
-      addLog(`ERROR: Cannot reach ESP32. ${error.message}`);
+      const errorMessage = `Error: Cannot reach ESP32. ${error.message}`;
+      setCommandStatus({ status: "ERROR", message: errorMessage });
+      addLog(`ERROR: ${errorMessage}`);
       toast({ variant: "destructive", title: "ESP32 Error", description: "Could not send command." });
     }
-  }, [addLog, toast, esp32Ip]);
+  }, [addLog, toast, esp32Ip, isTestMode]);
 
   
   const resetInactivityTimer = useCallback(() => {
@@ -699,8 +709,9 @@ export default function SortVisionClient() {
                     {appStatus === 'COOLDOWN_ACTIVE' && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
                     {getStatusText()}
                 </Badge>
-                <Badge variant="outline" className="gap-2 text-xs">
-                    <Wifi className="h-3 w-3"/> {esp32Ip}
+                <Badge variant={isTestMode ? "default" : "outline"} className="gap-2 text-xs">
+                    {isTestMode ? <TestTube className="h-3 w-3" /> : <Wifi className="h-3 w-3"/>}
+                    {isTestMode ? "Test Mode" : esp32Ip}
                 </Badge>
             </div>
              <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -838,6 +849,7 @@ export default function SortVisionClient() {
                 value={esp32Ip}
                 onChange={(e) => setEsp32Ip(e.target.value)}
                 placeholder="e.g., http://192.168.4.1"
+                disabled={isTestMode}
               />
             </div>
           </SidebarGroup>
@@ -853,6 +865,17 @@ export default function SortVisionClient() {
                   id="keep-awake"
                   checked={wakeLockEnabled}
                   onCheckedChange={handleWakeLockToggle}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="test-mode" className="flex items-center gap-2">
+                  <TestTube className="h-4 w-4" />
+                  Test Mode
+                </Label>
+                <Switch
+                  id="test-mode"
+                  checked={isTestMode}
+                  onCheckedChange={setIsTestMode}
                 />
               </div>
             </div>
