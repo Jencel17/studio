@@ -428,7 +428,7 @@ export default function SortVisionClient() {
       if (primaryPrediction && primaryPrediction.confidence > CONFIDENCE_THRESHOLD) {
           setPrediction(primaryPrediction);
           addLog(`Classified: ${primaryPrediction.label} (Confidence: ${(primaryPrediction.confidence * 100).toFixed(0)}%)`);
-          if (mqttClientRef.current?.connected) {
+          if (mqttClientRef.current?.connected && highConfidenceDetections.length === 1) {
               mqttClientRef.current.publish(mqttTopic, primaryPrediction.label);
               addLog(`Published '${primaryPrediction.label}' to MQTT topic '${mqttTopic}'`);
           }
@@ -449,7 +449,7 @@ export default function SortVisionClient() {
   useEffect(() => {
     if (isCameraOn && model) {
       if (!predictionIntervalRef.current) {
-        predictionIntervalRef.current = setInterval(runClassification, 500); // Faster loop for real model
+        predictionIntervalRef.current = setInterval(runClassification, 2000);
       }
     } else {
       if (predictionIntervalRef.current) {
@@ -547,8 +547,13 @@ export default function SortVisionClient() {
     }
 
     try {
-        if (!mqttClientRef.current.options.href) return;
-        const clientUrl = new URL(mqttClientRef.current.options.href);
+        const clientHref = mqttClientRef.current.options.href;
+        if (!clientHref) {
+             addLog("MQTT client URL is not available, reconnecting...");
+             connectToMqtt();
+             return;
+        }
+        const clientUrl = new URL(clientHref);
         const stateUrl = new URL(mqttBrokerUrl);
 
         if (clientUrl.href !== stateUrl.href) {
@@ -626,9 +631,11 @@ export default function SortVisionClient() {
   return (
     <>
       <Sidebar>
-        <SidebarHeader className="flex items-center justify-between">
-            <h2 className="text-lg font-semibold">Settings</h2>
-            <SidebarClose />
+        <SidebarHeader>
+            <div className="flex items-center justify-between">
+              <h2 className="text-lg font-semibold">Settings</h2>
+              <SidebarClose />
+            </div>
         </SidebarHeader>
         <SidebarContent className="p-0">
           <SidebarGroup>
