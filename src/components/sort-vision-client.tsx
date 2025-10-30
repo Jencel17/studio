@@ -311,12 +311,15 @@ export default function SortVisionClient() {
     if (!isHibernating) {
         const labels: Prediction["label"][] = ["Plastic", "Metal", "Paper"];
         const predictions: Prediction[] = labels.map(label => {
-            let confidence = Math.random() * 0.7; // Base confidence
+            let confidence = Math.random() * 0.6; // Base confidence
             if (label === 'Plastic' && Math.random() > 0.3) {
               confidence = Math.random() * 0.4 + 0.6; // Higher confidence for Plastic
             }
-             if (label === 'Metal' && Math.random() > 0.7) {
-              confidence = Math.random() * 0.3 + 0.5;
+             if (label === 'Metal' && Math.random() > 0.5) {
+              confidence = Math.random() * 0.4 + 0.6; // Higher confidence for Metal
+            }
+            if (label === 'Paper' && Math.random() > 0.5) {
+                confidence = Math.random() * 0.4 + 0.6; // Higher confidence for Paper
             }
             return { label, confidence };
         });
@@ -629,5 +632,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
