@@ -4,6 +4,8 @@
  * @fileOverview An AI flow to interpret results from an image classification model.
  *
  * - interpretDetections - A function that analyzes a list of predictions to determine the overall state.
+ * - InterpretDetectionsInputSchema - Zod schema for the input.
+ * - InterpretDetectionsInput - The TypeScript type for the input.
  */
 
 import { ai } from '@/ai/genkit';
@@ -18,7 +20,7 @@ const InterpretDetectionsInputSchema = z.object({
   predictions: z.array(PredictionSchema).describe('An array of classification predictions from the Teachable Machine model.'),
   confidenceThreshold: z.number().describe('The minimum confidence score to consider a prediction significant.'),
 });
-type InterpretDetectionsInput = z.infer<typeof InterpretDetectionsInputSchema>;
+export type InterpretDetectionsInput = z.infer<typeof InterpretDetectionsInputSchema>;
 
 
 const InterpretDetectionsOutputSchema = z.object({

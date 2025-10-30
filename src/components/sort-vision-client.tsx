@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck, handleInterpretDetections } from "@/app/actions/ai";
+import { handleModelSwapCheck, handleInterpretDetections, type InterpretDetectionsInput } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
@@ -29,6 +29,7 @@ import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+
 
 type Prediction = {
   className: string;
@@ -564,29 +565,31 @@ export default function SortVisionClient() {
           labelToPublish = prediction.className;
           setLastClassifications(prev => [...prev, prediction]);
         }
-      } else if (aiResult.detectionState === "MULTIPLE_OBJECTS" && aiResult.detectedObjects) {
+      } else if (aiResult.detectionState === "MULTIPLE_OBJECTS") {
         setPrimaryPrediction(null);
-        setDetectedObjects(currentObjects => {
-          return aiResult.detectedObjects!.map(label => {
-            const p = modelPredictions.find(pred => pred.className === label)!;
-            const existing = currentObjects.find(o => o.id === p.className);
-            if (existing) {
-              return { ...existing, confidence: p.probability, label: p.className };
-            }
-            // New item
-            const size = 0.3 + Math.random() * 0.3; // 30% to 60% of view
-            return {
-              id: p.className,
-              label: p.className,
-              confidence: p.probability,
-              bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
-              vx: (Math.random() - 0.5) * 0.005,
-              vy: (Math.random() - 0.5) * 0.005,
-              vw: (Math.random() - 0.5) * 0.001,
-              vh: (Math.random() - 0.5) * 0.001,
-            };
+        if (aiResult.detectedObjects) {
+          setDetectedObjects(currentObjects => {
+            return aiResult.detectedObjects!.map(label => {
+              const p = modelPredictions.find(pred => pred.className === label)!;
+              const existing = currentObjects.find(o => o.id === p.className);
+              if (existing) {
+                return { ...existing, confidence: p.probability, label: p.className };
+              }
+              // New item
+              const size = 0.3 + Math.random() * 0.3; // 30% to 60% of view
+              return {
+                id: p.className,
+                label: p.className,
+                confidence: p.probability,
+                bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
+                vx: (Math.random() - 0.5) * 0.005,
+                vy: (Math.random() - 0.5) * 0.005,
+                vw: (Math.random() - 0.5) * 0.001,
+                vh: (Math.random() - 0.5) * 0.001,
+              };
+            });
           });
-        });
+        }
         labelToPublish = "Multiple Objects";
       } else {
         setPrimaryPrediction(null);

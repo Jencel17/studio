@@ -1,24 +1,14 @@
 // @/app/actions/ai.ts
 "use server";
-import { z } from "zod";
 
 import {
   suggestAiModelSwap,
   type SuggestAiModelSwapInput,
 } from "@/ai/flows/suggest-ai-model-swap";
 
-import { interpretDetections } from "@/ai/flows/interpret-detections-flow";
+import { interpretDetections, type InterpretDetectionsInput as FlowInput } from "@/ai/flows/interpret-detections-flow";
 
-const PredictionSchema = z.object({
-  className: z.string(),
-  probability: z.number(),
-});
-
-export const InterpretDetectionsInputSchema = z.object({
-  predictions: z.array(PredictionSchema).describe('An array of classification predictions from the Teachable Machine model.'),
-  confidenceThreshold: z.number().describe('The minimum confidence score to consider a prediction significant.'),
-});
-export type InterpretDetectionsInput = z.infer<typeof InterpretDetectionsInputSchema>;
+export type InterpretDetectionsInput = FlowInput;
 
 export async function handleModelSwapCheck(input: SuggestAiModelSwapInput) {
   try {
