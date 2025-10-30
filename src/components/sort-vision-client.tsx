@@ -589,7 +589,7 @@ export default function SortVisionClient() {
 
           // MQTT Publishing Logic
           if (mqttClientRef.current?.connected) {
-            const distinctLabels = [...new Set(highConfidenceDetections.map(d => d.className))];
+            const distinctLabels = [...new Set(highConfidenceDetections.map(d => d.label))];
             if (distinctLabels.length === 1) {
               const labelToSend = distinctLabels[0];
               if (labelToSend !== lastPublishedLabel) {
@@ -1087,7 +1087,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
-
-    
