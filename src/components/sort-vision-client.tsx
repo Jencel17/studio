@@ -55,7 +55,7 @@ type LogEntry = {
   message: string;
 };
 
-type AppStatus = "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "COOLDOWN_ACTIVE";
+type AppStatus = "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING";
 
 type CommandStatus = {
   status: "IDLE" | "SUCCESS" | "ERROR";
@@ -68,7 +68,7 @@ const CLASSIFICATION_INTERVAL = 200;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
-const COMMAND_COOLDOWN_MS = 5000;
+const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
 
 // Local implementation of the AI logic to avoid network latency
@@ -133,7 +133,6 @@ export default function SortVisionClient() {
   const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
   
   // New state for HTTP communication
-  const [isCooldownActive, setIsCooldownActive] = useState(false);
   const [appStatus, setAppStatus] = useState<AppStatus>("AWAITING_OBJECT");
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
@@ -146,7 +145,6 @@ export default function SortVisionClient() {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const animationFrameRef = useRef<number>();
-  const cooldownTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { toast } = useToast();
   
@@ -157,6 +155,248 @@ export default function SortVisionClient() {
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
+
+  const resetInactivityTimer = useCallback(() => {
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    
+    if (isHibernating) {
+      setIsHibernating(false);
+      addLog("Activity detected, waking from hibernation.");
+    }
+
+    // Temporarily disable hibernation
+    /*
+    inactivityTimerRef.current = setTimeout(() => {
+        if (isCameraOn) {
+            setIsHibernating(true);
+            setPrimaryPrediction(null);
+            setDetectedObjects([]);
+            addLog("Inactivity detected, entering hibernation mode.");
+        }
+    }, INACTIVITY_TIMEOUT);
+    */
+  }, [isHibernating, addLog, isCameraOn]);
+
+  const releaseWakeLock = useCallback(async () => {
+    if (wakeLockRef.current) {
+      try {
+        await wakeLockRef.current.release();
+        wakeLockRef.current = null;
+        setIsWakeLockActive(false);
+        addLog("Screen wake lock released.");
+      } catch (error: any) {
+        console.error("Could not release wake lock:", error);
+        addLog(`Error releasing wake lock: ${error.message}`);
+      }
+    }
+  }, [addLog]);
+
+  const requestWakeLock = useCallback(async () => {
+    if ('wakeLock' in navigator && wakeLockEnabled && !wakeLockRef.current) {
+      try {
+        wakeLockRef.current = await navigator.wakeLock.request('screen');
+        setIsWakeLockActive(true);
+        addLog("Screen wake lock acquired.");
+        wakeLockRef.current.addEventListener('release', () => {
+          wakeLockRef.current = null;
+          setIsWakeLockActive(false);
+          addLog("Wake Lock was released by the system.");
+        });
+      } catch (err: any) {
+        console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+        addLog(`Wake Lock Error: ${err.message}`);
+        setIsWakeLockActive(false);
+      }
+    }
+  }, [wakeLockEnabled, addLog]);
+
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
+    streamRef.current = null;
+    setIsCameraOn(false);
+    setIsFlashOn(false);
+    setPrimaryPrediction(null);
+    setDetectedObjects([]);
+    if (predictionIntervalRef.current) {
+      clearInterval(predictionIntervalRef.current);
+      predictionIntervalRef.current = null;
+    }
+    setIsHibernating(false);
+    setAppStatus("AWAITING_OBJECT");
+    addLog("Camera stopped.");
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    releaseWakeLock();
+  }, [releaseWakeLock, addLog]);
+
+  const startCamera = useCallback(async (flashEnabled?: boolean) => {
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      // Use state for flash if no arg is passed, for restart
+      const useFlash = flashEnabled ?? isFlashOn;
+
+      try {
+        addLog("Requesting camera access...");
+
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+        }
+
+        const constraints: MediaStreamConstraints = {
+          video: { 
+            facingMode: "environment",
+            advanced: [{ torch: useFlash }]
+          },
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          await videoRef.current.play();
+        }
+        streamRef.current = stream;
+        setIsCameraOn(true);
+        setAppStatus("AWAITING_OBJECT");
+
+        const videoTrack = stream.getVideoTracks()[0];
+        if (videoTrack) {
+          const capabilities = videoTrack.getCapabilities();
+          const settings = videoTrack.getSettings();
+          if (capabilities.torch) {
+              setIsFlashOn(!!settings.torch);
+          } else {
+              setIsFlashOn(false);
+              if (useFlash) {
+                  addLog("Flash/torch not supported on this device.");
+                  toast({ variant: "destructive", title: "Flash Not Supported", description: "This device does not support camera flash control." });
+              }
+          }
+        }
+        
+        addLog(`Camera started ${useFlash ? 'with flash' : 'without flash'}.`);
+        resetInactivityTimer();
+        if(wakeLockEnabled) {
+          requestWakeLock();
+        }
+      } catch (error: any) {
+        console.error("Error accessing camera:", error);
+        addLog(`Camera Error: ${error.message}`);
+        toast({
+          variant: "destructive",
+          title: "Camera Error",
+          description: "Could not access the camera. Please check permissions.",
+        });
+        stopCamera();
+      }
+    }
+  }, [addLog, isFlashOn, resetInactivityTimer, stopCamera, toast, wakeLockEnabled, requestWakeLock]);
+
+
+  const sendSortCommand = useCallback(async (classificationLabel: string) => {
+    if (isTestMode) {
+      addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
+      setCommandStatus({ status: "SUCCESS", message: `Success (Test): Sorted ${classificationLabel}` });
+      toast({ title: "Command Sent (Test Mode)", description: `Sorted: ${classificationLabel}` });
+      return;
+    }
+
+    if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
+        const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
+        addLog(errorMsg);
+        setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
+        return;
+    }
+
+    const url = `${esp32Ip}/sort?class=${classificationLabel.toUpperCase()}`;
+    addLog(`Sending command to ESP32: ${url}`);
+    
+    try {
+      const response = await fetch(url, { method: 'GET' });
+      
+      if (response.ok) {
+        setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
+        addLog(`Successfully sent command for ${classificationLabel}`);
+        toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
+      } else {
+        const errorText = `Error: ESP32 responded with ${response.status}`;
+        setCommandStatus({ status: "ERROR", message: errorText });
+        addLog(errorText);
+        toast({ variant: "destructive", title: "ESP32 Error", description: `Received status ${response.status}` });
+      }
+    } catch (error: any) {
+      console.error("Failed to send command to ESP32:", error);
+      const errorMessage = `Error: Cannot reach ESP32. ${error.message}`;
+      setCommandStatus({ status: "ERROR", message: errorMessage });
+      addLog(`ERROR: ${errorMessage}`);
+      toast({ variant: "destructive", title: "ESP32 Error", description: "Could not send command." });
+    }
+  }, [addLog, toast, esp32Ip, isTestMode]);
+
+  const runClassification = useCallback(async () => {
+    if (!isCameraOn || !videoRef.current || !model || isHibernating) {
+      return;
+    }
+    resetInactivityTimer();
+
+    const predictions = await model.predict(videoRef.current);
+    setCurrentPredictions(predictions);
+
+    const localResult = interpretDetectionsLocal(
+      predictions,
+      CONFIDENCE_THRESHOLD
+    );
+
+    addLog(`Local AI: ${localResult.reason}`);
+    setDetectionState(localResult.detectionState);
+
+    let topPrediction: Prediction | null = null;
+    
+    if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
+      const foundPrediction = predictions.find(p => p.className === localResult.primaryObject);
+      if (foundPrediction) {
+        topPrediction = foundPrediction;
+        setPrimaryPrediction(foundPrediction);
+      } else {
+        setPrimaryPrediction(null);
+      }
+    } else {
+      setPrimaryPrediction(null);
+    }
+    
+    // Check if we have a high-confidence single object
+    if (topPrediction) { 
+      setAppStatus("READY_TO_SEND");
+      
+      // Stop the classification loop immediately.
+      if (predictionIntervalRef.current) {
+        clearInterval(predictionIntervalRef.current);
+        predictionIntervalRef.current = null;
+      }
+      
+      // Send the command once.
+      sendSortCommand(topPrediction.className); // Don't await
+      
+      // Turn off the camera and restart after a delay.
+      stopCamera();
+      setAppStatus("CAMERA_CYCLING");
+      addLog(`Command sent. Restarting camera in ${CAMERA_RESTART_DELAY / 1000} seconds...`);
+      setTimeout(() => {
+        startCamera(); // Restarts with the last known flash state
+      }, CAMERA_RESTART_DELAY);
+
+    } else if (predictions.some(p => p.probability > 0.5)) {
+        setAppStatus("CONFIDENCE_TOO_LOW");
+    } else {
+        setAppStatus("AWAITING_OBJECT");
+    }
+  }, [isCameraOn, model, isHibernating, resetInactivityTimer, sendSortCommand, addLog, stopCamera, startCamera]);
 
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
@@ -327,103 +567,6 @@ export default function SortVisionClient() {
     addLog("App initialized.");
   }, [addLog]);
   
-
-  const sendSortCommand = useCallback(async (classificationLabel: string) => {
-    if (isTestMode) {
-      addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
-      setCommandStatus({ status: "SUCCESS", message: `Success (Test): Sorted ${classificationLabel}` });
-      toast({ title: "Command Sent (Test Mode)", description: `Sorted: ${classificationLabel}` });
-      return;
-    }
-
-    if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
-        const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
-        addLog(errorMsg);
-        setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
-        toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security. See console for details." });
-        return;
-    }
-
-    const url = `${esp32Ip}/sort?class=${classificationLabel.toUpperCase()}`;
-    addLog(`Sending command to ESP32: ${url}`);
-    
-    try {
-      const response = await fetch(url, { method: 'GET' });
-      
-      if (response.ok) {
-        setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
-        addLog(`Successfully sent command for ${classificationLabel}`);
-        toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
-      } else {
-        const errorText = `Error: ESP32 responded with ${response.status}`;
-        setCommandStatus({ status: "ERROR", message: errorText });
-        addLog(errorText);
-        toast({ variant: "destructive", title: "ESP32 Error", description: `Received status ${response.status}` });
-      }
-    } catch (error: any) {
-      console.error("Failed to send command to ESP32:", error);
-      const errorMessage = `Error: Cannot reach ESP32. ${error.message}`;
-      setCommandStatus({ status: "ERROR", message: errorMessage });
-      addLog(`ERROR: ${errorMessage}`);
-      toast({ variant: "destructive", title: "ESP32 Error", description: "Could not send command." });
-    }
-  }, [addLog, toast, esp32Ip, isTestMode]);
-
-  
-  const resetInactivityTimer = useCallback(() => {
-    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-    
-    if (isHibernating) {
-      setIsHibernating(false);
-      addLog("Activity detected, waking from hibernation.");
-    }
-
-    // Temporarily disable hibernation
-    /*
-    inactivityTimerRef.current = setTimeout(() => {
-        if (isCameraOn) {
-            setIsHibernating(true);
-            setPrimaryPrediction(null);
-            setDetectedObjects([]);
-            addLog("Inactivity detected, entering hibernation mode.");
-        }
-    }, INACTIVITY_TIMEOUT);
-    */
-  }, [isHibernating, addLog, isCameraOn]);
-
-  const releaseWakeLock = useCallback(async () => {
-    if (wakeLockRef.current) {
-      try {
-        await wakeLockRef.current.release();
-        wakeLockRef.current = null;
-        setIsWakeLockActive(false);
-        addLog("Screen wake lock released.");
-      } catch (error: any) {
-        console.error("Could not release wake lock:", error);
-        addLog(`Error releasing wake lock: ${error.message}`);
-      }
-    }
-  }, [addLog]);
-
-  const requestWakeLock = useCallback(async () => {
-    if ('wakeLock' in navigator && wakeLockEnabled && !wakeLockRef.current) {
-      try {
-        wakeLockRef.current = await navigator.wakeLock.request('screen');
-        setIsWakeLockActive(true);
-        addLog("Screen wake lock acquired.");
-        wakeLockRef.current.addEventListener('release', () => {
-          wakeLockRef.current = null;
-          setIsWakeLockActive(false);
-          addLog("Wake Lock was released by the system.");
-        });
-      } catch (err: any) {
-        console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
-        addLog(`Wake Lock Error: ${err.message}`);
-        setIsWakeLockActive(false);
-      }
-    }
-  }, [wakeLockEnabled, addLog]);
-
   const handleWakeLockToggle = (checked: boolean) => {
     setWakeLockEnabled(checked);
     if (checked) {
@@ -434,93 +577,6 @@ export default function SortVisionClient() {
       toast({ title: 'Screen lock disabled', description: 'Your screen will now turn off normally.' });
     }
   };
-
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-    }
-    streamRef.current = null;
-    setIsCameraOn(false);
-    setIsFlashOn(false);
-    setPrimaryPrediction(null);
-    setDetectedObjects([]);
-    if (predictionIntervalRef.current) {
-      clearInterval(predictionIntervalRef.current);
-      predictionIntervalRef.current = null;
-    }
-    if (cooldownTimerRef.current) {
-        clearTimeout(cooldownTimerRef.current);
-        cooldownTimerRef.current = null;
-    }
-    setIsCooldownActive(false);
-    setIsHibernating(false);
-    setAppStatus("AWAITING_OBJECT");
-    addLog("Camera stopped.");
-    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-    releaseWakeLock();
-  }, [releaseWakeLock, addLog]);
-
-  const startCamera = useCallback(async (flashEnabled: boolean) => {
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      try {
-        addLog("Requesting camera access...");
-
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-        }
-
-        const constraints: MediaStreamConstraints = {
-          video: { 
-            facingMode: "environment",
-            advanced: [{ torch: flashEnabled }]
-          },
-        };
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
-        streamRef.current = stream;
-        setIsCameraOn(true);
-
-        const videoTrack = stream.getVideoTracks()[0];
-        const capabilities = videoTrack.getCapabilities();
-        const settings = videoTrack.getSettings();
-        if (capabilities.torch) {
-            setIsFlashOn(!!settings.torch);
-        } else {
-            setIsFlashOn(false);
-            if (flashEnabled) {
-                addLog("Flash/torch not supported on this device.");
-                toast({ variant: "destructive", title: "Flash Not Supported", description: "This device does not support camera flash control." });
-            }
-        }
-        
-        addLog(`Camera started ${flashEnabled ? 'with flash' : 'without flash'}.`);
-        resetInactivityTimer();
-        if(wakeLockEnabled) {
-          requestWakeLock();
-        }
-      } catch (error: any) {
-        console.error("Error accessing camera:", error);
-        addLog(`Camera Error: ${error.message}`);
-        toast({
-          variant: "destructive",
-          title: "Camera Error",
-          description: "Could not access the camera. Please check permissions.",
-        });
-        stopCamera();
-      }
-    }
-  }, [addLog, resetInactivityTimer, stopCamera, toast, wakeLockEnabled, requestWakeLock]);
 
   const toggleCamera = () => {
     if (isCameraOn) {
@@ -536,61 +592,6 @@ export default function SortVisionClient() {
       startCamera(newFlashState);
     }
   };
-
-  const runClassification = useCallback(async () => {
-    if (!isCameraOn || !videoRef.current || !model || isHibernating) {
-      return;
-    }
-    resetInactivityTimer();
-
-    const predictions = await model.predict(videoRef.current);
-    setCurrentPredictions(predictions);
-
-    const localResult = interpretDetectionsLocal(
-      predictions,
-      CONFIDENCE_THRESHOLD
-    );
-
-    addLog(`Local AI: ${localResult.reason}`);
-    setDetectionState(localResult.detectionState);
-
-    let topPrediction: Prediction | null = null;
-    
-    if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
-      const foundPrediction = predictions.find(p => p.className === localResult.primaryObject);
-      if (foundPrediction) {
-        topPrediction = foundPrediction;
-        setPrimaryPrediction(foundPrediction);
-      } else {
-        setPrimaryPrediction(null);
-      }
-    } else {
-      setPrimaryPrediction(null);
-    }
-    
-    // Now, handle sending the command, respecting the cooldown
-    if (isCooldownActive) {
-      setAppStatus("COOLDOWN_ACTIVE");
-      return;
-    }
-
-    if (topPrediction) { // This implies SINGLE_OBJECT with high confidence from AI
-      setAppStatus("READY_TO_SEND");
-      sendSortCommand(topPrediction.className); // Don't await
-      
-      setIsCooldownActive(true);
-      cooldownTimerRef.current = setTimeout(() => {
-          setIsCooldownActive(false);
-          cooldownTimerRef.current = null;
-          setAppStatus("AWAITING_OBJECT"); // Reset status after cooldown
-      }, COMMAND_COOLDOWN_MS);
-
-    } else if (predictions.some(p => p.probability > 0.5)) {
-        setAppStatus("CONFIDENCE_TOO_LOW");
-    } else {
-        setAppStatus("AWAITING_OBJECT");
-    }
-  }, [isCameraOn, model, isHibernating, isCooldownActive, resetInactivityTimer, sendSortCommand, addLog]);
 
 
   useEffect(() => {
@@ -655,9 +656,6 @@ export default function SortVisionClient() {
     return () => {
       if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
-      }
-       if (cooldownTimerRef.current) {
-        clearTimeout(cooldownTimerRef.current);
       }
     };
   }, [isCameraOn, model, runClassification]);
@@ -737,20 +735,20 @@ export default function SortVisionClient() {
 
   const StatusDisplay = () => {
     const getStatusText = () => {
-        if (isCooldownActive) return "COOLDOWN ACTIVE";
         switch (appStatus) {
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
+            case "CAMERA_CYCLING": return "CAMERA RESTARTING...";
             case "READY_TO_SEND":
-                return `Ready to Send: ${primaryPrediction?.className || '...'}`;
+                return `Sending: ${primaryPrediction?.className || '...'}`;
             default: return "Analyzing...";
         }
     };
 
     const getStatusBadgeVariant = () => {
-        if (isCooldownActive) return "secondary";
         switch (appStatus) {
             case "READY_TO_SEND": return "default";
+            case "CAMERA_CYCLING": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
             default: return "outline";
         }
@@ -760,7 +758,7 @@ export default function SortVisionClient() {
         <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
                 <Badge variant={getStatusBadgeVariant()} className="text-xs">
-                    {isCooldownActive && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
+                    {appStatus === 'CAMERA_CYCLING' && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
                     {getStatusText()}
                 </Badge>
                 <Badge variant={isTestMode ? "default" : "outline"} className="gap-2 text-xs">
@@ -1100,3 +1098,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
