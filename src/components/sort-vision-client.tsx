@@ -541,59 +541,58 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(async () => {
-    resetInactivityTimer();
-  
     if (isHibernating || !isCameraOn || !videoRef.current || !model) {
       return;
     }
+    
+    resetInactivityTimer();
   
     try {
       const modelPredictions = await model.predict(videoRef.current);
-      
-      const result = await handleInterpretDetections({
-        predictions: modelPredictions,
-        confidenceThreshold: CONFIDENCE_THRESHOLD,
-      });
-
-      // Update UI state immediately
-      const uiLabel = result.primaryObject || (result.detectedObjects && result.detectedObjects.join(', ')) || null;
-      if (uiLabel !== lastUiUpdate) {
-        setDetectionState(result.detectionState);
-        setLastUiUpdate(uiLabel);
-
-        if (result.detectionState === "SINGLE_OBJECT" && result.primaryObject) {
-            const prediction = modelPredictions.find(p => p.className === result.primaryObject);
-            setPrimaryPrediction(prediction || null);
-            setDetectedObjects([]);
-        } else if (result.detectionState === "MULTIPLE_OBJECTS" && result.detectedObjects) {
-            setPrimaryPrediction(null);
-            setDetectedObjects(currentObjects => {
-                return result.detectedObjects!.map(label => {
-                    const existing = currentObjects.find(o => o.id === label);
-                    const prediction = modelPredictions.find(p => p.className === label);
-                    if (existing) {
-                        return { ...existing, confidence: prediction?.probability || 0, label: label };
-                    }
-                    const size = 0.3 + Math.random() * 0.3;
-                    return {
-                        id: label, label: label, confidence: prediction?.probability || 0,
-                        bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
-                        vx: (Math.random() - 0.5) * 0.005, vy: (Math.random() - 0.5) * 0.005,
-                        vw: (Math.random() - 0.5) * 0.001, vh: (Math.random() - 0.5) * 0.001,
-                    };
-                });
-            });
-        } else {
-            setPrimaryPrediction(null);
-            setDetectedObjects([]);
-        }
-      }
-      
       if (modelPredictions.length > 0) {
         setLastClassifications(prev => [...prev, ...modelPredictions]);
       }
+
+      const significantDetections = modelPredictions.filter(p => p.probability > CONFIDENCE_THRESHOLD);
+      let currentLabel: string | null = null;
+      let newDetectionState: DetectionState = "NO_DETECTION";
       
-      const currentLabel = result.detectionState === 'SINGLE_OBJECT' ? result.primaryObject : result.detectionState === 'MULTIPLE_OBJECTS' ? 'Multiple Objects' : null;
+      if (significantDetections.length > 1) {
+        newDetectionState = "MULTIPLE_OBJECTS";
+        currentLabel = "Multiple Objects";
+        setPrimaryPrediction(null);
+        setDetectedObjects(currentObjects => {
+            return significantDetections.map(det => {
+                const existing = currentObjects.find(o => o.id === det.className);
+                if (existing) {
+                    return { ...existing, confidence: det.probability, label: det.className };
+                }
+                const size = 0.3 + Math.random() * 0.3;
+                return {
+                    id: det.className, label: det.className, confidence: det.probability,
+                    bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
+                    vx: (Math.random() - 0.5) * 0.005, vy: (Math.random() - 0.5) * 0.005,
+                    vw: (Math.random() - 0.5) * 0.001, vh: (Math.random() - 0.5) * 0.001,
+                };
+            });
+        });
+
+      } else if (significantDetections.length === 1) {
+        const primary = significantDetections[0];
+        newDetectionState = "SINGLE_OBJECT";
+        currentLabel = primary.className;
+        setPrimaryPrediction(primary);
+        setDetectedObjects([]);
+
+      } else {
+        newDetectionState = "NO_DETECTION";
+        currentLabel = null;
+        setPrimaryPrediction(null);
+        setDetectedObjects([]);
+      }
+      
+      setDetectionState(newDetectionState);
+
       const shouldPublish = mqttClientRef.current?.connected && !isMqttOnCooldown && currentLabel;
 
       if (shouldPublish && currentLabel !== lastPublishedLabel) {
@@ -622,7 +621,7 @@ export default function SortVisionClient() {
       setDetectedObjects([]);
     }
   
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, lastPublishedLabel, isMqttOnCooldown, lastUiUpdate]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, lastPublishedLabel, isMqttOnCooldown]);
 
   useEffect(() => {
     const animate = () => {
