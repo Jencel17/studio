@@ -593,6 +593,10 @@ export default function SortVisionClient() {
               const labelToSend = distinctLabels[0];
               mqttClientRef.current.publish(mqttTopic, labelToSend);
               addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
+              toast({
+                title: "MQTT Message Sent",
+                description: `Sent classification: ${labelToSend}`,
+              });
             } else if (distinctLabels.length > 1) {
               addLog(`Multiple distinct objects detected (${distinctLabels.join(', ')}). MQTT message not sent.`);
             }
@@ -608,7 +612,7 @@ export default function SortVisionClient() {
       setDetectedObjects([]);
     }
   
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast]);
 
   useEffect(() => {
     const animate = () => {
