@@ -40,6 +40,7 @@ type DetectedObject = {
   label: "Plastic" | "Metal" | "Paper";
   confidence: number;
   bbox: BoundingBox;
+  rotation: number; // For tilt effect
 };
 
 type MqttStatus = "Connected" | "Disconnected" | "Connecting" | "Error";
@@ -50,11 +51,10 @@ type LogEntry = {
 };
 
 const CONFIDENCE_THRESHOLD = 0.8;
-const CLASSIFICATION_INTERVAL = 1000;
+const CLASSIFICATION_INTERVAL = 2000; // Updated to 2 seconds
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
-const OBJECT_LIFESPAN = 5000; // How long an object stays on screen (ms)
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -81,8 +81,6 @@ export default function SortVisionClient() {
   const predictionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
-  const objectStateRef = useRef<DetectedObject[]>([]);
-  const objectTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { toast } = useToast();
   
@@ -279,8 +277,10 @@ export default function SortVisionClient() {
     setIsFlashOn(false);
     setPrediction(null);
     setDetectedObjects([]);
-    objectStateRef.current = [];
-    if (objectTimerRef.current) clearTimeout(objectTimerRef.current);
+    if (predictionIntervalRef.current) {
+      clearInterval(predictionIntervalRef.current);
+      predictionIntervalRef.current = null;
+    }
     setIsHibernating(false);
     addLog("Camera stopped.");
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
@@ -360,108 +360,83 @@ export default function SortVisionClient() {
     }
   };
 
-    const updateObjectSimulation = useCallback(() => {
-        const labels: DetectedObject["label"][] = ["Plastic", "Metal", "Paper"];
-        const scenario = Math.random();
-        let newObjects: DetectedObject[] = [];
-
-        if (scenario < 0.6) { // Single item
-            const size = 0.4 + Math.random() * 0.2;
-            newObjects = [{
-                id: 1,
-                label: labels[Math.floor(Math.random() * labels.length)],
-                confidence: Math.random() * 0.2 + 0.8,
-                bbox: [(1-size)/2, (1-size)/2, size, size] // Centered
-            }];
-        } else if (scenario < 0.8) { // Multiple items
-            const count = 2;
-            const size = 0.3;
-            newObjects.push({
-                id: 1,
-                label: labels[Math.floor(Math.random() * labels.length)],
-                confidence: Math.random() * 0.3 + 0.7,
-                bbox: [0.1, 0.25, size, size]
-            });
-            newObjects.push({
-                id: 2,
-                label: labels[Math.floor(Math.random() * labels.length)],
-                confidence: Math.random() * 0.3 + 0.7,
-                bbox: [0.6, 0.45, size, size]
-            });
-        } else { // No item
-            newObjects = [];
-        }
-        
-        objectStateRef.current = newObjects;
-        setDetectedObjects(newObjects);
-
-        // Schedule the next update
-        if (objectTimerRef.current) clearTimeout(objectTimerRef.current);
-        objectTimerRef.current = setTimeout(updateObjectSimulation, OBJECT_LIFESPAN);
-    }, []);
-
   const runClassification = useCallback(() => {
-    // Activity is now based on whether objects are present
-    const isActivityDetected = objectStateRef.current.length > 0;
-
+    const isActivityDetected = detectedObjects.length > 0;
     if (isActivityDetected) {
-        resetInactivityTimer();
+      resetInactivityTimer();
     }
 
-    if (isHibernating) {
-        setPrediction(null);
-        return;
+    if (isHibernating || !isCameraOn) {
+      setPrediction(null);
+      setDetectedObjects([]);
+      return;
     }
-    
-    const currentObjects = objectStateRef.current;
-    
-    // Slightly randomize confidence on each tick to simulate real-world fluctuation
-    const updatedObjects = currentObjects.map(obj => ({
-        ...obj,
-        confidence: Math.max(0.5, Math.min(1, obj.confidence + (Math.random() - 0.5) * 0.05))
-    }));
 
-    setDetectedObjects(updatedObjects);
-    
-    const highConfidenceDetections = updatedObjects.filter(d => d.confidence > CONFIDENCE_THRESHOLD);
-    
+    const labels: DetectedObject["label"][] = ["Plastic", "Metal", "Paper"];
+    const scenario = Math.random();
+    let newObjects: DetectedObject[] = [];
+
+    if (scenario < 0.6) { // Single item
+      const size = 0.4 + Math.random() * 0.2;
+      newObjects = [{
+        id: 1,
+        label: labels[Math.floor(Math.random() * labels.length)],
+        confidence: Math.random() * 0.2 + 0.8,
+        bbox: [(1 - size) / 2, (1 - size) / 2, size, size], // Centered
+        rotation: Math.random() * 30 - 15, // -15 to 15 degrees
+      }];
+    } else if (scenario < 0.8) { // Multiple items
+      newObjects.push({
+        id: 1,
+        label: labels[Math.floor(Math.random() * labels.length)],
+        confidence: Math.random() * 0.3 + 0.7,
+        bbox: [0.1, 0.25, 0.3, 0.3],
+        rotation: Math.random() * 30 - 15,
+      });
+      newObjects.push({
+        id: 2,
+        label: labels[Math.floor(Math.random() * labels.length)],
+        confidence: Math.random() * 0.3 + 0.7,
+        bbox: [0.6, 0.45, 0.3, 0.3],
+        rotation: Math.random() * 30 - 15,
+      });
+    }
+    // Else: No items
+
+    setDetectedObjects(newObjects);
+    const highConfidenceDetections = newObjects.filter(d => d.confidence > CONFIDENCE_THRESHOLD);
+
     if (highConfidenceDetections.length > 1) {
-        setPrediction(null); // Clear main prediction if multiple objects
-        addLog(`Multiple items detected: ${highConfidenceDetections.map(p => p.label).join(', ')}. No signal sent.`);
+      setPrediction(null); // Clear main prediction if multiple objects
+      addLog(`Multiple items detected: ${highConfidenceDetections.map(p => p.label).join(', ')}. No signal sent.`);
     } else if (highConfidenceDetections.length === 1) {
-        const currentPrediction = highConfidenceDetections[0];
-        setPrediction(currentPrediction);
-        
-        // Only log and send MQTT if the prediction has changed to avoid spam
-        if (prediction?.label !== currentPrediction.label || prediction?.confidence !== currentPrediction.confidence) {
-            addLog(`Classified: ${currentPrediction.label} (Confidence: ${(currentPrediction.confidence * 100).toFixed(0)}%)`);
-            if (mqttClientRef.current?.connected) {
-                mqttClientRef.current.publish(mqttTopic, currentPrediction.label);
-                addLog(`Published '${currentPrediction.label}' to MQTT topic '${mqttTopic}'`);
-            }
-            setLastClassifications((prev) => [...prev, currentPrediction]);
+      const currentPrediction = highConfidenceDetections[0];
+      setPrediction(currentPrediction);
+
+      // Only log and send MQTT if the prediction has changed to avoid spam
+      if (prediction?.label !== currentPrediction.label || prediction?.confidence !== currentPrediction.confidence) {
+        addLog(`Classified: ${currentPrediction.label} (Confidence: ${(currentPrediction.confidence * 100).toFixed(0)}%)`);
+        if (mqttClientRef.current?.connected) {
+          mqttClientRef.current.publish(mqttTopic, currentPrediction.label);
+          addLog(`Published '${currentPrediction.label}' to MQTT topic '${mqttTopic}'`);
         }
+        setLastClassifications((prev) => [...prev, currentPrediction]);
+      }
     } else {
-        setPrediction(null); // No high-confidence object
+      setPrediction(null); // No high-confidence object
     }
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, prediction]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, prediction, isCameraOn, detectedObjects.length]);
 
   useEffect(() => {
     if (isCameraOn) {
       if (!predictionIntervalRef.current) {
-        // Start the object simulation and the classification interval
-        updateObjectSimulation();
-        predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL / 2); // Run more frequently for smoother updates
+        runClassification(); // Run once immediately
+        predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL);
       }
     } else {
-      // Clear intervals and timers when camera is off
       if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = null;
-      }
-      if (objectTimerRef.current) {
-        clearTimeout(objectTimerRef.current);
-        objectTimerRef.current = null;
       }
     }
 
@@ -469,11 +444,8 @@ export default function SortVisionClient() {
       if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
       }
-       if (objectTimerRef.current) {
-        clearTimeout(objectTimerRef.current);
-      }
     };
-  }, [isCameraOn, runClassification, updateObjectSimulation]);
+  }, [isCameraOn, runClassification]);
   
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -545,20 +517,23 @@ export default function SortVisionClient() {
 
   // Effect to handle reconnection when settings change
   useEffect(() => {
-    if (mqttBrokerUrl) {
-      if (!mqttClientRef.current) {
+    if (!mqttBrokerUrl) return;
+
+    if (!mqttClientRef.current || !mqttClientRef.current.connected) {
         connectToMqtt();
-      } else {
-        try {
-          // Only reconnect if the URL has actually changed.
-          if (mqttClientRef.current.options.href && mqttBrokerUrl !== mqttClientRef.current.options.href) {
-            connectToMqtt();
-          }
-        } catch (error) {
-           addLog("Invalid URL for MQTT broker. Reconnecting...");
-           connectToMqtt();
+        return;
+    }
+
+    try {
+        const clientUrl = new URL(mqttClientRef.current.options.href || '');
+        const stateUrl = new URL(mqttBrokerUrl);
+
+        if (clientUrl.href !== stateUrl.href) {
+             addLog("MQTT broker details changed, reconnecting...");
+             connectToMqtt();
         }
-      }
+    } catch (error) {
+        addLog("Invalid MQTT URL format. Cannot compare for reconnection.");
     }
   }, [mqttBrokerUrl, connectToMqtt, addLog]);
 
@@ -731,6 +706,7 @@ export default function SortVisionClient() {
                       top: `${y * 100}%`,
                       width: `${w * 100}%`,
                       height: `${h * 100}%`,
+                      transform: `rotate(${obj.rotation}deg)`,
                     }}
                   >
                     <div
@@ -738,6 +714,10 @@ export default function SortVisionClient() {
                         'absolute -top-6 left-0 text-xs font-semibold text-white px-2 py-0.5 rounded-t-md',
                         textColors[obj.label]
                       )}
+                      style={{
+                        transform: `rotate(${-obj.rotation}deg)`,
+                        transformOrigin: 'bottom left',
+                      }}
                     >
                       {obj.label} ({(obj.confidence * 100).toFixed(0)}%)
                     </div>
@@ -800,3 +780,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
