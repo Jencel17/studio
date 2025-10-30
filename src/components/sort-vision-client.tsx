@@ -285,9 +285,7 @@ export default function SortVisionClient() {
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
     if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
         const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
-        addLog(errorMsg);
         setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
-        toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security. See console." });
         return;
     }
 
@@ -997,6 +995,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-
-    
