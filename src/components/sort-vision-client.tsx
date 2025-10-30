@@ -302,7 +302,10 @@ export default function SortVisionClient() {
         addLog(`Successfully sent command for ${classificationLabel}`);
         toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
       } else {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        const errorText = `Error: ESP32 responded with ${response.status}`;
+        setCommandStatus({ status: "ERROR", message: errorText });
+        addLog(errorText);
+        toast({ variant: "destructive", title: "ESP32 Error", description: `Received status ${response.status}` });
       }
     } catch (error: any) {
       console.error("Failed to send command to ESP32:", error);
@@ -991,3 +994,4 @@ export default function SortVisionClient() {
     </>
   );
 }
+
