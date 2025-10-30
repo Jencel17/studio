@@ -6,7 +6,6 @@ import mqtt from "mqtt";
 import * as tmImage from "@teachablemachine/image";
 import * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
-import { z } from "zod";
 import {
   Card,
   CardContent,
@@ -29,29 +28,6 @@ import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-
-const SuggestAiModelSwapInputSchema = z.object({
-  averageConfidenceScores: z
-    .record(z.number())
-    .describe(
-      'A record of the average confidence scores for each classification label (Plastic, Metal, Paper) over a recent period.'
-    ),
-  numClassifications: z
-    .number()
-    .describe(
-      'Number of classifications made in the recent period.'
-    ),
-});
-
-const PredictionSchema = z.object({
-  className: z.string(),
-  probability: z.number(),
-});
-
-const InterpretDetectionsInputSchema = z.object({
-  predictions: z.array(PredictionSchema).describe('An array of classification predictions from the Teachable Machine model.'),
-  confidenceThreshold: z.number().describe('The minimum confidence score to consider a prediction significant.'),
-});
 
 
 type Prediction = {
@@ -108,6 +84,7 @@ export default function SortVisionClient() {
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
   const [isMqttOnCooldown, setIsMqttOnCooldown] = useState(false);
+  const [lastUiUpdate, setLastUiUpdate] = useState<string | null>(null);
 
 
   // MQTT Settings
@@ -578,32 +555,37 @@ export default function SortVisionClient() {
       });
 
       // Update UI state immediately
-      setDetectionState(result.detectionState);
-      if (result.detectionState === "SINGLE_OBJECT" && result.primaryObject) {
-        const prediction = modelPredictions.find(p => p.className === result.primaryObject);
-        setPrimaryPrediction(prediction || null);
-        setDetectedObjects([]);
-      } else if (result.detectionState === "MULTIPLE_OBJECTS" && result.detectedObjects) {
-        setPrimaryPrediction(null);
-        setDetectedObjects(currentObjects => {
-          return result.detectedObjects!.map(label => {
-            const existing = currentObjects.find(o => o.id === label);
-            const prediction = modelPredictions.find(p => p.className === label);
-            if (existing) {
-              return { ...existing, confidence: prediction?.probability || 0, label: label };
-            }
-            const size = 0.3 + Math.random() * 0.3;
-            return {
-              id: label, label: label, confidence: prediction?.probability || 0,
-              bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
-              vx: (Math.random() - 0.5) * 0.005, vy: (Math.random() - 0.5) * 0.005,
-              vw: (Math.random() - 0.5) * 0.001, vh: (Math.random() - 0.5) * 0.001,
-            };
-          });
-        });
-      } else {
-        setPrimaryPrediction(null);
-        setDetectedObjects([]);
+      const uiLabel = result.primaryObject || (result.detectedObjects && result.detectedObjects.join(', ')) || null;
+      if (uiLabel !== lastUiUpdate) {
+        setDetectionState(result.detectionState);
+        setLastUiUpdate(uiLabel);
+
+        if (result.detectionState === "SINGLE_OBJECT" && result.primaryObject) {
+            const prediction = modelPredictions.find(p => p.className === result.primaryObject);
+            setPrimaryPrediction(prediction || null);
+            setDetectedObjects([]);
+        } else if (result.detectionState === "MULTIPLE_OBJECTS" && result.detectedObjects) {
+            setPrimaryPrediction(null);
+            setDetectedObjects(currentObjects => {
+                return result.detectedObjects!.map(label => {
+                    const existing = currentObjects.find(o => o.id === label);
+                    const prediction = modelPredictions.find(p => p.className === label);
+                    if (existing) {
+                        return { ...existing, confidence: prediction?.probability || 0, label: label };
+                    }
+                    const size = 0.3 + Math.random() * 0.3;
+                    return {
+                        id: label, label: label, confidence: prediction?.probability || 0,
+                        bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
+                        vx: (Math.random() - 0.5) * 0.005, vy: (Math.random() - 0.5) * 0.005,
+                        vw: (Math.random() - 0.5) * 0.001, vh: (Math.random() - 0.5) * 0.001,
+                    };
+                });
+            });
+        } else {
+            setPrimaryPrediction(null);
+            setDetectedObjects([]);
+        }
       }
       
       if (modelPredictions.length > 0) {
@@ -639,7 +621,7 @@ export default function SortVisionClient() {
       setDetectedObjects([]);
     }
   
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, lastPublishedLabel, isMqttOnCooldown]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, lastPublishedLabel, isMqttOnCooldown, lastUiUpdate]);
 
   useEffect(() => {
     const animate = () => {

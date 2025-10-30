@@ -6,22 +6,22 @@
  * - interpretDetections - A function that analyzes a list of predictions to determine the overall state.
  */
 
-import { ai } from '@/ai/genkit';
-import { InterpretDetectionsInputSchema, InterpretDetectionsOutputSchema, type InterpretDetectionsInput } from '@/app/actions/ai';
+import {ai} from '@/ai/genkit';
+import {
+  InterpretDetectionsInputSchema,
+  InterpretDetectionsOutputSchema,
+  type InterpretDetectionsInput,
+} from '@/app/actions/ai';
 
-
-export async function interpretDetections(
-  input: InterpretDetectionsInput
-) {
+export async function interpretDetections(input: InterpretDetectionsInput) {
   return interpretDetectionsFlow(input);
 }
 
-
 const prompt = ai.definePrompt({
-    name: 'interpretDetectionsPrompt',
-    input: { schema: InterpretDetectionsInputSchema },
-    output: { schema: InterpretDetectionsOutputSchema },
-    prompt: `You are an expert system that analyzes the output of a real-time image classification model. Your job is to interpret a list of predictions and determine if there is a single clear object, multiple distinct objects, or no significant detection.
+  name: 'interpretDetectionsPrompt',
+  input: {schema: InterpretDetectionsInputSchema},
+  output: {schema: InterpretDetectionsOutputSchema},
+  prompt: `You are an expert system that analyzes the output of a real-time image classification model. Your job is to interpret a list of predictions and determine if there is a single clear object, multiple distinct objects, or no significant detection.
 
 The confidence threshold for a prediction to be considered significant is {{confidenceThreshold}}.
 
@@ -60,8 +60,8 @@ const interpretDetectionsFlow = ai.defineFlow(
     inputSchema: InterpretDetectionsInputSchema,
     outputSchema: InterpretDetectionsOutputSchema,
   },
-  async (input) => {
-    const { output } = await prompt(input);
+  async input => {
+    const {output} = await prompt(input);
     return output!;
   }
 );

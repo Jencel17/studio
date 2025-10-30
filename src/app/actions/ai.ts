@@ -1,8 +1,8 @@
 'use server';
 
-import { suggestAiModelSwap as suggestAiModelSwapFlow } from '@/ai/flows/suggest-ai-model-swap';
-import { interpretDetections as interpretDetectionsFlow } from '@/ai/flows/interpret-detections-flow';
-import { z } from 'zod';
+import {suggestAiModelSwap as suggestAiModelSwapFlow} from '@/ai/flows/suggest-ai-model-swap';
+import {interpretDetections as interpretDetectionsFlow} from '@/ai/flows/interpret-detections-flow';
+import {z} from 'zod';
 
 // Schema and types for suggestAiModelSwap
 export const SuggestAiModelSwapInputSchema = z.object({
@@ -13,9 +13,7 @@ export const SuggestAiModelSwapInputSchema = z.object({
     ),
   numClassifications: z
     .number()
-    .describe(
-      'Number of classifications made in the recent period.'
-    ),
+    .describe('Number of classifications made in the recent period.'),
 });
 export type SuggestAiModelSwapInput = z.infer<
   typeof SuggestAiModelSwapInputSchema
@@ -44,32 +42,51 @@ const PredictionSchema = z.object({
 });
 
 export const InterpretDetectionsInputSchema = z.object({
-  predictions: z.array(PredictionSchema).describe('An array of classification predictions from the Teachable Machine model.'),
-  confidenceThreshold: z.number().describe('The minimum confidence score to consider a prediction significant.'),
+  predictions: z
+    .array(PredictionSchema)
+    .describe(
+      'An array of classification predictions from the Teachable Machine model.'
+    ),
+  confidenceThreshold: z
+    .number()
+    .describe(
+      'The minimum confidence score to consider a prediction significant.'
+    ),
 });
-export type InterpretDetectionsInput = z.infer<typeof InterpretDetectionsInputSchema>;
+export type InterpretDetectionsInput = z.infer<
+  typeof InterpretDetectionsInputSchema
+>;
 
 export const InterpretDetectionsOutputSchema = z.object({
   detectionState: z
     .enum(['SINGLE_OBJECT', 'MULTIPLE_OBJECTS', 'NO_DETECTION', 'AMBIGUOUS'])
     .describe('The overall state of detection.'),
-  primaryObject: z.string().optional().describe('The name of the single object detected, if applicable.'),
-  detectedObjects: z.array(z.string()).optional().describe('A list of objects detected, if multiple are present.'),
+  primaryObject: z
+    .string()
+    .optional()
+    .describe('The name of the single object detected, if applicable.'),
+  detectedObjects: z
+    .array(z.string())
+    .optional()
+    .describe('A list of objects detected, if multiple are present.'),
   reason: z.string().describe('A brief explanation for the decision.'),
 });
-export type InterpretDetectionsOutput = z.infer<typeof InterpretDetectionsOutputSchema>;
+export type InterpretDetectionsOutput = z.infer<
+  typeof InterpretDetectionsOutputSchema
+>;
 
-
-export async function handleModelSwapCheck(input: SuggestAiModelSwapInput): Promise<SuggestAiModelSwapOutput> {
+export async function handleModelSwapCheck(
+  input: SuggestAiModelSwapInput
+): Promise<SuggestAiModelSwapOutput> {
   try {
     const result = await suggestAiModelSwapFlow(input);
     return result;
   } catch (error) {
-    console.error("Error suggesting AI model swap:", error);
+    console.error('Error suggesting AI model swap:', error);
     // Gracefully handle potential errors from the AI flow
     return {
       shouldSuggestSwap: false,
-      reason: "An error occurred while analyzing model performance.",
+      reason: 'An error occurred while analyzing model performance.',
     };
   }
 }
@@ -81,10 +98,10 @@ export async function handleInterpretDetections(
     const result = await interpretDetectionsFlow(input);
     return result;
   } catch (error) {
-    console.error("Error interpreting detections:", error);
+    console.error('Error interpreting detections:', error);
     return {
-      detectionState: "NO_DETECTION",
-      reason: "An error occurred while analyzing the scene.",
+      detectionState: 'NO_DETECTION',
+      reason: 'An error occurred while analyzing the scene.',
     };
   }
 }

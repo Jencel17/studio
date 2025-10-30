@@ -7,11 +7,13 @@
  */
 
 import {ai} from '@/ai/genkit';
-import { type SuggestAiModelSwapInput, SuggestAiModelSwapInputSchema, SuggestAiModelSwapOutputSchema } from '@/app/actions/ai';
+import {
+  SuggestAiModelSwapInputSchema,
+  SuggestAiModelSwapOutputSchema,
+  type SuggestAiModelSwapInput,
+} from '@/app/actions/ai';
 
-export async function suggestAiModelSwap(
-  input: SuggestAiModelSwapInput
-) {
+export async function suggestAiModelSwap(input: SuggestAiModelSwapInput) {
   return suggestAiModelSwapFlow(input);
 }
 
@@ -50,7 +52,7 @@ const prompt = ai.definePrompt({
 
   Now, analyze the given data and output the JSON object:
   `,
-})
+});
 
 const suggestAiModelSwapFlow = ai.defineFlow(
   {
