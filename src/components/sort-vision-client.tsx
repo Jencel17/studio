@@ -493,51 +493,50 @@ export default function SortVisionClient() {
 
   const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current || !model || isHibernating) {
-        return;
+      return;
     }
     resetInactivityTimer();
 
-    if (!model) {
-      addLog("Classification skipped: model not loaded.");
+    const predictions = await model.predict(videoRef.current);
+    setCurrentPredictions(predictions);
+    
+    const topPrediction = predictions.reduce((prev, current) => (prev.probability > current.probability) ? prev : current, { className: '', probability: 0 });
+
+    // Update UI based on detection, regardless of cooldown
+    if (topPrediction && topPrediction.probability > 0.5) {
+      setPrimaryPrediction(topPrediction);
+      const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
+      if (multipleDetections) {
+          setDetectionState("MULTIPLE_OBJECTS");
+      } else {
+          setDetectionState("SINGLE_OBJECT");
+      }
+    } else {
+      setPrimaryPrediction(null);
+      setDetectionState("NO_DETECTION");
+    }
+
+    // Now, handle sending the command, respecting the cooldown
+    if (isCooldownActive) {
+      setAppStatus("COOLDOWN_ACTIVE");
       return;
     }
 
-    const predictions = await model.predict(videoRef.current);
-    setCurrentPredictions(predictions);
-
-    if (isCooldownActive) {
-        setAppStatus("COOLDOWN_ACTIVE");
-        return;
-    }
-
-    const topPrediction = predictions.reduce((prev, current) => (prev.probability > current.probability) ? prev : current);
-
     if (topPrediction && topPrediction.probability >= 0.90) {
-        setAppStatus("READY_TO_SEND");
-        setPrimaryPrediction(topPrediction);
-        setDetectionState("SINGLE_OBJECT");
-        
-        await sendSortCommand(topPrediction.className);
-        
-        setIsCooldownActive(true);
-        cooldownTimerRef.current = setTimeout(() => {
-            setIsCooldownActive(false);
-            cooldownTimerRef.current = null;
-        }, COMMAND_COOLDOWN_MS);
+      setAppStatus("READY_TO_SEND");
+      sendSortCommand(topPrediction.className); // Don't await
+      
+      setIsCooldownActive(true);
+      cooldownTimerRef.current = setTimeout(() => {
+          setIsCooldownActive(false);
+          cooldownTimerRef.current = null;
+          setAppStatus("AWAITING_OBJECT"); // Reset status after cooldown
+      }, COMMAND_COOLDOWN_MS);
 
     } else if (topPrediction && topPrediction.probability > 0.5) {
         setAppStatus("CONFIDENCE_TOO_LOW");
-        setPrimaryPrediction(topPrediction);
-        setDetectionState("SINGLE_OBJECT");
     } else {
-        const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
-        if (multipleDetections) {
-          setDetectionState("MULTIPLE_OBJECTS");
-        } else {
-          setDetectionState("NO_DETECTION");
-        }
         setAppStatus("AWAITING_OBJECT");
-        setPrimaryPrediction(null);
     }
   }, [isCameraOn, model, isHibernating, isCooldownActive, resetInactivityTimer, sendSortCommand, addLog]);
 
@@ -683,20 +682,20 @@ export default function SortVisionClient() {
 
   const StatusDisplay = () => {
     const getStatusText = () => {
+        if (isCooldownActive) return "COOLDOWN ACTIVE";
         switch (appStatus) {
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
             case "READY_TO_SEND":
                 return `Ready to Send: ${primaryPrediction?.className || '...'}`;
-            case "COOLDOWN_ACTIVE": return "COOLDOWN ACTIVE";
             default: return "Analyzing...";
         }
     };
 
     const getStatusBadgeVariant = () => {
+        if (isCooldownActive) return "secondary";
         switch (appStatus) {
             case "READY_TO_SEND": return "default";
-            case "COOLDOWN_ACTIVE": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
             default: return "outline";
         }
@@ -706,7 +705,7 @@ export default function SortVisionClient() {
         <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
                 <Badge variant={getStatusBadgeVariant()} className="text-xs">
-                    {appStatus === 'COOLDOWN_ACTIVE' && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
+                    {isCooldownActive && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
                     {getStatusText()}
                 </Badge>
                 <Badge variant={isTestMode ? "default" : "outline"} className="gap-2 text-xs">
@@ -735,7 +734,7 @@ export default function SortVisionClient() {
                     Multiple objects detected
                 </h3>
             </div>
-        ) : (detectionState === "SINGLE_OBJECT" || appStatus === "CONFIDENCE_TOO_LOW") && primaryPrediction && !isHibernating ? (
+        ) : (detectionState === "SINGLE_OBJECT") && primaryPrediction && !isHibernating ? (
             <>
             <h3 className="text-2xl font-bold text-white drop-shadow-lg">
                 {primaryPrediction.className}
