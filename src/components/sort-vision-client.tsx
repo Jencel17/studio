@@ -389,6 +389,8 @@ export default function SortVisionClient() {
       addLog("Activity detected, waking from hibernation.");
     }
 
+    // Temporarily disable hibernation
+    /*
     inactivityTimerRef.current = setTimeout(() => {
         if (isCameraOn) {
             setIsHibernating(true);
@@ -397,6 +399,7 @@ export default function SortVisionClient() {
             addLog("Inactivity detected, entering hibernation mode.");
         }
     }, INACTIVITY_TIMEOUT);
+    */
   }, [isHibernating, addLog, isCameraOn]);
 
   const releaseWakeLock = useCallback(async () => {
@@ -541,25 +544,26 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(async () => {
-    // Exit if hibernating, camera is off, model not loaded, or on MQTT cooldown
-    if (isHibernating || !isCameraOn || !videoRef.current || !model) {
+    // Exit if camera is off, model not loaded
+    if (!isCameraOn || !videoRef.current || !model) {
       return;
     }
-    
-    // If on cooldown, just reset inactivity timer and exit. Don't do new predictions.
-    if (isMqttOnCooldown) {
-        resetInactivityTimer();
-        return;
-    }
-    
+  
+    // Always reset the inactivity timer on each run
     resetInactivityTimer();
+  
+    // Stop detection if hibernating
+    if (isHibernating) {
+      // If we are hibernating, we don't do anything else.
+      return;
+    }
   
     try {
       // --- 1. Always get the latest predictions ---
       const predictions = await model.predict(videoRef.current);
-      setCurrentPredictions(predictions);
+      setCurrentPredictions(predictions); // Keep track of latest predictions for the side panel
   
-      // --- 2. Always update the UI based on predictions ---
+      // --- 2. Determine Detection State and update UI state ---
       const highConfidencePrediction = predictions.find((p) => p.probability > 0.9);
       const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
   
@@ -596,8 +600,8 @@ export default function SortVisionClient() {
         setDetectedObjects([]);
       }
   
-      // --- 3. Handle MQTT logic separately, only if not on cooldown ---
-      if (mqttClientRef.current?.connected && highConfidencePrediction) {
+      // --- 3. Handle MQTT messaging, only if there's a single, high-confidence object and not on cooldown ---
+      if (highConfidencePrediction && mqttClientRef.current?.connected && !isMqttOnCooldown) {
         const labelToSend = highConfidencePrediction.className;
         mqttClientRef.current.publish(mqttTopic, labelToSend);
         addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
@@ -611,7 +615,10 @@ export default function SortVisionClient() {
         addLog(`MQTT cooldown started (${MQTT_COOLDOWN_MS / 1000}s).`);
         cooldownTimerRef.current = setTimeout(() => {
           setIsMqttOnCooldown(false);
-          addLog("MQTT cooldown finished. Resuming detection.");
+          addLog("MQTT cooldown finished. Resuming messaging.");
+          // Clear the UI from the last successful send
+          setPrimaryPrediction(null); 
+          setDetectionState("NO_DETECTION");
           cooldownTimerRef.current = null;
         }, MQTT_COOLDOWN_MS);
       }
@@ -619,7 +626,7 @@ export default function SortVisionClient() {
       console.error("Error during prediction:", error);
       addLog("Prediction error. Check console.");
     }
-  }, [isHibernating, isCameraOn, model, resetInactivityTimer, mqttTopic, addLog, toast, isMqttOnCooldown]);
+  }, [isCameraOn, model, resetInactivityTimer, mqttTopic, addLog, toast, isMqttOnCooldown, isHibernating]);
 
 
   useEffect(() => {
@@ -1099,5 +1106,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
