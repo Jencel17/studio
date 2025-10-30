@@ -20,7 +20,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck } from "@/app/actions/ai";
+import { handleModelSwapCheck, handleInterpretDetections } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
@@ -31,15 +31,15 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 
 type Prediction = {
-  label: string;
-  confidence: number;
+  className: string;
+  probability: number;
 };
 
 type BoundingBox = [number, number, number, number]; // [x, y, width, height]
 
 type DetectedObject = {
   id: string; // Use string for more stable keys
-  label: Prediction['label'];
+  label: Prediction['className'];
   confidence: number;
   bbox: BoundingBox;
   // For animation
@@ -56,8 +56,9 @@ type LogEntry = {
   message: string;
 };
 
+type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "AMBIGUOUS";
+
 const CONFIDENCE_THRESHOLD = 0.8;
-const MULTI_DETECTION_THRESHOLD = 0.5;
 const CLASSIFICATION_INTERVAL = 2000;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
@@ -66,7 +67,6 @@ const MAX_LOGS = 100;
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isFlashOn, setIsFlashOn] = useState(false);
-  const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
   const [mqttStatus, setMqttStatus] = useState<MqttStatus>("Disconnected");
   const [isHibernating, setIsHibernating] = useState(false);
@@ -80,6 +80,9 @@ export default function SortVisionClient() {
   const [isDragging, setIsDragging] = useState(false);
   const [modelLabels, setModelLabels] = useState<string[]>([]);
   const [lastPublishedLabel, setLastPublishedLabel] = useState<string | null>(null);
+  const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
+  const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
+
 
   // MQTT Settings
   const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8884/mqtt");
@@ -104,21 +107,14 @@ export default function SortVisionClient() {
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
 
-  const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile?: File) => {
+  const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
     addLog("Loading Teachable Machine model from files...");
     try {
       await tf.setBackend('cpu');
       await tf.ready();
       
-      let loadedModel;
-      if (weightsFile) {
-        loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
-      } else {
-        const modelURL = URL.createObjectURL(modelFile);
-        const metadataURL = URL.createObjectURL(metadataFile);
-        loadedModel = await tmImage.load(modelURL, metadataURL);
-      }
+      const loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
       
       setModel(loadedModel);
       const labels = loadedModel.getClassLabels();
@@ -179,7 +175,6 @@ export default function SortVisionClient() {
             toast({ variant: "destructive", title: "Zip File Error", description: "Could not process the zip file. Ensure it's a valid Teachable Machine export." });
         }
     } else {
-        // Handle individual files
         let droppedModelFile: File | null = null;
         let droppedMetadataFile: File | null = null;
         let droppedWeightsFile: File | null = null;
@@ -393,7 +388,7 @@ export default function SortVisionClient() {
 
     inactivityTimerRef.current = setTimeout(() => {
         setIsHibernating(true);
-        setPrediction(null);
+        setPrimaryPrediction(null);
         setDetectedObjects([]);
         addLog("Inactivity detected, entering hibernation mode.");
     }, INACTIVITY_TIMEOUT);
@@ -456,7 +451,7 @@ export default function SortVisionClient() {
     streamRef.current = null;
     setIsCameraOn(false);
     setIsFlashOn(false);
-    setPrediction(null);
+    setPrimaryPrediction(null);
     setDetectedObjects([]);
     if (predictionIntervalRef.current) {
       clearInterval(predictionIntervalRef.current);
@@ -543,7 +538,7 @@ export default function SortVisionClient() {
     resetInactivityTimer();
   
     if (isHibernating || !isCameraOn || !videoRef.current || !model) {
-      setPrediction(null);
+      setPrimaryPrediction(null);
       setDetectedObjects([]);
       return;
     }
@@ -551,11 +546,29 @@ export default function SortVisionClient() {
     try {
       const modelPredictions = await model.predict(videoRef.current);
       
-      const potentialDetections = modelPredictions
-        .filter(p => p.probability > MULTI_DETECTION_THRESHOLD);
+      const aiResult = await handleInterpretDetections({
+        predictions: modelPredictions,
+        confidenceThreshold: CONFIDENCE_THRESHOLD,
+      });
 
-      setDetectedObjects(currentObjects => {
-        return potentialDetections.map((p, i) => {
+      setDetectionState(aiResult.detectionState);
+      addLog(`AI decision: ${aiResult.detectionState} - ${aiResult.reason}`);
+
+      let labelToPublish: string | null = null;
+      
+      if (aiResult.detectionState === "SINGLE_OBJECT" && aiResult.primaryObject) {
+        const prediction = modelPredictions.find(p => p.className === aiResult.primaryObject);
+        if (prediction) {
+          setPrimaryPrediction(prediction);
+          setDetectedObjects([]);
+          labelToPublish = prediction.className;
+          setLastClassifications(prev => [...prev, prediction]);
+        }
+      } else if (aiResult.detectionState === "MULTIPLE_OBJECTS" && aiResult.detectedObjects) {
+        setPrimaryPrediction(null);
+        setDetectedObjects(currentObjects => {
+          return aiResult.detectedObjects!.map(label => {
+            const p = modelPredictions.find(pred => pred.className === label)!;
             const existing = currentObjects.find(o => o.id === p.className);
             if (existing) {
               return { ...existing, confidence: p.probability, label: p.className };
@@ -572,51 +585,32 @@ export default function SortVisionClient() {
               vw: (Math.random() - 0.5) * 0.001,
               vh: (Math.random() - 0.5) * 0.001,
             };
+          });
         });
-      });
-
-      const highConfidenceDetections = potentialDetections.filter(p => p.probability > CONFIDENCE_THRESHOLD);
-      
-      let primaryPrediction = null;
-      if (highConfidenceDetections.length > 0) {
-        primaryPrediction = highConfidenceDetections.reduce((max, p) => p.probability > max.probability ? p : max);
-      }
-      
-      if (primaryPrediction) {
-          const finalPrediction = { label: primaryPrediction.className, confidence: primaryPrediction.probability };
-          setPrediction(finalPrediction);
-          addLog(`Classified: ${finalPrediction.label} (Confidence: ${(finalPrediction.confidence * 100).toFixed(0)}%)`);
-
-          // MQTT Publishing Logic
-          if (mqttClientRef.current?.connected) {
-            const distinctLabels = [...new Set(highConfidenceDetections.map(d => d.label))];
-            if (distinctLabels.length === 1) {
-              const labelToSend = distinctLabels[0];
-              if (labelToSend !== lastPublishedLabel) {
-                mqttClientRef.current.publish(mqttTopic, labelToSend);
-                addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
-                toast({
-                  title: "MQTT Message Sent",
-                  description: `Sent classification: ${labelToSend}`,
-                });
-                setLastPublishedLabel(labelToSend);
-              }
-            } else if (distinctLabels.length > 1) {
-              addLog(`Multiple distinct objects detected (${distinctLabels.join(', ')}). MQTT message not sent.`);
-              setLastPublishedLabel(null);
-            }
-          }
-          setLastClassifications((prev) => [...prev, finalPrediction]);
+        labelToPublish = "Multiple Objects";
       } else {
-          setPrediction(null);
-          if (lastPublishedLabel) {
-            setLastPublishedLabel(null);
-          }
+        setPrimaryPrediction(null);
+        setDetectedObjects([]);
+        labelToPublish = null;
       }
+
+      // MQTT Publishing Logic
+      if (mqttClientRef.current?.connected && labelToPublish !== lastPublishedLabel) {
+        if (labelToPublish) {
+            mqttClientRef.current.publish(mqttTopic, labelToPublish);
+            addLog(`Published '${labelToPublish}' to MQTT topic '${mqttTopic}'`);
+            toast({
+              title: "MQTT Message Sent",
+              description: `Sent classification: ${labelToPublish}`,
+            });
+        }
+        setLastPublishedLabel(labelToPublish);
+      }
+      
     } catch (error) {
       console.error("Error during prediction:", error);
       addLog("Prediction error. Check console.");
-      setPrediction(null);
+      setPrimaryPrediction(null);
       setDetectedObjects([]);
     }
   
@@ -653,7 +647,7 @@ export default function SortVisionClient() {
       animationFrameRef.current = requestAnimationFrame(animate);
     };
 
-    if (isCameraOn && model && !isHibernating) {
+    if (isCameraOn && model && !isHibernating && detectedObjects.length > 0) {
       animationFrameRef.current = requestAnimationFrame(animate);
     } else {
       if (animationFrameRef.current) {
@@ -666,7 +660,7 @@ export default function SortVisionClient() {
         cancelAnimationFrame(animationFrameRef.current);
       }
     };
-  }, [isCameraOn, model, isHibernating]);
+  }, [isCameraOn, model, isHibernating, detectedObjects]);
 
 
   useEffect(() => {
@@ -713,8 +707,8 @@ export default function SortVisionClient() {
         });
 
         classificationsToAnalyze.forEach(p => {
-            if (p.label in scores) {
-                scores[p.label].push(p.confidence);
+            if (p.className in scores) {
+                scores[p.className].push(p.probability);
             }
         });
         
@@ -797,30 +791,27 @@ export default function SortVisionClient() {
   };
 
   const PredictionDisplay = () => {
-    const highConfidenceDetections = detectedObjects.filter(o => o.confidence > CONFIDENCE_THRESHOLD);
-    const distinctLabels = [...new Set(highConfidenceDetections.map(d => d.label))];
-    
     return (
         <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-        {distinctLabels.length > 1 ? (
+        {detectionState === "MULTIPLE_OBJECTS" ? (
             <div className="flex items-center gap-2">
                 <AlertTriangle className="h-6 w-6 text-yellow-400" />
                 <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
-                    Multiple items detected
+                    Multiple objects detected
                 </h3>
             </div>
-        ) : prediction && !isHibernating ? (
+        ) : detectionState === "SINGLE_OBJECT" && primaryPrediction && !isHibernating ? (
             <>
             <h3 className="text-2xl font-bold text-white drop-shadow-lg">
-                {prediction.label}
+                {primaryPrediction.className}
             </h3>
             <div className="flex items-center gap-2">
                 <p className="text-sm text-white/90 drop-shadow-md">
                     Confidence:
                 </p>
-                <Progress value={prediction.confidence * 100} className="h-2 w-24 bg-white/30" />
+                <Progress value={primaryPrediction.probability * 100} className="h-2 w-24 bg-white/30" />
                 <span className="text-sm font-semibold text-white">
-                    {(prediction.confidence * 100).toFixed(0)}%
+                    {(primaryPrediction.probability * 100).toFixed(0)}%
                 </span>
             </div>
             </>
@@ -835,7 +826,7 @@ export default function SortVisionClient() {
 
   const ItemIcon = () => {
     const getActiveClass = (label: string) => {
-        if (prediction?.label.toLowerCase() === label.toLowerCase() && prediction.confidence > CONFIDENCE_THRESHOLD && !isHibernating) {
+        if (detectionState === "SINGLE_OBJECT" && primaryPrediction?.className.toLowerCase() === label.toLowerCase() && !isHibernating) {
             return "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
         }
         return "";
