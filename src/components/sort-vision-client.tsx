@@ -511,8 +511,9 @@ export default function SortVisionClient() {
     setDetectionState(aiResult.detectionState);
 
     let topPrediction: Prediction | null = null;
-
+    
     if (aiResult.detectionState === 'SINGLE_OBJECT' && aiResult.primaryObject) {
+      // Find the full prediction object that matches the primary object identified by the AI.
       const foundPrediction = predictions.find(p => p.className === aiResult.primaryObject);
       if (foundPrediction) {
         topPrediction = foundPrediction;
