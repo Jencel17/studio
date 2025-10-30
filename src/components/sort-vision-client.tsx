@@ -555,14 +555,14 @@ export default function SortVisionClient() {
       setDetectionState(aiResult.detectionState);
       addLog(`AI decision: ${aiResult.detectionState} - ${aiResult.reason}`);
 
-      let labelToPublish: string | null = null;
+      let currentLabel: string | null = null;
       
       if (aiResult.detectionState === "SINGLE_OBJECT" && aiResult.primaryObject) {
         const prediction = modelPredictions.find(p => p.className === aiResult.primaryObject);
         if (prediction) {
           setPrimaryPrediction(prediction);
           setDetectedObjects([]);
-          labelToPublish = prediction.className;
+          currentLabel = prediction.className;
           setLastClassifications(prev => [...prev, prediction]);
         }
       } else if (aiResult.detectionState === "MULTIPLE_OBJECTS") {
@@ -590,24 +590,24 @@ export default function SortVisionClient() {
             });
           });
         }
-        labelToPublish = "Multiple Objects";
+        currentLabel = "Multiple Objects";
       } else {
         setPrimaryPrediction(null);
         setDetectedObjects([]);
-        labelToPublish = null;
+        currentLabel = null;
       }
 
       // MQTT Publishing Logic
-      if (mqttClientRef.current?.connected && labelToPublish !== lastPublishedLabel) {
-        if (labelToPublish) {
-            mqttClientRef.current.publish(mqttTopic, labelToPublish);
-            addLog(`Published '${labelToPublish}' to MQTT topic '${mqttTopic}'`);
+      if (mqttClientRef.current?.connected && currentLabel !== lastPublishedLabel) {
+        if (currentLabel) {
+            mqttClientRef.current.publish(mqttTopic, currentLabel);
+            addLog(`Published '${currentLabel}' to MQTT topic '${mqttTopic}'`);
             toast({
               title: "MQTT Message Sent",
-              description: `Sent classification: ${labelToPublish}`,
+              description: `Sent classification: ${currentLabel}`,
             });
         }
-        setLastPublishedLabel(labelToPublish);
+        setLastPublishedLabel(currentLabel);
       }
       
     } catch (error) {
@@ -1081,3 +1081,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
