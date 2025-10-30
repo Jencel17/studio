@@ -550,10 +550,6 @@ export default function SortVisionClient() {
       const predictions = await model.predict(videoRef.current);
       setCurrentPredictions(predictions);
   
-      if (predictions.length > 0) {
-        setLastClassifications((prev) => [...prev, ...predictions].slice(-MODEL_SWAP_CHECK_THRESHOLD * 2));
-      }
-  
       const highConfidencePrediction = predictions.find((p) => p.probability > 0.9);
       const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
   
@@ -608,13 +604,13 @@ export default function SortVisionClient() {
             description: `Sent classification: ${labelToSend}`,
           });
   
-          setIsMqttOnCooldown(true);
-          addLog("MQTT cooldown started (5s).");
-          cooldownTimerRef.current = setTimeout(() => {
-            setIsMqttOnCooldown(false);
-            addLog("MQTT cooldown finished.");
-            cooldownTimerRef.current = null;
-          }, MQTT_COOLDOWN_MS);
+          // setIsMqttOnCooldown(true);
+          // addLog("MQTT cooldown started (5s).");
+          // cooldownTimerRef.current = setTimeout(() => {
+          //   setIsMqttOnCooldown(false);
+          //   addLog("MQTT cooldown finished.");
+          //   cooldownTimerRef.current = null;
+          // }, MQTT_COOLDOWN_MS);
         }
       }
     } catch (error) {
