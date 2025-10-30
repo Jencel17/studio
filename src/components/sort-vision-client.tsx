@@ -81,7 +81,6 @@ export default function SortVisionClient() {
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [modelLabels, setModelLabels] = useState<string[]>([]);
-  const [lastPublishedLabel, setLastPublishedLabel] = useState<string | null>(null);
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
   const [isMqttOnCooldown, setIsMqttOnCooldown] = useState(false);
@@ -596,14 +595,13 @@ export default function SortVisionClient() {
 
         const shouldPublish = mqttClientRef.current?.connected && !isMqttOnCooldown && currentLabel;
 
-        if (shouldPublish && currentLabel !== lastPublishedLabel) {
+        if (shouldPublish) {
             mqttClientRef.current!.publish(mqttTopic, currentLabel);
             addLog(`Published '${currentLabel}' to MQTT topic '${mqttTopic}'`);
             toast({
                 title: "MQTT Message Sent",
                 description: `Sent classification: ${currentLabel}`,
             });
-            setLastPublishedLabel(currentLabel);
             setIsMqttOnCooldown(true);
             addLog("MQTT cooldown started (5s).");
             cooldownTimerRef.current = setTimeout(() => {
@@ -611,8 +609,6 @@ export default function SortVisionClient() {
                 addLog("MQTT cooldown finished.");
                 cooldownTimerRef.current = null;
             }, MQTT_COOLDOWN_MS);
-        } else if (!currentLabel) {
-            setLastPublishedLabel(null);
         }
 
     } catch (error) {
@@ -621,7 +617,7 @@ export default function SortVisionClient() {
         setPrimaryPrediction(null);
         setDetectedObjects([]);
     }
-}, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, lastPublishedLabel, isMqttOnCooldown]);
+}, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, isMqttOnCooldown]);
 
 
   useEffect(() => {
