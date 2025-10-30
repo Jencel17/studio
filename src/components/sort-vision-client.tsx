@@ -20,7 +20,10 @@ import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
-import type { SuggestAiModelSwapInput } from "@/app/actions/ai-schemas";
+import {
+  SuggestAiModelSwapInputSchema,
+  InterpretDetectionsInputSchema,
+} from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
@@ -545,17 +548,15 @@ export default function SortVisionClient() {
     if (isHibernating || !isCameraOn || !videoRef.current || !model) {
       return;
     }
-
     resetInactivityTimer();
-
     try {
       const predictions = await model.predict(videoRef.current);
-      setCurrentPredictions(predictions); // Always update for the live-view list
+      setCurrentPredictions(predictions);
       if (predictions.length > 0) {
-        setLastClassifications(prev => [...prev, ...predictions]);
+        setLastClassifications(prev => [...prev, ...predictions].slice(-MODEL_SWAP_CHECK_THRESHOLD * 2));
       }
 
-      // --- UI UPDATE LOGIC (Always runs) ---
+      // --- UI Update Logic (Always Runs) ---
       const highConfidencePrediction = predictions.find(p => p.probability > 0.9);
       const multipleDetections = predictions.filter(p => p.probability > 0.5).length > 1;
 
@@ -587,41 +588,39 @@ export default function SortVisionClient() {
         setPrimaryPrediction(null);
         setDetectedObjects([]);
       }
-      
-      // --- MQTT PUBLISHING LOGIC (Runs independently of UI) ---
+
+      // --- MQTT Publishing Logic ---
       if (mqttClientRef.current?.connected && !isMqttOnCooldown) {
-        let mqttLabel: string | null = null;
+        let currentLabel: string | null = null;
         if (highConfidencePrediction) {
-          mqttLabel = highConfidencePrediction.className;
+          currentLabel = highConfidencePrediction.className;
         } else if (multipleDetections) {
-          mqttLabel = "Multiple Objects";
+          currentLabel = "Multiple Objects";
         }
         
-        if (mqttLabel) {
-          mqttClientRef.current.publish(mqttTopic, mqttLabel);
-          addLog(`Published '${mqttLabel}' to MQTT topic '${mqttTopic}'`);
-          toast({
-            title: "MQTT Message Sent",
-            description: `Sent classification: ${mqttLabel}`,
-          });
-          
-          setIsMqttOnCooldown(true);
-          addLog("MQTT cooldown started (5s).");
-          cooldownTimerRef.current = setTimeout(() => {
-            setIsMqttOnCooldown(false);
-            addLog("MQTT cooldown finished.");
-            cooldownTimerRef.current = null;
-          }, MQTT_COOLDOWN_MS);
+        if (currentLabel) {
+            mqttClientRef.current.publish(mqttTopic, currentLabel);
+            addLog(`Published '${currentLabel}' to MQTT topic '${mqttTopic}'`);
+            toast({
+              title: "MQTT Message Sent",
+              description: `Sent classification: ${currentLabel}`,
+            });
+
+            setIsMqttOnCooldown(true);
+            addLog("MQTT cooldown started (5s).");
+            cooldownTimerRef.current = setTimeout(() => {
+              setIsMqttOnCooldown(false);
+              addLog("MQTT cooldown finished.");
+              cooldownTimerRef.current = null;
+            }, MQTT_COOLDOWN_MS);
         }
       }
 
     } catch (error) {
       console.error("Error during prediction:", error);
       addLog("Prediction error. Check console.");
-      setPrimaryPrediction(null);
-      setDetectedObjects([]);
     }
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model, toast, isMqttOnCooldown]);
+  }, [isHibernating, isCameraOn, model, resetInactivityTimer, mqttTopic, addLog, toast, isMqttOnCooldown]);
 
 
   useEffect(() => {
