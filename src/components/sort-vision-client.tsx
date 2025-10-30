@@ -603,8 +603,12 @@ export default function SortVisionClient() {
   
         setIsMqttOnCooldown(true); // Start cooldown
         cooldownTimerRef.current = setTimeout(() => {
-          setIsMqttOnCooldown(false); // End cooldown
-          addLog("MQTT cooldown finished.");
+          addLog("MQTT cooldown finished. Restarting camera to prevent freeze...");
+          stopCamera();
+          // Short delay to ensure camera resources are released before restarting
+          setTimeout(() => {
+            startCamera(isFlashOn);
+          }, 100);
         }, MQTT_COOLDOWN_MS);
       }
     } catch (error) {
@@ -620,6 +624,9 @@ export default function SortVisionClient() {
     resetInactivityTimer,
     addLog,
     toast,
+    stopCamera,
+    startCamera,
+    isFlashOn
   ]);
 
 
@@ -1100,5 +1107,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
