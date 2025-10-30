@@ -100,17 +100,23 @@ export default function SortVisionClient() {
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
 
-  const loadModel = useCallback(async (modelBlob: File | Blob, metadataBlob: File | Blob) => {
+  const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile?: File) => {
     setIsModelLoading(true);
-    addLog("Loading Teachable Machine model...");
+    addLog("Loading Teachable Machine model from files...");
     try {
-      const modelURL = URL.createObjectURL(modelBlob);
-      const metadataURL = URL.createObjectURL(metadataBlob);
-
       await tf.setBackend('cpu');
       await tf.ready();
-
-      const loadedModel = await tmImage.load(modelURL, metadataURL);
+      
+      let loadedModel;
+      if (weightsFile) {
+        loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
+      } else {
+        // Fallback for older implementation, might not always work
+        const modelURL = URL.createObjectURL(modelFile);
+        const metadataURL = URL.createObjectURL(metadataFile);
+        loadedModel = await tmImage.load(modelURL, metadataURL);
+      }
+      
       setModel(loadedModel);
       
       addLog(`Model loaded successfully. Classes: ${loadedModel.getClassLabels().join(', ')}`);
@@ -143,20 +149,23 @@ export default function SortVisionClient() {
         addLog(`Zip file detected: ${file.name}. Unpacking...`);
         try {
             const zip = await JSZip.loadAsync(file);
-            const modelFile = zip.file("model.json");
-            const weightsFile = zip.file("weights.bin");
-            const metadataFile = zip.file("metadata.json");
+            const modelJsonFile = zip.file("model.json");
+            const weightsBinFile = zip.file("weights.bin");
+            const metadataJsonFile = zip.file("metadata.json");
 
-            if (!modelFile || !metadataFile || !weightsFile) {
+            if (!modelJsonFile || !metadataJsonFile || !weightsBinFile) {
                 throw new Error("model.json, weights.bin, or metadata.json not found in the zip file.");
             }
 
-            const modelBlob = await modelFile.async("blob");
-            // The Teachable Machine library expects `weights.bin` to be fetched relative to `model.json`,
-            // so we can often just provide the model and metadata blobs.
-            const metadataBlob = await metadataFile.async("blob");
+            const modelBlob = await modelJsonFile.async("blob");
+            const weightsBlob = await weightsBinFile.async("blob");
+            const metadataBlob = await metadataJsonFile.async("blob");
+
+            const modelFile = new File([modelBlob], "model.json", { type: "application/json" });
+            const weightsFile = new File([weightsBlob], "weights.bin", { type: "application/octet-stream" });
+            const metadataFile = new File([metadataBlob], "metadata.json", { type: "application/json" });
             
-            await loadModel(modelBlob, metadataBlob);
+            await loadModelFromFiles(modelFile, metadataFile, weightsFile);
 
         } catch (error: any) {
             console.error("Zip file processing error:", error);
@@ -167,6 +176,8 @@ export default function SortVisionClient() {
         // Handle individual files
         let droppedModelFile: File | null = null;
         let droppedMetadataFile: File | null = null;
+        let droppedWeightsFile: File | null = null;
+
 
         Array.from(files).forEach(file => {
             if (file.name === 'model.json') {
@@ -175,18 +186,21 @@ export default function SortVisionClient() {
             } else if (file.name === 'metadata.json') {
                 droppedMetadataFile = file;
                 addLog('metadata.json found.');
+            } else if (file.name === 'weights.bin') {
+                droppedWeightsFile = file;
+                addLog('weights.bin found.');
             }
         });
 
-        if (droppedModelFile && droppedMetadataFile) {
-             addLog('Both model.json and metadata.json found. Loading model.');
-             await loadModel(droppedModelFile, droppedMetadataFile);
+        if (droppedModelFile && droppedMetadataFile && droppedWeightsFile) {
+             addLog('All model components found. Loading model.');
+             await loadModelFromFiles(droppedModelFile, droppedMetadataFile, droppedWeightsFile);
         } else {
-             addLog("Dropped files are not a valid model. Please drop a .zip file or model.json and metadata.json together.");
-             toast({ variant: "destructive", title: "Invalid Files", description: "Please drop a .zip file or both model.json and metadata.json." });
+             addLog("Dropped files are not a valid model. Please drop a .zip file or model.json, metadata.json and weights.bin together.");
+             toast({ variant: "destructive", title: "Invalid Files", description: "Please drop a .zip file or all three model component files." });
         }
     }
-  }, [addLog, toast, loadModel]);
+  }, [addLog, toast, loadModelFromFiles]);
 
   const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -209,18 +223,23 @@ export default function SortVisionClient() {
       addLog(`Zip file selected: ${file.name}. Unpacking...`);
       try {
         const zip = await JSZip.loadAsync(file);
-        const modelFile = zip.file("model.json");
-        const metadataFile = zip.file("metadata.json");
-        const weightsFile = zip.file("weights.bin");
+        const modelJsonFile = zip.file("model.json");
+        const weightsBinFile = zip.file("weights.bin");
+        const metadataJsonFile = zip.file("metadata.json");
 
-        if (!modelFile || !metadataFile || !weightsFile) {
+        if (!modelJsonFile || !metadataJsonFile || !weightsBinFile) {
           throw new Error("model.json, weights.bin, or metadata.json not found in the zip file.");
         }
 
-        const modelBlob = await modelFile.async("blob");
-        const metadataBlob = await metadataFile.async("blob");
+        const modelBlob = await modelJsonFile.async("blob");
+        const weightsBlob = await weightsBinFile.async("blob");
+        const metadataBlob = await metadataJsonFile.async("blob");
 
-        await loadModel(modelBlob, metadataBlob);
+        const modelFile = new File([modelBlob], "model.json", { type: "application/json" });
+        const weightsFile = new File([weightsBlob], "weights.bin", { type: "application/octet-stream" });
+        const metadataFile = new File([metadataBlob], "metadata.json", { type: "application/json" });
+        
+        await loadModelFromFiles(modelFile, metadataFile, weightsFile);
       } catch (error: any) {
         console.error("Zip file processing error:", error);
         addLog(`Error processing zip file: ${error.message}`);
@@ -229,21 +248,24 @@ export default function SortVisionClient() {
     } else {
        let selectedModelFile: File | null = null;
        let selectedMetadataFile: File | null = null;
+       let selectedWeightsFile: File | null = null;
 
        Array.from(files).forEach(file => {
          if (file.name === 'model.json') {
            selectedModelFile = file;
          } else if (file.name === 'metadata.json') {
            selectedMetadataFile = file;
+         } else if (file.name === 'weights.bin') {
+            selectedWeightsFile = file;
          }
        });
 
-       if (selectedModelFile && selectedMetadataFile) {
-         addLog('Both model.json and metadata.json selected. Loading model.');
-         await loadModel(selectedModelFile, selectedMetadataFile);
+       if (selectedModelFile && selectedMetadataFile && selectedWeightsFile) {
+         addLog('All model components selected. Loading model.');
+         await loadModelFromFiles(selectedModelFile, selectedMetadataFile, selectedWeightsFile);
        } else {
-         addLog("Invalid file selection. Please select a .zip file, or both model.json and metadata.json.");
-         toast({ variant: "destructive", title: "Invalid Files", description: "Select a .zip or both model/metadata files." });
+         addLog("Invalid file selection. Please select a .zip file, or model.json, metadata.json and weights.bin.");
+         toast({ variant: "destructive", title: "Invalid Files", description: "Select a .zip or all three model component files." });
        }
     }
      // Reset file input to allow selecting the same file again
@@ -779,7 +801,7 @@ export default function SortVisionClient() {
                   ? "Loading model..." 
                   : isDragging 
                   ? "Release to upload" 
-                  : "Drag & drop a .zip or .json files"}
+                  : "Drag & drop a .zip or model files"}
               </p>
               <p className="text-xs text-muted-foreground/80">or</p>
               <Button 
@@ -794,7 +816,7 @@ export default function SortVisionClient() {
                 type="file" 
                 ref={fileInputRef} 
                 className="hidden" 
-                accept=".zip,.json"
+                accept=".zip,.json,application/octet-stream"
                 multiple
                 onChange={handleFileSelect}
                 disabled={isModelLoading}
@@ -977,4 +999,3 @@ export default function SortVisionClient() {
   );
 }
 
-    
