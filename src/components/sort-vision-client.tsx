@@ -487,6 +487,11 @@ export default function SortVisionClient() {
     }
     resetInactivityTimer();
 
+    if (!model) {
+      addLog("Classification skipped: model not loaded.");
+      return;
+    }
+
     const predictions = await model.predict(videoRef.current);
     setCurrentPredictions(predictions);
 
@@ -524,7 +529,7 @@ export default function SortVisionClient() {
         setAppStatus("AWAITING_OBJECT");
         setPrimaryPrediction(null);
     }
-  }, [isCameraOn, model, isHibernating, isCooldownActive, resetInactivityTimer, sendSortCommand]);
+  }, [isCameraOn, model, isHibernating, isCooldownActive, resetInactivityTimer, sendSortCommand, addLog]);
 
 
   useEffect(() => {
