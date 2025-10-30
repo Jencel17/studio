@@ -128,7 +128,7 @@ export default function SortVisionClient() {
             const options: IClientOptions = {
                 clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
                 reconnectPeriod: 5000,
-                connectTimeout: 40000,
+                connectTimeout: 60000,
             };
             const client = mqtt.connect(mqttBrokerUrl, options);
             mqttClientRef.current = client;
@@ -388,12 +388,15 @@ export default function SortVisionClient() {
         setDetectedObjects(newDetectedObjects);
         
         const highConfidenceDetections = newDetectedObjects.filter(d => d.confidence > CONFIDENCE_THRESHOLD);
+        let highestPrediction: Prediction | null = null;
+        if (highConfidenceDetections.length > 0) {
+          highestPrediction = highConfidenceDetections.reduce((max, p) => p.confidence > max.confidence ? p : max, highConfidenceDetections[0]);
+        }
 
         if (highConfidenceDetections.length > 1) {
             setPrediction(null);
             addLog(`Multiple items detected: ${highConfidenceDetections.map(p => p.label).join(', ')}. No signal sent.`);
-        } else if (highConfidenceDetections.length === 1) {
-            const highestPrediction = highConfidenceDetections[0];
+        } else if (highestPrediction) {
             setPrediction(highestPrediction);
 
             addLog(`Classified: ${highestPrediction.label} (Confidence: ${(highestPrediction.confidence * 100).toFixed(0)}%)`);
@@ -401,7 +404,7 @@ export default function SortVisionClient() {
                 mqttClientRef.current.publish(mqttTopic, highestPrediction.label);
                 addLog(`Published '${highestPrediction.label}' to MQTT topic '${mqttTopic}'`);
             }
-            setLastClassifications((prev) => [...prev, highestPrediction]);
+            setLastClassifications((prev) => [...prev, highestPrediction!]);
         } else {
              setPrediction(null);
         }
@@ -504,10 +507,9 @@ export default function SortVisionClient() {
         connectToMqtt();
       } else {
         try {
-          const clientUrl = new URL(mqttClientRef.current.options.href || '');
-          const stateUrl = new URL(mqttBrokerUrl);
-          if (clientUrl.host !== stateUrl.host || clientUrl.port !== stateUrl.port) {
-              connectToMqtt();
+          // Only reconnect if the URL has actually changed.
+          if (mqttClientRef.current.options.href && mqttBrokerUrl !== mqttClientRef.current.options.href) {
+            connectToMqtt();
           }
         } catch (error) {
            addLog("Invalid URL for MQTT broker. Reconnecting...");
@@ -755,3 +757,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
