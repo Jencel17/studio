@@ -83,6 +83,7 @@ export default function SortVisionClient() {
   const [modelLabels, setModelLabels] = useState<string[]>([]);
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
+  const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
   const [isMqttOnCooldown, setIsMqttOnCooldown] = useState(false);
 
 
@@ -549,6 +550,7 @@ export default function SortVisionClient() {
 
     try {
         const predictions = await model.predict(videoRef.current);
+        setCurrentPredictions(predictions);
         if (predictions.length > 0) {
             setLastClassifications(prev => [...prev, ...predictions]);
         }
@@ -831,28 +833,34 @@ export default function SortVisionClient() {
     );
   };
 
-  const ItemIcon = () => {
-    const getActiveClass = (label: string) => {
-        if (detectionState === "SINGLE_OBJECT" && primaryPrediction?.className.toLowerCase() === label.toLowerCase() && !isHibernating) {
-            return "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
-        }
-        return "";
+  const DetectionRates = () => {
+    const getProbability = (label: string) => {
+        const prediction = currentPredictions.find(p => p.className === label);
+        return prediction ? prediction.probability : 0;
     };
-    
-    const baseClass = "text-xl font-semibold text-muted-foreground transition-all duration-300";
-    
+
     return (
-       <div className="flex flex-col items-center justify-center h-full p-4">
-          <div className="flex flex-col items-center gap-6 p-4">
+        <div className="flex flex-col justify-center h-full w-full p-4 space-y-3">
             {modelLabels.length > 0 ? (
-                 modelLabels.map(label => (
-                    <p key={label} className={cn(baseClass, getActiveClass(label))}>{label}</p>
-                 ))
+                modelLabels.map(label => {
+                    const probability = getProbability(label);
+                    const percentage = probability * 100;
+                    return (
+                        <div key={label} className="w-full space-y-1">
+                            <div className="flex justify-between items-center text-sm">
+                                <span className="capitalize text-muted-foreground">{label}</span>
+                                <span className="font-semibold">
+                                    {percentage.toFixed(1)}%
+                                </span>
+                            </div>
+                            <Progress value={percentage} className="h-2" />
+                        </div>
+                    );
+                })
             ) : (
-                <p className="text-sm text-muted-foreground">Load a model to see categories.</p>
+                <p className="text-sm text-muted-foreground text-center">Load a model to see categories.</p>
             )}
-          </div>
-      </div>
+        </div>
     );
   };
 
@@ -1032,8 +1040,8 @@ export default function SortVisionClient() {
                 );
               })}
               </div>
-              <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full">
-                <ItemIcon />
+              <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full w-[240px]">
+                <DetectionRates />
               </div>
           </div>
         </CardContent>
@@ -1087,3 +1095,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
