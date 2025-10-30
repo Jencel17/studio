@@ -15,7 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal } from "lucide-react";
+import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff } from "lucide-react";
 import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
@@ -48,6 +48,7 @@ const MAX_LOGS = 100;
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
+  const [isFlashOn, setIsFlashOn] = useState(false);
   const [prediction, setPrediction] = useState<Prediction | null>(null);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
   const [mqttStatus, setMqttStatus] = useState<MqttStatus>("Disconnected");
@@ -246,21 +247,64 @@ export default function SortVisionClient() {
     }
   };
 
+  const stopCamera = useCallback(() => {
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    streamRef.current = null;
+    setIsCameraOn(false);
+    setIsFlashOn(false);
+    setPrediction(null);
+    setIsHibernating(false);
+    addLog("Camera stopped.");
+    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
+    releaseWakeLock();
+  }, [releaseWakeLock, addLog]);
 
-  const startCamera = async () => {
+  const startCamera = useCallback(async (flashEnabled: boolean) => {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       try {
         addLog("Requesting camera access...");
-        const stream = await navigator.mediaDevices.getUserMedia({
-          video: { facingMode: "environment" },
-        });
+
+        // Stop any existing stream before starting a new one
+        if (streamRef.current) {
+            streamRef.current.getTracks().forEach(track => track.stop());
+        }
+
+        const constraints: MediaStreamConstraints = {
+          video: { 
+            facingMode: "environment",
+            advanced: [{ torch: flashEnabled }]
+          },
+        };
+
+        const stream = await navigator.mediaDevices.getUserMedia(constraints);
+        
         if (videoRef.current) {
           videoRef.current.srcObject = stream;
           await videoRef.current.play();
         }
         streamRef.current = stream;
         setIsCameraOn(true);
-        addLog("Camera started successfully.");
+
+        // Check actual flash status
+        const videoTrack = stream.getVideoTracks()[0];
+        const capabilities = videoTrack.getCapabilities();
+        const settings = videoTrack.getSettings();
+        if (capabilities.torch) {
+            setIsFlashOn(!!settings.torch);
+        } else {
+            setIsFlashOn(false);
+            if (flashEnabled) {
+                addLog("Flash/torch not supported on this device.");
+                toast({ variant: "destructive", title: "Flash Not Supported", description: "This device does not support camera flash control." });
+            }
+        }
+        
+        addLog(`Camera started ${flashEnabled ? 'with flash' : 'without flash'}.`);
         resetInactivityTimer();
         if(wakeLockEnabled) {
           requestWakeLock();
@@ -273,31 +317,23 @@ export default function SortVisionClient() {
           title: "Camera Error",
           description: "Could not access the camera. Please check permissions.",
         });
+        stopCamera(); // Ensure everything is cleaned up on error
       }
     }
-  };
-
-  const stopCamera = useCallback(() => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((track) => track.stop());
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    streamRef.current = null;
-    setIsCameraOn(false);
-    setPrediction(null);
-    setIsHibernating(false);
-    addLog("Camera stopped.");
-    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-    releaseWakeLock();
-  }, [releaseWakeLock, addLog]);
+  }, [addLog, resetInactivityTimer, stopCamera, toast, wakeLockEnabled, requestWakeLock]);
 
   const toggleCamera = () => {
     if (isCameraOn) {
       stopCamera();
     } else {
-      startCamera();
+      startCamera(isFlashOn);
+    }
+  };
+
+  const toggleFlash = () => {
+    if (isCameraOn) {
+      const newFlashState = !isFlashOn;
+      startCamera(newFlashState);
     }
   };
 
@@ -315,11 +351,11 @@ export default function SortVisionClient() {
             if (label === 'Plastic' && Math.random() > 0.3) {
               confidence = Math.random() * 0.4 + 0.6; // Higher confidence for Plastic
             }
-             if (label === 'Metal' && Math.random() > 0.5) {
-              confidence = Math.random() * 0.4 + 0.6; // Higher confidence for Metal
+             if (label === 'Metal' && Math.random() > 0.2) {
+              confidence = Math.random() * 0.5 + 0.5; // Higher confidence for Metal
             }
-            if (label === 'Paper' && Math.random() > 0.5) {
-                confidence = Math.random() * 0.4 + 0.6; // Higher confidence for Paper
+            if (label === 'Paper' && Math.random() > 0.2) {
+                confidence = Math.random() * 0.5 + 0.5; // Higher confidence for Paper
             }
             return { label, confidence };
         });
@@ -431,17 +467,22 @@ export default function SortVisionClient() {
 
   // Effect to handle reconnection when settings change
   useEffect(() => {
-    if (mqttClientRef.current) {
-        const clientHref = mqttClientRef.current.options.href;
-        if (clientHref) {
-            try {
-                const clientUrl = new URL(clientHref);
+    if (mqttClientRef.current && mqttClientRef.current.options.href) {
+        try {
+            const clientUrl = new URL(mqttClientRef.current.options.href);
+            if (mqttBrokerUrl) {
                 const stateUrl = new URL(mqttBrokerUrl);
                 if (clientUrl.host !== stateUrl.host || clientUrl.port !== stateUrl.port) {
                     connectToMqtt();
                 }
-            } catch (error) {
-                console.error("Error parsing URL for MQTT reconnection check:", error);
+            }
+        } catch (error) {
+            console.error("Error parsing URL for MQTT reconnection check:", error);
+            if (mqttBrokerUrl) { // Only attempt reconnect if there's a URL
+                addLog("Invalid URL, attempting to reconnect with current settings.");
+                connectToMqtt();
+            } else {
+                addLog("Invalid or empty broker URL. Cannot connect.");
             }
         }
     }
@@ -486,23 +527,26 @@ export default function SortVisionClient() {
     const activeClass = "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
     const baseClass = "h-12 w-12 text-muted-foreground transition-all duration-300";
     
-    const icons = {
-      Plastic: <PlasticIcon className={cn(baseClass, "text-foreground", isActive && label === 'Plastic' && activeClass)} />,
-      Metal: <MetalIcon className={cn(baseClass, "text-foreground", isActive && label === 'Metal' && activeClass)} />,
-      Paper: <PaperIcon className={cn(baseClass, "text-foreground", isActive && label === 'Paper' && activeClass)} />
-    };
+    if (isActive) {
+        switch (label) {
+            case 'Plastic':
+                return <PlasticIcon className={cn(baseClass, "text-foreground", activeClass)} />;
+            case 'Metal':
+                return <MetalIcon className={cn(baseClass, "text-foreground", activeClass)} />;
+            case 'Paper':
+                return <PaperIcon className={cn(baseClass, "text-foreground", activeClass)} />;
+            default:
+                break;
+        }
+    }
 
     return (
        <div className="flex flex-col items-center justify-center h-full p-4">
-        {isActive ? (
-            icons[label]
-        ) : (
           <div className="flex flex-col items-center gap-6 p-4">
             <PlasticIcon className={cn(baseClass)} />
             <MetalIcon className={cn(baseClass)} />
             <PaperIcon className={cn(baseClass)} />
           </div>
-        )}
       </div>
     );
   };
@@ -589,19 +633,24 @@ export default function SortVisionClient() {
         </CardContent>
         <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 items-center">
             <p className="text-xs text-muted-foreground">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle sidebar.</p>
-            <div className="flex flex-col sm:flex-row gap-2 w-full sm:w-auto">
-              <Button onClick={toggleCamera} variant="outline" className="w-full sm:w-auto">
+            <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
+              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0">
                 {isCameraOn ? <CameraOff /> : <Camera />}
                 {isCameraOn ? "Stop Camera" : "Start Camera"}
               </Button>
-              <Button onClick={connectToMqtt} disabled={mqttStatus === "Connecting"} variant="outline" className="w-full sm:w-auto">
-                {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
-                {mqttStatus === 'Connected' ? 'Reconnect' : mqttStatus === "Connecting" ? 'Connecting...' : 'Connect'}
+               <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn}>
+                {isFlashOn ? <FlashlightOff /> : <Flashlight />}
               </Button>
-               <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="w-full sm:w-auto">
-                <Terminal />
-                Console
-              </Button>
+              <div className="flex flex-col gap-2 w-full sm:w-auto">
+                  <Button onClick={connectToMqtt} disabled={mqttStatus === "Connecting"} variant="outline" className="w-full">
+                    {mqttStatus === "Connected" ? <Wifi /> : <WifiOff />}
+                    {mqttStatus === 'Connected' ? 'Reconnect' : mqttStatus === "Connecting" ? 'Connecting...' : 'Connect'}
+                  </Button>
+                  <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="w-full">
+                    <Terminal />
+                    Console
+                  </Button>
+              </div>
             </div>
         </CardFooter>
       </Card>
