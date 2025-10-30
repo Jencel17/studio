@@ -541,9 +541,8 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(async () => {
-    // Exit if hibernating, camera is off, model not loaded, or in cooldown
-    if (isHibernating || !isCameraOn || !videoRef.current || !model || isMqttOnCooldown) {
-      // If on cooldown, the UI is paused, but we still need to keep the inactivity timer reset
+    // Exit if hibernating, camera is off, model not loaded
+    if (isHibernating || !isCameraOn || !videoRef.current || !model) {
       if (isCameraOn) resetInactivityTimer();
       return;
     }
@@ -555,6 +554,7 @@ export default function SortVisionClient() {
       setCurrentPredictions(predictions);
   
       // --- 2. Always update the UI based on predictions ---
+      // This part runs regardless of the cooldown state
       const highConfidencePrediction = predictions.find((p) => p.probability > 0.9);
       const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
   
@@ -591,8 +591,8 @@ export default function SortVisionClient() {
         setDetectedObjects([]);
       }
   
-      // --- 3. Handle MQTT logic separately from UI updates ---
-      if (mqttClientRef.current?.connected && highConfidencePrediction) {
+      // --- 3. Handle MQTT logic separately, only if not on cooldown ---
+      if (!isMqttOnCooldown && mqttClientRef.current?.connected && highConfidencePrediction) {
         const labelToSend = highConfidencePrediction.className;
         mqttClientRef.current.publish(mqttTopic, labelToSend);
         addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
@@ -601,13 +601,13 @@ export default function SortVisionClient() {
           description: `Sent classification: ${labelToSend}`,
         });
   
-        // Start cooldown, which will pause this whole function
+        // Start cooldown
         setIsMqttOnCooldown(true);
         addLog(`MQTT cooldown started (${MQTT_COOLDOWN_MS / 1000}s).`);
         cooldownTimerRef.current = setTimeout(() => {
           setIsMqttOnCooldown(false);
           addLog("MQTT cooldown finished. Resuming detection.");
-          // Clear the "stuck" UI from the cooldown period
+          // Explicitly reset UI to "analyzing" to be ready for the next detection
           setDetectionState("NO_DETECTION");
           setPrimaryPrediction(null);
           setDetectedObjects([]);
