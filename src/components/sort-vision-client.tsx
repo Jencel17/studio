@@ -285,7 +285,6 @@ export default function SortVisionClient() {
     // Security check for mixed content
     if (window.location.protocol === 'https:' && ESP32_IP.startsWith('http://')) {
         const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
-        console.error(errorMsg);
         addLog(errorMsg);
         setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
         toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security. See console." });
