@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck } from "@/app/actions/ai";
+import { handleModelSwapCheck, handleInterpretDetections } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
@@ -68,6 +68,7 @@ const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
 const COMMAND_COOLDOWN_MS = 5000;
+const CONFIDENCE_THRESHOLD = 0.8;
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -415,6 +416,7 @@ export default function SortVisionClient() {
     }
     setIsCooldownActive(false);
     setIsHibernating(false);
+    setAppStatus("AWAITING_OBJECT");
     addLog("Camera stopped.");
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
     releaseWakeLock();
@@ -499,30 +501,36 @@ export default function SortVisionClient() {
 
     const predictions = await model.predict(videoRef.current);
     setCurrentPredictions(predictions);
-    
-    const topPrediction = predictions.reduce((prev, current) => (prev.probability > current.probability) ? prev : current, { className: '', probability: 0 });
 
-    // Update UI based on detection, regardless of cooldown
-    if (topPrediction && topPrediction.probability > 0.5) {
-      setPrimaryPrediction(topPrediction);
-      const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
-      if (multipleDetections) {
-          setDetectionState("MULTIPLE_OBJECTS");
+    const aiResult = await handleInterpretDetections({
+        predictions,
+        confidenceThreshold: CONFIDENCE_THRESHOLD,
+    });
+
+    addLog(`AI: ${aiResult.reason}`);
+    setDetectionState(aiResult.detectionState);
+
+    let topPrediction: Prediction | null = null;
+
+    if (aiResult.detectionState === 'SINGLE_OBJECT' && aiResult.primaryObject) {
+      const foundPrediction = predictions.find(p => p.className === aiResult.primaryObject);
+      if (foundPrediction) {
+        topPrediction = foundPrediction;
+        setPrimaryPrediction(foundPrediction);
       } else {
-          setDetectionState("SINGLE_OBJECT");
+        setPrimaryPrediction(null);
       }
     } else {
       setPrimaryPrediction(null);
-      setDetectionState("NO_DETECTION");
     }
-
+    
     // Now, handle sending the command, respecting the cooldown
     if (isCooldownActive) {
       setAppStatus("COOLDOWN_ACTIVE");
       return;
     }
 
-    if (topPrediction && topPrediction.probability >= 0.90) {
+    if (topPrediction) { // This implies SINGLE_OBJECT with high confidence from AI
       setAppStatus("READY_TO_SEND");
       sendSortCommand(topPrediction.className); // Don't await
       
@@ -533,7 +541,7 @@ export default function SortVisionClient() {
           setAppStatus("AWAITING_OBJECT"); // Reset status after cooldown
       }, COMMAND_COOLDOWN_MS);
 
-    } else if (topPrediction && topPrediction.probability > 0.5) {
+    } else if (predictions.some(p => p.probability > 0.5)) {
         setAppStatus("CONFIDENCE_TOO_LOW");
     } else {
         setAppStatus("AWAITING_OBJECT");
@@ -603,6 +611,9 @@ export default function SortVisionClient() {
     return () => {
       if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
+      }
+       if (cooldownTimerRef.current) {
+        clearTimeout(cooldownTimerRef.current);
       }
     };
   }, [isCameraOn, model, runClassification]);
@@ -725,35 +736,57 @@ export default function SortVisionClient() {
 
 
   const PredictionDisplay = () => {
+    const renderContent = () => {
+        if (!isCameraOn) {
+            return <p className="text-lg text-white/90 shadow-md">Camera is off</p>;
+        }
+        if (isHibernating) {
+            return <p className="text-lg text-white/90 shadow-md">Hibernating...</p>;
+        }
+        if (!model) {
+            return <p className="text-lg text-white/90 shadow-md">Awaiting model...</p>;
+        }
+
+        switch (detectionState) {
+            case "SINGLE_OBJECT":
+                if (primaryPrediction) {
+                    return (
+                        <>
+                            <h3 className="text-2xl font-bold text-white drop-shadow-lg">
+                                {primaryPrediction.className}
+                            </h3>
+                            <div className="flex items-center gap-2">
+                                <p className="text-sm text-white/90 drop-shadow-md">
+                                    Confidence:
+                                </p>
+                                <Progress value={primaryPrediction.probability * 100} className="h-2 w-24 bg-white/30" />
+                                <span className="text-sm font-semibold text-white">
+                                    {(primaryPrediction.probability * 100).toFixed(0)}%
+                                </span>
+                            </div>
+                        </>
+                    );
+                }
+                return <p className="text-lg text-white/90 shadow-md">Analyzing...</p>;
+            case "MULTIPLE_OBJECTS":
+            case "AMBIGUOUS":
+                 return (
+                    <div className="flex items-center gap-2">
+                        <AlertTriangle className="h-6 w-6 text-yellow-400" />
+                        <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
+                           {detectionState === 'AMBIGUOUS' ? 'Ambiguous Detection' : 'Multiple Objects'}
+                        </h3>
+                    </div>
+                );
+            case "NO_DETECTION":
+            default:
+                return <p className="text-lg text-white/90 shadow-md">Analyzing...</p>;
+        }
+    };
+    
     return (
         <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-        {detectionState === "MULTIPLE_OBJECTS" ? (
-            <div className="flex items-center gap-2">
-                <AlertTriangle className="h-6 w-6 text-yellow-400" />
-                <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
-                    Multiple objects detected
-                </h3>
-            </div>
-        ) : (detectionState === "SINGLE_OBJECT") && primaryPrediction && !isHibernating ? (
-            <>
-            <h3 className="text-2xl font-bold text-white drop-shadow-lg">
-                {primaryPrediction.className}
-            </h3>
-            <div className="flex items-center gap-2">
-                <p className="text-sm text-white/90 drop-shadow-md">
-                    Confidence:
-                </p>
-                <Progress value={primaryPrediction.probability * 100} className="h-2 w-24 bg-white/30" />
-                <span className="text-sm font-semibold text-white">
-                    {(primaryPrediction.probability * 100).toFixed(0)}%
-                </span>
-            </div>
-            </>
-        ) : (
-            <p className="text-lg text-white/90 shadow-md">
-            {isCameraOn ? (isHibernating ? "Hibernating..." : model ? "Analyzing..." : "Awaiting model...") : "Camera is off"}
-            </p>
-        )}
+            {renderContent()}
         </div>
     );
   };
