@@ -541,19 +541,23 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(async () => {
-    if (isHibernating || !isCameraOn || !videoRef.current || !model) {
+    // Exit if hibernating, camera is off, model not loaded, or in cooldown
+    if (isHibernating || !isCameraOn || !videoRef.current || !model || isMqttOnCooldown) {
+      // If on cooldown, the UI is paused, but we still need to keep the inactivity timer reset
+      if (isCameraOn) resetInactivityTimer();
       return;
     }
     resetInactivityTimer();
   
     try {
+      // --- 1. Always get the latest predictions ---
       const predictions = await model.predict(videoRef.current);
-      setCurrentPredictions(predictions); // Always update live predictions
+      setCurrentPredictions(predictions);
   
+      // --- 2. Always update the UI based on predictions ---
       const highConfidencePrediction = predictions.find((p) => p.probability > 0.9);
       const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
   
-      // --- UI Update Logic (Always Runs) ---
       if (highConfidencePrediction) {
         setDetectionState("SINGLE_OBJECT");
         setPrimaryPrediction(highConfidencePrediction);
@@ -587,31 +591,28 @@ export default function SortVisionClient() {
         setDetectedObjects([]);
       }
   
-      // --- MQTT Publishing Logic (Runs independently of UI updates) ---
-      if (mqttClientRef.current?.connected && !isMqttOnCooldown) {
-        let labelToSend: string | null = null;
-        if (highConfidencePrediction) {
-          labelToSend = highConfidencePrediction.className;
-        } else if (multipleDetections) {
-          labelToSend = "Multiple Objects";
-        }
+      // --- 3. Handle MQTT logic separately from UI updates ---
+      if (mqttClientRef.current?.connected && highConfidencePrediction) {
+        const labelToSend = highConfidencePrediction.className;
+        mqttClientRef.current.publish(mqttTopic, labelToSend);
+        addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
+        toast({
+          title: "MQTT Message Sent",
+          description: `Sent classification: ${labelToSend}`,
+        });
   
-        if (labelToSend) {
-          mqttClientRef.current.publish(mqttTopic, labelToSend);
-          addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
-          toast({
-            title: "MQTT Message Sent",
-            description: `Sent classification: ${labelToSend}`,
-          });
-  
-          setIsMqttOnCooldown(true);
-          addLog(`MQTT cooldown started (${MQTT_COOLDOWN_MS / 1000}s).`);
-          cooldownTimerRef.current = setTimeout(() => {
-            setIsMqttOnCooldown(false);
-            addLog("MQTT cooldown finished.");
-            cooldownTimerRef.current = null;
-          }, MQTT_COOLDOWN_MS);
-        }
+        // Start cooldown, which will pause this whole function
+        setIsMqttOnCooldown(true);
+        addLog(`MQTT cooldown started (${MQTT_COOLDOWN_MS / 1000}s).`);
+        cooldownTimerRef.current = setTimeout(() => {
+          setIsMqttOnCooldown(false);
+          addLog("MQTT cooldown finished. Resuming detection.");
+          // Clear the "stuck" UI from the cooldown period
+          setDetectionState("NO_DETECTION");
+          setPrimaryPrediction(null);
+          setDetectedObjects([]);
+          cooldownTimerRef.current = null;
+        }, MQTT_COOLDOWN_MS);
       }
     } catch (error) {
       console.error("Error during prediction:", error);
@@ -828,7 +829,7 @@ export default function SortVisionClient() {
             </>
         ) : (
             <p className="text-lg text-white/90 shadow-md">
-            {isCameraOn ? (isHibernating ? "Hibernating..." : model ? "Analyzing..." : "Awaiting model...") : "Camera is off"}
+            {isCameraOn ? (isHibernating ? "Hibernating..." : isMqttOnCooldown ? "Cooldown..." : model ? "Analyzing..." : "Awaiting model...") : "Camera is off"}
             </p>
         )}
         </div>
