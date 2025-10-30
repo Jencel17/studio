@@ -15,7 +15,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff } from "lucide-react";
+import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle } from "lucide-react";
 import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
@@ -57,6 +57,7 @@ export default function SortVisionClient() {
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [multipleItemsDetected, setMultipleItemsDetected] = useState(false);
 
 
   // MQTT Settings
@@ -119,7 +120,7 @@ export default function SortVisionClient() {
             const options: IClientOptions = {
                 clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
                 reconnectPeriod: 5000,
-                connectTimeout: 20000,
+                connectTimeout: 40000,
             };
             const client = mqtt.connect(mqttBrokerUrl, options);
             mqttClientRef.current = client;
@@ -163,6 +164,12 @@ export default function SortVisionClient() {
         }
     }
 
+    if (!mqttBrokerUrl) {
+      addLog("MQTT Broker URL is empty. Cannot connect.");
+      setMqttStatus("Error");
+      return;
+    }
+    
     // This logic ensures we don't create multiple connections
     if (mqttStatus !== "Connecting" && mqttStatus !== "Connected") {
         proceedWithConnection();
@@ -199,6 +206,7 @@ export default function SortVisionClient() {
     inactivityTimerRef.current = setTimeout(() => {
         setIsHibernating(true);
         setPrediction(null);
+        setMultipleItemsDetected(false);
         addLog("Inactivity detected, entering hibernation mode.");
     }, INACTIVITY_TIMEOUT);
   }, [isHibernating, addLog]);
@@ -258,6 +266,7 @@ export default function SortVisionClient() {
     setIsCameraOn(false);
     setIsFlashOn(false);
     setPrediction(null);
+    setMultipleItemsDetected(false);
     setIsHibernating(false);
     addLog("Camera stopped.");
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
@@ -346,34 +355,56 @@ export default function SortVisionClient() {
 
     if (!isHibernating) {
         const labels: Prediction["label"][] = ["Plastic", "Metal", "Paper"];
-        const predictions: Prediction[] = labels.map(label => {
-            let confidence = Math.random() * 0.6; // Base confidence
-            if (label === 'Plastic' && Math.random() > 0.3) {
-              confidence = Math.random() * 0.4 + 0.6; // Higher confidence for Plastic
-            }
-             if (label === 'Metal' && Math.random() > 0.2) {
-              confidence = Math.random() * 0.5 + 0.5; // Higher confidence for Metal
-            }
-            if (label === 'Paper' && Math.random() > 0.2) {
-                confidence = Math.random() * 0.5 + 0.5; // Higher confidence for Paper
-            }
-            return { label, confidence };
-        });
+        
+        // Improved detection simulation
+        const scenario = Math.random();
+        let predictions: Prediction[];
 
-        const highestPrediction = predictions.reduce(
-            (max, p) => (p.confidence > max.confidence ? p : max),
-            predictions[0]
-        );
+        if (scenario < 0.6) { // Single item
+            const mainLabel = labels[Math.floor(Math.random() * labels.length)];
+            predictions = labels.map(label => ({
+                label,
+                confidence: label === mainLabel ? Math.random() * 0.2 + 0.8 : Math.random() * 0.4
+            }));
+        } else if (scenario < 0.8) { // Multiple items
+            const firstLabel = labels[Math.floor(Math.random() * labels.length)];
+            let secondLabel: string;
+            do {
+                secondLabel = labels[Math.floor(Math.random() * labels.length)];
+            } while (secondLabel === firstLabel);
+            
+            predictions = labels.map(label => ({
+                label,
+                confidence: (label === firstLabel || label === secondLabel) ? Math.random() * 0.2 + 0.8 : Math.random() * 0.3
+            }));
+        } else { // No clear item
+            predictions = labels.map(label => ({
+                label,
+                confidence: Math.random() * 0.7
+            }));
+        }
+        
+        const highConfidencePredictions = predictions.filter(p => p.confidence > CONFIDENCE_THRESHOLD);
+        
+        if (highConfidencePredictions.length > 1) {
+            setMultipleItemsDetected(true);
+            setPrediction(null);
+            addLog(`Multiple items detected: ${highConfidencePredictions.map(p => p.label).join(', ')}. No signal sent.`);
+        } else if (highConfidencePredictions.length === 1) {
+            const highestPrediction = highConfidencePredictions[0];
+            setMultipleItemsDetected(false);
+            setPrediction(highestPrediction);
 
-        setPrediction(highestPrediction);
-
-        if (highestPrediction.confidence > CONFIDENCE_THRESHOLD) {
             addLog(`Classified: ${highestPrediction.label} (Confidence: ${(highestPrediction.confidence * 100).toFixed(0)}%)`);
             if (mqttClientRef.current?.connected) {
                 mqttClientRef.current.publish(mqttTopic, highestPrediction.label);
                 addLog(`Published '${highestPrediction.label}' to MQTT topic '${mqttTopic}'`);
             }
             setLastClassifications((prev) => [...prev, highestPrediction]);
+        } else {
+             // No item has high enough confidence
+             setMultipleItemsDetected(false);
+             setPrediction(null);
         }
     }
   }, [resetInactivityTimer, mqttTopic, isHibernating, addLog]);
@@ -469,8 +500,8 @@ export default function SortVisionClient() {
   useEffect(() => {
     if (mqttClientRef.current && mqttClientRef.current.options.href) {
         try {
-            const clientUrl = new URL(mqttClientRef.current.options.href);
             if (mqttBrokerUrl) {
+                const clientUrl = new URL(mqttClientRef.current.options.href);
                 const stateUrl = new URL(mqttBrokerUrl);
                 if (clientUrl.host !== stateUrl.host || clientUrl.port !== stateUrl.port) {
                     connectToMqtt();
@@ -485,8 +516,11 @@ export default function SortVisionClient() {
                 addLog("Invalid or empty broker URL. Cannot connect.");
             }
         }
+    } else if (mqttBrokerUrl && mqttStatus !== 'Connecting' && mqttStatus !== 'Connected') {
+      // If we don't have a client but we have a URL, try to connect
+      connectToMqtt();
     }
-  }, [mqttBrokerUrl, connectToMqtt]);
+  }, [mqttBrokerUrl, connectToMqtt, mqttStatus]);
 
   const getMqttBadgeVariant = () => {
     switch (mqttStatus) {
@@ -499,7 +533,14 @@ export default function SortVisionClient() {
 
   const PredictionDisplay = () => (
     <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-      {prediction && !isHibernating && prediction.confidence > CONFIDENCE_THRESHOLD ? (
+      {multipleItemsDetected && !isHibernating ? (
+        <div className="flex items-center gap-2">
+            <AlertTriangle className="h-6 w-6 text-yellow-400" />
+            <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
+                Multiple items detected
+            </h3>
+        </div>
+      ) : prediction && !isHibernating ? (
         <>
           <h3 className="text-2xl font-bold text-white drop-shadow-lg">
             {prediction.label}
@@ -523,7 +564,7 @@ export default function SortVisionClient() {
   );
 
   const ItemIcon = ({ label, confidence }: Prediction) => {
-    const isActive = confidence > CONFIDENCE_THRESHOLD && !isHibernating;
+    const isActive = confidence > CONFIDENCE_THRESHOLD && !isHibernating && !multipleItemsDetected;
     const activeClass = "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
     const baseClass = "h-12 w-12 text-muted-foreground transition-all duration-300";
     
@@ -681,3 +722,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
