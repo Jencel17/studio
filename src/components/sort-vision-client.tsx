@@ -51,7 +51,7 @@ type LogEntry = {
 };
 
 const CONFIDENCE_THRESHOLD = 0.8;
-const CLASSIFICATION_INTERVAL = 2000; // Updated to 2 seconds
+const CLASSIFICATION_INTERVAL = 2000;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
@@ -361,76 +361,69 @@ export default function SortVisionClient() {
   };
 
   const runClassification = useCallback(() => {
-    const isActivityDetected = detectedObjects.length > 0;
-    if (isActivityDetected) {
-      resetInactivityTimer();
-    }
-
+    resetInactivityTimer();
+  
     if (isHibernating || !isCameraOn) {
       setPrediction(null);
       setDetectedObjects([]);
       return;
     }
-
+  
     const labels: DetectedObject["label"][] = ["Plastic", "Metal", "Paper"];
     const scenario = Math.random();
     let newObjects: DetectedObject[] = [];
-
+  
     if (scenario < 0.6) { // Single item
       const size = 0.4 + Math.random() * 0.2;
       newObjects = [{
-        id: 1,
+        id: Date.now(),
         label: labels[Math.floor(Math.random() * labels.length)],
         confidence: Math.random() * 0.2 + 0.8,
-        bbox: [(1 - size) / 2, (1 - size) / 2, size, size], // Centered
-        rotation: Math.random() * 30 - 15, // -15 to 15 degrees
+        bbox: [(1 - size) / 2 + (Math.random() * 0.2 - 0.1), (1 - size) / 2 + (Math.random() * 0.2 - 0.1), size, size], // Centered with jitter
+        rotation: Math.random() * 30 - 15,
       }];
-    } else if (scenario < 0.8) { // Multiple items
+    } else if (scenario < 0.85) { // Multiple items
       newObjects.push({
-        id: 1,
+        id: Date.now(),
         label: labels[Math.floor(Math.random() * labels.length)],
         confidence: Math.random() * 0.3 + 0.7,
-        bbox: [0.1, 0.25, 0.3, 0.3],
+        bbox: [0.1 + (Math.random() * 0.1), 0.25, 0.3, 0.3],
         rotation: Math.random() * 30 - 15,
       });
       newObjects.push({
-        id: 2,
+        id: Date.now() + 1,
         label: labels[Math.floor(Math.random() * labels.length)],
         confidence: Math.random() * 0.3 + 0.7,
-        bbox: [0.6, 0.45, 0.3, 0.3],
+        bbox: [0.6 - (Math.random() * 0.1), 0.45, 0.3, 0.3],
         rotation: Math.random() * 30 - 15,
       });
     }
     // Else: No items
-
+  
     setDetectedObjects(newObjects);
     const highConfidenceDetections = newObjects.filter(d => d.confidence > CONFIDENCE_THRESHOLD);
-
+  
     if (highConfidenceDetections.length > 1) {
       setPrediction(null); // Clear main prediction if multiple objects
       addLog(`Multiple items detected: ${highConfidenceDetections.map(p => p.label).join(', ')}. No signal sent.`);
     } else if (highConfidenceDetections.length === 1) {
       const currentPrediction = highConfidenceDetections[0];
       setPrediction(currentPrediction);
-
-      // Only log and send MQTT if the prediction has changed to avoid spam
-      if (prediction?.label !== currentPrediction.label || prediction?.confidence !== currentPrediction.confidence) {
-        addLog(`Classified: ${currentPrediction.label} (Confidence: ${(currentPrediction.confidence * 100).toFixed(0)}%)`);
-        if (mqttClientRef.current?.connected) {
-          mqttClientRef.current.publish(mqttTopic, currentPrediction.label);
-          addLog(`Published '${currentPrediction.label}' to MQTT topic '${mqttTopic}'`);
-        }
-        setLastClassifications((prev) => [...prev, currentPrediction]);
+  
+      addLog(`Classified: ${currentPrediction.label} (Confidence: ${(currentPrediction.confidence * 100).toFixed(0)}%)`);
+      if (mqttClientRef.current?.connected) {
+        mqttClientRef.current.publish(mqttTopic, currentPrediction.label);
+        addLog(`Published '${currentPrediction.label}' to MQTT topic '${mqttTopic}'`);
       }
+      setLastClassifications((prev) => [...prev, currentPrediction]);
     } else {
       setPrediction(null); // No high-confidence object
     }
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, prediction, isCameraOn, detectedObjects.length]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn]);
 
   useEffect(() => {
     if (isCameraOn) {
       if (!predictionIntervalRef.current) {
-        runClassification(); // Run once immediately
         predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL);
       }
     } else {
@@ -525,7 +518,8 @@ export default function SortVisionClient() {
     }
 
     try {
-        const clientUrl = new URL(mqttClientRef.current.options.href || '');
+        if (!mqttClientRef.current.options.href) return;
+        const clientUrl = new URL(mqttClientRef.current.options.href);
         const stateUrl = new URL(mqttBrokerUrl);
 
         if (clientUrl.href !== stateUrl.href) {
@@ -579,30 +573,22 @@ export default function SortVisionClient() {
     </div>
   );
 
-  const ItemIcon = ({ label, confidence }: Prediction) => {
-    const isActive = confidence > CONFIDENCE_THRESHOLD && !isHibernating && detectedObjects.length <= 1;
-    const activeClass = "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
+  const ItemIcon = () => {
+    const getActiveClass = (label: Prediction['label']) => {
+        if (prediction?.label === label && prediction.confidence > CONFIDENCE_THRESHOLD && !isHibernating && detectedObjects.length <= 1) {
+            return "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
+        }
+        return "";
+    };
+    
     const baseClass = "h-12 w-12 text-muted-foreground transition-all duration-300";
     
-    if (isActive) {
-        switch (label) {
-            case 'Plastic':
-                return <PlasticIcon className={cn(baseClass, "text-foreground", activeClass)} />;
-            case 'Metal':
-                return <MetalIcon className={cn(baseClass, "text-foreground", activeClass)} />;
-            case 'Paper':
-                return <PaperIcon className={cn(baseClass, "text-foreground", activeClass)} />;
-            default:
-                break;
-        }
-    }
-
     return (
        <div className="flex flex-col items-center justify-center h-full p-4">
           <div className="flex flex-col items-center gap-6 p-4">
-            <PlasticIcon className={cn(baseClass)} />
-            <MetalIcon className={cn(baseClass)} />
-            <PaperIcon className={cn(baseClass)} />
+            <PlasticIcon className={cn(baseClass, getActiveClass('Plastic'))} />
+            <MetalIcon className={cn(baseClass, getActiveClass('Metal'))} />
+            <PaperIcon className={cn(baseClass, getActiveClass('Paper'))} />
           </div>
       </div>
     );
@@ -726,7 +712,7 @@ export default function SortVisionClient() {
               })}
               </div>
               <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full">
-                <ItemIcon {...(prediction || {label: 'Plastic', confidence: 0})} />
+                <ItemIcon />
               </div>
           </div>
         </CardContent>
@@ -780,5 +766,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
