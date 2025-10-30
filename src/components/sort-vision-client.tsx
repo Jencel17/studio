@@ -19,7 +19,8 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Wifi, WifiOff, PowerOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck, handleInterpretDetections } from "@/app/actions/ai";
+import { handleModelSwapCheck } from "@/app/actions/ai";
+import type { SuggestAiModelSwapInput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
@@ -28,7 +29,6 @@ import { Switch } from "@/components/ui/switch";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import type { SuggestAiModelSwapInput, InterpretDetectionsInput } from "@/app/actions/ai-schemas";
 
 
 type Prediction = {
@@ -555,7 +555,7 @@ export default function SortVisionClient() {
         setLastClassifications(prev => [...prev, ...predictions]);
       }
 
-      // --- UI UPDATE LOGIC ---
+      // --- UI UPDATE LOGIC (Always runs) ---
       const highConfidencePrediction = predictions.find(p => p.probability > 0.9);
       const multipleDetections = predictions.filter(p => p.probability > 0.5).length > 1;
 
@@ -588,7 +588,7 @@ export default function SortVisionClient() {
         setDetectedObjects([]);
       }
       
-      // --- MQTT PUBLISHING LOGIC ---
+      // --- MQTT PUBLISHING LOGIC (Runs independently of UI) ---
       if (mqttClientRef.current?.connected && !isMqttOnCooldown) {
         let mqttLabel: string | null = null;
         if (highConfidencePrediction) {
@@ -598,7 +598,7 @@ export default function SortVisionClient() {
         }
         
         if (mqttLabel) {
-          mqttClientRef.current!.publish(mqttTopic, mqttLabel);
+          mqttClientRef.current.publish(mqttTopic, mqttLabel);
           addLog(`Published '${mqttLabel}' to MQTT topic '${mqttTopic}'`);
           toast({
             title: "MQTT Message Sent",
