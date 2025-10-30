@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
@@ -545,18 +546,19 @@ export default function SortVisionClient() {
       return;
     }
     resetInactivityTimer();
-
+  
     try {
       const predictions = await model.predict(videoRef.current);
       setCurrentPredictions(predictions);
+  
       if (predictions.length > 0) {
         setLastClassifications((prev) => [...prev, ...predictions].slice(-MODEL_SWAP_CHECK_THRESHOLD * 2));
       }
-
-      // --- UI Update Logic (Always Runs) ---
+  
       const highConfidencePrediction = predictions.find((p) => p.probability > 0.9);
       const multipleDetections = predictions.filter((p) => p.probability > 0.5).length > 1;
-
+  
+      // --- UI Update Logic (Always Runs) ---
       if (highConfidencePrediction) {
         setDetectionState("SINGLE_OBJECT");
         setPrimaryPrediction(highConfidencePrediction);
@@ -576,12 +578,7 @@ export default function SortVisionClient() {
               id: det.className,
               label: det.className,
               confidence: det.probability,
-              bbox: [
-                Math.random() * (1 - size),
-                Math.random() * (1 - size),
-                size,
-                size,
-              ],
+              bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
               vx: (Math.random() - 0.5) * 0.005,
               vy: (Math.random() - 0.5) * 0.005,
               vw: (Math.random() - 0.5) * 0.001,
@@ -594,8 +591,8 @@ export default function SortVisionClient() {
         setPrimaryPrediction(null);
         setDetectedObjects([]);
       }
-
-      // --- MQTT Publishing Logic (Decoupled from UI) ---
+  
+      // --- MQTT Publishing Logic (Runs independently of UI updates) ---
       if (mqttClientRef.current?.connected && !isMqttOnCooldown) {
         let labelToSend: string | null = null;
         if (highConfidencePrediction) {
@@ -603,7 +600,7 @@ export default function SortVisionClient() {
         } else if (multipleDetections) {
           labelToSend = "Multiple Objects";
         }
-        
+  
         if (labelToSend) {
           mqttClientRef.current.publish(mqttTopic, labelToSend);
           addLog(`Published '${labelToSend}' to MQTT topic '${mqttTopic}'`);
@@ -611,7 +608,7 @@ export default function SortVisionClient() {
             title: "MQTT Message Sent",
             description: `Sent classification: ${labelToSend}`,
           });
-
+  
           setIsMqttOnCooldown(true);
           addLog("MQTT cooldown started (5s).");
           cooldownTimerRef.current = setTimeout(() => {
@@ -625,16 +622,7 @@ export default function SortVisionClient() {
       console.error("Error during prediction:", error);
       addLog("Prediction error. Check console.");
     }
-  }, [
-    isHibernating,
-    isCameraOn,
-    model,
-    resetInactivityTimer,
-    mqttTopic,
-    addLog,
-    toast,
-    isMqttOnCooldown,
-  ]);
+  }, [isHibernating, isCameraOn, model, resetInactivityTimer, mqttTopic, addLog, toast, isMqttOnCooldown]);
 
 
   useEffect(() => {
@@ -1049,7 +1037,7 @@ export default function SortVisionClient() {
                   >
                     <div
                       className={cn(
-                        'absolute -top-6 left-0 text-xs font-semibold text-white px-2 py-0.5 rounded-t-md',
+                        'absolute -top-6 left-0 text-xs font-semibold text-white px-2 py-0.5 rounded-tmd',
                         textColor
                       )}
                     >
