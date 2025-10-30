@@ -554,22 +554,22 @@ export default function SortVisionClient() {
         if (predictions.length > 0) {
             setLastClassifications(prev => [...prev, ...predictions]);
         }
-
-        let currentLabel: string | null = null;
-        let newDetectionState: DetectionState = "NO_DETECTION";
+        
+        let mqttLabel: string | null = null;
 
         const highConfidencePrediction = predictions.find(p => p.probability > 0.9);
         const multipleDetections = predictions.filter(p => p.probability > 0.5).length > 1;
 
+        // UI Update Logic - runs on every frame
         if (highConfidencePrediction) {
-            newDetectionState = "SINGLE_OBJECT";
-            currentLabel = highConfidencePrediction.className;
+            setDetectionState("SINGLE_OBJECT");
             setPrimaryPrediction(highConfidencePrediction);
             setDetectedObjects([]);
+            mqttLabel = highConfidencePrediction.className;
         } else if (multipleDetections) {
-            newDetectionState = "MULTIPLE_OBJECTS";
-            currentLabel = "Multiple Objects";
+            setDetectionState("MULTIPLE_OBJECTS");
             setPrimaryPrediction(null);
+            mqttLabel = "Multiple Objects";
             setDetectedObjects(currentObjects => {
                 const significantDetections = predictions.filter(p => p.probability > 0.5);
                 return significantDetections.map(det => {
@@ -587,22 +587,21 @@ export default function SortVisionClient() {
                 });
             });
         } else {
-            newDetectionState = "NO_DETECTION";
-            currentLabel = null;
+            setDetectionState("NO_DETECTION");
             setPrimaryPrediction(null);
             setDetectedObjects([]);
+            mqttLabel = null;
         }
-
-        setDetectionState(newDetectionState);
-
-        const shouldPublish = mqttClientRef.current?.connected && !isMqttOnCooldown && currentLabel;
+        
+        // MQTT Publishing Logic - runs only when not on cooldown
+        const shouldPublish = mqttClientRef.current?.connected && !isMqttOnCooldown && mqttLabel;
 
         if (shouldPublish) {
-            mqttClientRef.current!.publish(mqttTopic, currentLabel);
-            addLog(`Published '${currentLabel}' to MQTT topic '${mqttTopic}'`);
+            mqttClientRef.current!.publish(mqttTopic, mqttLabel);
+            addLog(`Published '${mqttLabel}' to MQTT topic '${mqttTopic}'`);
             toast({
                 title: "MQTT Message Sent",
-                description: `Sent classification: ${currentLabel}`,
+                description: `Sent classification: ${mqttLabel}`,
             });
             setIsMqttOnCooldown(true);
             addLog("MQTT cooldown started (5s).");
@@ -1095,5 +1094,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
