@@ -36,6 +36,7 @@ type Prediction = {
 type BoundingBox = [number, number, number, number]; // [x, y, width, height]
 
 type DetectedObject = {
+  id: number;
   label: "Plastic" | "Metal" | "Paper";
   confidence: number;
   bbox: BoundingBox;
@@ -53,6 +54,7 @@ const CLASSIFICATION_INTERVAL = 1000;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
+const OBJECT_LIFESPAN = 5000; // How long an object stays on screen (ms)
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -79,6 +81,8 @@ export default function SortVisionClient() {
   const predictionIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
+  const objectStateRef = useRef<DetectedObject[]>([]);
+  const objectTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   const { toast } = useToast();
   
@@ -275,6 +279,8 @@ export default function SortVisionClient() {
     setIsFlashOn(false);
     setPrediction(null);
     setDetectedObjects([]);
+    objectStateRef.current = [];
+    if (objectTimerRef.current) clearTimeout(objectTimerRef.current);
     setIsHibernating(false);
     addLog("Camera stopped.");
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
@@ -354,74 +360,108 @@ export default function SortVisionClient() {
     }
   };
 
+    const updateObjectSimulation = useCallback(() => {
+        const labels: DetectedObject["label"][] = ["Plastic", "Metal", "Paper"];
+        const scenario = Math.random();
+        let newObjects: DetectedObject[] = [];
+
+        if (scenario < 0.6) { // Single item
+            const size = 0.4 + Math.random() * 0.2;
+            newObjects = [{
+                id: 1,
+                label: labels[Math.floor(Math.random() * labels.length)],
+                confidence: Math.random() * 0.2 + 0.8,
+                bbox: [(1-size)/2, (1-size)/2, size, size] // Centered
+            }];
+        } else if (scenario < 0.8) { // Multiple items
+            const count = 2;
+            const size = 0.3;
+            newObjects.push({
+                id: 1,
+                label: labels[Math.floor(Math.random() * labels.length)],
+                confidence: Math.random() * 0.3 + 0.7,
+                bbox: [0.1, 0.25, size, size]
+            });
+            newObjects.push({
+                id: 2,
+                label: labels[Math.floor(Math.random() * labels.length)],
+                confidence: Math.random() * 0.3 + 0.7,
+                bbox: [0.6, 0.45, size, size]
+            });
+        } else { // No item
+            newObjects = [];
+        }
+        
+        objectStateRef.current = newObjects;
+        setDetectedObjects(newObjects);
+
+        // Schedule the next update
+        if (objectTimerRef.current) clearTimeout(objectTimerRef.current);
+        objectTimerRef.current = setTimeout(updateObjectSimulation, OBJECT_LIFESPAN);
+    }, []);
+
   const runClassification = useCallback(() => {
-    const isActivityDetected = Math.random() > 0.5;
+    // Activity is now based on whether objects are present
+    const isActivityDetected = objectStateRef.current.length > 0;
 
     if (isActivityDetected) {
         resetInactivityTimer();
     }
 
-    if (!isHibernating) {
-        const labels: DetectedObject["label"][] = ["Plastic", "Metal", "Paper"];
-        const scenario = Math.random();
-        let newDetectedObjects: DetectedObject[] = [];
+    if (isHibernating) {
+        setPrediction(null);
+        return;
+    }
+    
+    const currentObjects = objectStateRef.current;
+    
+    // Slightly randomize confidence on each tick to simulate real-world fluctuation
+    const updatedObjects = currentObjects.map(obj => ({
+        ...obj,
+        confidence: Math.max(0.5, Math.min(1, obj.confidence + (Math.random() - 0.5) * 0.05))
+    }));
 
-        if (scenario < 0.6) { // Single item
-            newDetectedObjects = [{
-                label: labels[Math.floor(Math.random() * labels.length)],
-                confidence: Math.random() * 0.2 + 0.8,
-                bbox: [Math.random() * 0.4, Math.random() * 0.4, 0.4 + Math.random() * 0.2, 0.4 + Math.random() * 0.2]
-            }];
-        } else if (scenario < 0.8) { // Multiple items
-            const count = Math.floor(Math.random() * 2) + 2; // 2 or 3 items
-            for (let i = 0; i < count; i++) {
-                newDetectedObjects.push({
-                    label: labels[Math.floor(Math.random() * labels.length)],
-                    confidence: Math.random() * 0.3 + 0.7,
-                    bbox: [Math.random() * 0.7, Math.random() * 0.7, 0.2 + Math.random() * 0.1, 0.2 + Math.random() * 0.1]
-                });
-            }
-        } else { // No clear item
-             newDetectedObjects = [];
-        }
-
-        setDetectedObjects(newDetectedObjects);
+    setDetectedObjects(updatedObjects);
+    
+    const highConfidenceDetections = updatedObjects.filter(d => d.confidence > CONFIDENCE_THRESHOLD);
+    
+    if (highConfidenceDetections.length > 1) {
+        setPrediction(null); // Clear main prediction if multiple objects
+        addLog(`Multiple items detected: ${highConfidenceDetections.map(p => p.label).join(', ')}. No signal sent.`);
+    } else if (highConfidenceDetections.length === 1) {
+        const currentPrediction = highConfidenceDetections[0];
+        setPrediction(currentPrediction);
         
-        const highConfidenceDetections = newDetectedObjects.filter(d => d.confidence > CONFIDENCE_THRESHOLD);
-        let highestPrediction: Prediction | null = null;
-        if (highConfidenceDetections.length > 0) {
-          highestPrediction = highConfidenceDetections.reduce((max, p) => p.confidence > max.confidence ? p : max, highConfidenceDetections[0]);
-        }
-
-        if (highConfidenceDetections.length > 1) {
-            setPrediction(null);
-            addLog(`Multiple items detected: ${highConfidenceDetections.map(p => p.label).join(', ')}. No signal sent.`);
-        } else if (highestPrediction) {
-            setPrediction(highestPrediction);
-
-            addLog(`Classified: ${highestPrediction.label} (Confidence: ${(highestPrediction.confidence * 100).toFixed(0)}%)`);
+        // Only log and send MQTT if the prediction has changed to avoid spam
+        if (prediction?.label !== currentPrediction.label || prediction?.confidence !== currentPrediction.confidence) {
+            addLog(`Classified: ${currentPrediction.label} (Confidence: ${(currentPrediction.confidence * 100).toFixed(0)}%)`);
             if (mqttClientRef.current?.connected) {
-                mqttClientRef.current.publish(mqttTopic, highestPrediction.label);
-                addLog(`Published '${highestPrediction.label}' to MQTT topic '${mqttTopic}'`);
+                mqttClientRef.current.publish(mqttTopic, currentPrediction.label);
+                addLog(`Published '${currentPrediction.label}' to MQTT topic '${mqttTopic}'`);
             }
-            setLastClassifications((prev) => [...prev, highestPrediction!]);
-        } else {
-             setPrediction(null);
+            setLastClassifications((prev) => [...prev, currentPrediction]);
         }
     } else {
-      setDetectedObjects([]);
+        setPrediction(null); // No high-confidence object
     }
-  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog]);
+  }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, prediction]);
 
   useEffect(() => {
     if (isCameraOn) {
       if (!predictionIntervalRef.current) {
-        predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL);
+        // Start the object simulation and the classification interval
+        updateObjectSimulation();
+        predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL / 2); // Run more frequently for smoother updates
       }
     } else {
+      // Clear intervals and timers when camera is off
       if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = null;
+      }
+      if (objectTimerRef.current) {
+        clearTimeout(objectTimerRef.current);
+        objectTimerRef.current = null;
       }
     }
 
@@ -429,8 +469,11 @@ export default function SortVisionClient() {
       if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
       }
+       if (objectTimerRef.current) {
+        clearTimeout(objectTimerRef.current);
+      }
     };
-  }, [isCameraOn, runClassification]);
+  }, [isCameraOn, runClassification, updateObjectSimulation]);
   
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -664,7 +707,7 @@ export default function SortVisionClient() {
                   </div>
               )}
               <PredictionDisplay />
-              {isCameraOn && !isHibernating && detectedObjects.map((obj, index) => {
+              {isCameraOn && !isHibernating && detectedObjects.map((obj) => {
                 const [x, y, w, h] = obj.bbox;
                 const colors = {
                   Plastic: 'border-blue-400',
@@ -678,9 +721,9 @@ export default function SortVisionClient() {
                 };
                 return (
                   <div
-                    key={index}
+                    key={obj.id}
                     className={cn(
-                      'absolute transition-all duration-300 border-2',
+                      'absolute transition-all duration-300 border-2 rounded-md',
                       colors[obj.label]
                     )}
                     style={{
@@ -757,5 +800,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
