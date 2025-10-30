@@ -11,7 +11,7 @@ import {
   SuggestAiModelSwapInputSchema,
   SuggestAiModelSwapOutputSchema,
   type SuggestAiModelSwapInput,
-} from '@/app/actions/ai';
+} from '@/app/actions/ai-schemas';
 
 export async function suggestAiModelSwap(input: SuggestAiModelSwapInput) {
   return suggestAiModelSwapFlow(input);

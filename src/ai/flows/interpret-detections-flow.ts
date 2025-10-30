@@ -11,7 +11,7 @@ import {
   InterpretDetectionsInputSchema,
   InterpretDetectionsOutputSchema,
   type InterpretDetectionsInput,
-} from '@/app/actions/ai';
+} from '@/app/actions/ai-schemas';
 
 export async function interpretDetections(input: InterpretDetectionsInput) {
   return interpretDetectionsFlow(input);
