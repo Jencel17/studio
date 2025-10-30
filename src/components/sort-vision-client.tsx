@@ -429,10 +429,17 @@ export default function SortVisionClient() {
   // Effect to handle reconnection when settings change
   useEffect(() => {
     if (mqttClientRef.current) {
-        const clientUrl = new URL(mqttClientRef.current.options.href || '');
-        const stateUrl = new URL(mqttBrokerUrl);
-        if (clientUrl.host !== stateUrl.host || clientUrl.port !== stateUrl.port) {
-            connectToMqtt();
+        const clientHref = mqttClientRef.current.options.href;
+        if (clientHref) {
+            try {
+                const clientUrl = new URL(clientHref);
+                const stateUrl = new URL(mqttBrokerUrl);
+                if (clientUrl.host !== stateUrl.host || clientUrl.port !== stateUrl.port) {
+                    connectToMqtt();
+                }
+            } catch (error) {
+                console.error("Error parsing URL for MQTT reconnection check:", error);
+            }
         }
     }
   }, [mqttBrokerUrl, connectToMqtt]);
