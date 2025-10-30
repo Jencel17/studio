@@ -39,11 +39,15 @@ type Prediction = {
 type BoundingBox = [number, number, number, number]; // [x, y, width, height]
 
 type DetectedObject = {
-  id: number;
+  id: string; // Use string for more stable keys
   label: Prediction['label'];
   confidence: number;
   bbox: BoundingBox;
-  rotation: number; // For tilt effect
+  // For animation
+  vx: number; 
+  vy: number;
+  vw: number;
+  vh: number;
 };
 
 type MqttStatus = "Connected" | "Disconnected" | "Connecting" | "Error";
@@ -54,6 +58,7 @@ type LogEntry = {
 };
 
 const CONFIDENCE_THRESHOLD = 0.8;
+const MULTI_DETECTION_THRESHOLD = 0.5;
 const CLASSIFICATION_INTERVAL = 2000;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
@@ -79,9 +84,6 @@ export default function SortVisionClient() {
   const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8884/mqtt");
   const [mqttTopic, setMqttTopic] = useState("trash/classification");
   
-  const [modelFile, setModelFile] = useState<File | null>(null);
-  const [metadataFile, setMetadataFile] = useState<File | null>(null);
-
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const mqttClientRef = useRef<MqttClient | null>(null);
@@ -89,6 +91,7 @@ export default function SortVisionClient() {
   const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const animationFrameRef = useRef<number>();
 
   const { toast } = useToast();
   
@@ -111,7 +114,6 @@ export default function SortVisionClient() {
       if (weightsFile) {
         loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
       } else {
-        // Fallback for older implementation, might not always work
         const modelURL = URL.createObjectURL(modelFile);
         const metadataURL = URL.createObjectURL(metadataFile);
         loadedModel = await tmImage.load(modelURL, metadataURL);
@@ -177,7 +179,6 @@ export default function SortVisionClient() {
         let droppedModelFile: File | null = null;
         let droppedMetadataFile: File | null = null;
         let droppedWeightsFile: File | null = null;
-
 
         Array.from(files).forEach(file => {
             if (file.name === 'model.json') {
@@ -268,12 +269,10 @@ export default function SortVisionClient() {
          toast({ variant: "destructive", title: "Invalid Files", description: "Select a .zip or all three model component files." });
        }
     }
-     // Reset file input to allow selecting the same file again
     event.target.value = '';
   };
 
 
-  // Load MQTT settings from localStorage on initial render
   useEffect(() => {
     const savedBrokerUrl = localStorage.getItem("mqttBrokerUrl");
     const savedMqttTopic = localStorage.getItem("mqttTopic");
@@ -282,7 +281,6 @@ export default function SortVisionClient() {
     addLog("App initialized.");
   }, [addLog]);
   
-  // Save MQTT settings to localStorage whenever they change
   const handleMqttBrokerUrlChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newUrl = e.target.value;
     setMqttBrokerUrl(newUrl);
@@ -299,7 +297,6 @@ export default function SortVisionClient() {
     function proceedWithConnection() {
         if (mqttClientRef.current && mqttClientRef.current.connected) return;
 
-        // Disconnect previous client if it exists and is not the same
         if (mqttClientRef.current) {
             mqttClientRef.current.end(true);
             mqttClientRef.current = null;
@@ -361,11 +358,9 @@ export default function SortVisionClient() {
       return;
     }
     
-    // This logic ensures we don't create multiple connections
     if (mqttStatus !== "Connecting" && mqttStatus !== "Connected") {
         proceedWithConnection();
     } else if(mqttStatus === "Connected"){
-        // If already connected, but URL changed, reconnect.
         const currentUrl = mqttClientRef.current?.options.href;
         if(currentUrl && mqttBrokerUrl && currentUrl !== mqttBrokerUrl) {
             addLog("Broker URL changed, reconnecting...");
@@ -378,9 +373,7 @@ export default function SortVisionClient() {
   const disconnectFromMqtt = useCallback(() => {
     if (mqttClientRef.current) {
       addLog("Disconnecting from MQTT broker.");
-      mqttClientRef.current.end(true, () => {
-        // This callback ensures the internal state is updated after disconnection.
-      });
+      mqttClientRef.current.end(true, () => {});
       mqttClientRef.current = null;
       setMqttStatus("Disconnected");
     }
@@ -453,6 +446,9 @@ export default function SortVisionClient() {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
+    if (animationFrameRef.current) {
+      cancelAnimationFrame(animationFrameRef.current);
+    }
     streamRef.current = null;
     setIsCameraOn(false);
     setIsFlashOn(false);
@@ -473,7 +469,6 @@ export default function SortVisionClient() {
       try {
         addLog("Requesting camera access...");
 
-        // Stop any existing stream before starting a new one
         if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
         }
@@ -494,7 +489,6 @@ export default function SortVisionClient() {
         streamRef.current = stream;
         setIsCameraOn(true);
 
-        // Check actual flash status
         const videoTrack = stream.getVideoTracks()[0];
         const capabilities = videoTrack.getCapabilities();
         const settings = videoTrack.getSettings();
@@ -521,7 +515,7 @@ export default function SortVisionClient() {
           title: "Camera Error",
           description: "Could not access the camera. Please check permissions.",
         });
-        stopCamera(); // Ensure everything is cleaned up on error
+        stopCamera();
       }
     }
   }, [addLog, resetInactivityTimer, stopCamera, toast, wakeLockEnabled, requestWakeLock]);
@@ -554,39 +548,46 @@ export default function SortVisionClient() {
       const modelPredictions = await model.predict(videoRef.current);
       
       const potentialDetections = modelPredictions
-        .map((p, i) => ({
-          id: i,
-          label: p.className,
-          confidence: p.probability,
-          // Assign a random-ish bounding box for simulation
-          bbox: [
-            0.1 + (i * 0.15) % 0.5, 
-            0.2 + (i * 0.2) % 0.6, 
-            0.25 + Math.random() * 0.1, 
-            0.25 + Math.random() * 0.1
-          ] as BoundingBox,
-          rotation: Math.random() * 10 - 5,
-        }))
-        .filter(p => p.confidence > 0.2); // Lower threshold to see what model is "thinking"
+        .filter(p => p.probability > MULTI_DETECTION_THRESHOLD);
 
-      setDetectedObjects(potentialDetections);
+      setDetectedObjects(currentObjects => {
+        return potentialDetections.map((p, i) => {
+            const existing = currentObjects.find(o => o.id === p.className);
+            if (existing) {
+              return { ...existing, confidence: p.probability, label: p.className };
+            }
+            // New item
+            const size = 0.3 + Math.random() * 0.3; // 30% to 60% of view
+            return {
+              id: p.className,
+              label: p.className,
+              confidence: p.probability,
+              bbox: [Math.random() * (1 - size), Math.random() * (1 - size), size, size],
+              vx: (Math.random() - 0.5) * 0.005,
+              vy: (Math.random() - 0.5) * 0.005,
+              vw: (Math.random() - 0.5) * 0.001,
+              vh: (Math.random() - 0.5) * 0.001,
+            };
+        });
+      });
 
-      const highConfidenceDetections = potentialDetections.filter(p => p.confidence > CONFIDENCE_THRESHOLD);
+      const highConfidenceDetections = potentialDetections.filter(p => p.probability > CONFIDENCE_THRESHOLD);
       
       let primaryPrediction = null;
       if (highConfidenceDetections.length > 0) {
-        primaryPrediction = highConfidenceDetections.reduce((max, p) => p.confidence > max.confidence ? p : max);
+        primaryPrediction = highConfidenceDetections.reduce((max, p) => p.probability > max.probability ? p : max);
       }
       
       if (primaryPrediction) {
-          setPrediction(primaryPrediction);
-          addLog(`Classified: ${primaryPrediction.label} (Confidence: ${(primaryPrediction.confidence * 100).toFixed(0)}%)`);
+          const finalPrediction = { label: primaryPrediction.className, confidence: primaryPrediction.probability };
+          setPrediction(finalPrediction);
+          addLog(`Classified: ${finalPrediction.label} (Confidence: ${(finalPrediction.confidence * 100).toFixed(0)}%)`);
 
           if (mqttClientRef.current?.connected && highConfidenceDetections.length === 1) {
-              mqttClientRef.current.publish(mqttTopic, primaryPrediction.label);
-              addLog(`Published '${primaryPrediction.label}' to MQTT topic '${mqttTopic}'`);
+              mqttClientRef.current.publish(mqttTopic, finalPrediction.label);
+              addLog(`Published '${finalPrediction.label}' to MQTT topic '${mqttTopic}'`);
           }
-          setLastClassifications((prev) => [...prev, primaryPrediction!]);
+          setLastClassifications((prev) => [...prev, finalPrediction]);
       } else {
           setPrediction(null);
       }
@@ -599,11 +600,57 @@ export default function SortVisionClient() {
   
   }, [resetInactivityTimer, mqttTopic, isHibernating, addLog, isCameraOn, model]);
 
+  useEffect(() => {
+    const animate = () => {
+      setDetectedObjects(currentObjects => 
+        currentObjects.map(obj => {
+          let [x, y, w, h] = obj.bbox;
+          let { vx, vy, vw, vh } = obj;
+
+          // Update position
+          x += vx;
+          y += vy;
+          
+          // Bounce off walls
+          if (x < 0 || x + w > 1) vx *= -1;
+          if (y < 0 || y + h > 1) vy *= -1;
+
+          // Update size
+          w += vw;
+          h += vh;
+
+          // Clamp size and reverse velocity if limits are hit
+          if (w < 0.2 || w > 0.7) vw *= -1;
+          if (h < 0.2 || h > 0.7) vh *= -1;
+          w = Math.max(0.2, Math.min(0.7, w));
+          h = Math.max(0.2, Math.min(0.7, h));
+
+          return {...obj, bbox: [x, y, w, h], vx, vy, vw, vh};
+        })
+      );
+      animationFrameRef.current = requestAnimationFrame(animate);
+    };
+
+    if (isCameraOn && model && !isHibernating) {
+      animationFrameRef.current = requestAnimationFrame(animate);
+    } else {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    }
+
+    return () => {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+      }
+    };
+  }, [isCameraOn, model, isHibernating]);
+
 
   useEffect(() => {
     if (isCameraOn && model) {
       if (!predictionIntervalRef.current) {
-        predictionIntervalRef.current = setInterval(runClassification, 2000);
+        predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL);
       }
     } else {
       if (predictionIntervalRef.current) {
@@ -638,7 +685,7 @@ export default function SortVisionClient() {
         const classificationsToAnalyze = [...lastClassifications];
         setLastClassifications([]);
 
-        const scores: { [key: string]: number[] } = { Plastic: [], Metal: [], Paper: [] };
+        const scores: { [key: string]: number[] } = {};
          model?.getClassLabels().forEach(label => {
             scores[label] = [];
         });
@@ -681,7 +728,6 @@ export default function SortVisionClient() {
   }, [lastClassifications, toast, addLog, model]);
   
    useEffect(() => {
-    // Initial connection
     if (mqttBrokerUrl) connectToMqtt();
 
     return () => {
@@ -691,7 +737,6 @@ export default function SortVisionClient() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Effect to handle reconnection when settings change
   useEffect(() => {
     if (!mqttBrokerUrl) return;
 
@@ -735,7 +780,7 @@ export default function SortVisionClient() {
         <div className="flex items-center gap-2">
             <AlertTriangle className="h-6 w-6 text-yellow-400" />
             <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
-                Multiple items possible
+                Multiple items detected
             </h3>
         </div>
       ) : prediction && !isHibernating ? (
@@ -917,34 +962,38 @@ export default function SortVisionClient() {
                   Metal: 'bg-yellow-400',
                   Paper: 'bg-green-400',
                 };
+                 const bgColors = {
+                  Plastic: 'bg-blue-400/10',
+                  Metal: 'bg-yellow-400/10',
+                  Paper: 'bg-green-400/10',
+                };
+
                 const borderColor = colors[obj.label as keyof typeof colors] || 'border-gray-400';
-                const bgColor = textColors[obj.label as keyof typeof textColors] || 'bg-gray-400';
+                const textColor = textColors[obj.label as keyof typeof textColors] || 'bg-gray-400';
+                const bgColor = bgColors[obj.label as keyof typeof bgColors] || 'bg-gray-400/10';
+
 
                 return (
                   <div
                     key={obj.id}
                     className={cn(
                       'absolute transition-all duration-300 border-2 rounded-md',
-                      borderColor
+                      borderColor,
+                      bgColor
                     )}
                     style={{
                       left: `${x * 100}%`,
                       top: `${y * 100}%`,
                       width: `${w * 100}%`,
                       height: `${h * 100}%`,
-                      transform: `rotate(${obj.rotation}deg)`,
                       opacity: obj.confidence,
                     }}
                   >
                     <div
                       className={cn(
                         'absolute -top-6 left-0 text-xs font-semibold text-white px-2 py-0.5 rounded-t-md',
-                        bgColor
+                        textColor
                       )}
-                      style={{
-                        transform: `rotate(${-obj.rotation}deg)`,
-                        transformOrigin: 'bottom left',
-                      }}
                     >
                       {obj.label} ({(obj.confidence * 100).toFixed(0)}%)
                     </div>
