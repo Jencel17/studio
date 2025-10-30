@@ -59,7 +59,6 @@ type LogEntry = {
 
 type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "AMBIGUOUS";
 
-const CONFIDENCE_THRESHOLD = 0.8;
 const CLASSIFICATION_INTERVAL = 200;
 const MODEL_SWAP_CHECK_THRESHOLD = 20;
 const INACTIVITY_TIMEOUT = 60000; // 1 minute
@@ -1102,5 +1101,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
