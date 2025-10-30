@@ -18,7 +18,8 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck, handleInterpretDetections } from "@/app/actions/ai";
+import { handleModelSwapCheck } from "@/app/actions/ai";
+import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
@@ -69,6 +70,49 @@ const INACTIVITY_TIMEOUT = 60000; // 1 minute
 const MAX_LOGS = 100;
 const COMMAND_COOLDOWN_MS = 5000;
 const CONFIDENCE_THRESHOLD = 0.8;
+
+// Local implementation of the AI logic to avoid network latency
+const interpretDetectionsLocal = (
+  predictions: Prediction[],
+  confidenceThreshold: number
+): InterpretDetectionsOutput => {
+  const significantPredictions = predictions.filter(
+    (p) => p.probability >= confidenceThreshold
+  );
+
+  if (significantPredictions.length === 0) {
+    return {
+      detectionState: "NO_DETECTION",
+      reason: "No prediction meets the confidence threshold.",
+    };
+  }
+
+  if (significantPredictions.length === 1) {
+    const topPrediction = significantPredictions[0];
+    const secondPrediction = predictions.sort((a,b) => b.probability - a.probability)[1];
+    if (secondPrediction && topPrediction.probability > secondPrediction.probability * 2) {
+      return {
+        detectionState: "SINGLE_OBJECT",
+        primaryObject: topPrediction.className,
+        reason: `Single object detected with high confidence: ${topPrediction.className}.`,
+      };
+    }
+  }
+
+  if (significantPredictions.length > 1) {
+    return {
+      detectionState: "MULTIPLE_OBJECTS",
+      detectedObjects: significantPredictions.map((p) => p.className),
+      reason: "Multiple objects detected above confidence threshold.",
+    };
+  }
+
+  // If one is above, but others are close, it's ambiguous.
+  return {
+    detectionState: "AMBIGUOUS",
+    reason: "Predictions are ambiguous, with no single clear object.",
+  };
+};
 
 export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -296,7 +340,7 @@ export default function SortVisionClient() {
         const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
         addLog(errorMsg);
         setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
-        toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security. See console." });
+        toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security. See console for details." });
         return;
     }
 
@@ -502,19 +546,18 @@ export default function SortVisionClient() {
     const predictions = await model.predict(videoRef.current);
     setCurrentPredictions(predictions);
 
-    const aiResult = await handleInterpretDetections({
-        predictions,
-        confidenceThreshold: CONFIDENCE_THRESHOLD,
-    });
+    const localResult = interpretDetectionsLocal(
+      predictions,
+      CONFIDENCE_THRESHOLD
+    );
 
-    addLog(`AI: ${aiResult.reason}`);
-    setDetectionState(aiResult.detectionState);
+    addLog(`Local AI: ${localResult.reason}`);
+    setDetectionState(localResult.detectionState);
 
     let topPrediction: Prediction | null = null;
     
-    if (aiResult.detectionState === 'SINGLE_OBJECT' && aiResult.primaryObject) {
-      // Find the full prediction object that matches the primary object identified by the AI.
-      const foundPrediction = predictions.find(p => p.className === aiResult.primaryObject);
+    if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
+      const foundPrediction = predictions.find(p => p.className === localResult.primaryObject);
       if (foundPrediction) {
         topPrediction = foundPrediction;
         setPrimaryPrediction(foundPrediction);
