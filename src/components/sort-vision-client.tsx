@@ -77,7 +77,7 @@ export default function SortVisionClient() {
   const [isDragging, setIsDragging] = useState(false);
 
   // MQTT Settings
-  const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8081/mqtt");
+  const [mqttBrokerUrl, setMqttBrokerUrl] = useState("wss://broker.hivemq.com:8884/mqtt");
   const [mqttTopic, setMqttTopic] = useState("trash/classification");
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -712,7 +712,7 @@ export default function SortVisionClient() {
     <>
       <Sidebar>
         <SidebarHeader>
-            <div className="flex items-center justify-between">
+            <div className="flex items-center justify-between p-2">
               <h2 className="text-lg font-semibold">Settings</h2>
               <SidebarClose />
             </div>
@@ -762,7 +762,7 @@ export default function SortVisionClient() {
             <div className="space-y-4 p-4">
               <div className="space-y-2">
                 <Label htmlFor="mqtt-broker">Broker URL</Label>
-                <SidebarInput id="mqtt-broker" value={mqttBrokerUrl} onChange={handleMqttBrokerUrlChange} placeholder="wss://broker.hivemq.com:8081/mqtt" />
+                <SidebarInput id="mqtt-broker" value={mqttBrokerUrl} onChange={handleMqttBrokerUrlChange} placeholder="wss://broker.hivemq.com:8884/mqtt" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="mqtt-topic">Topic</Label>
@@ -932,3 +932,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
