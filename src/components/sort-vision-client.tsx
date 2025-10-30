@@ -499,18 +499,23 @@ export default function SortVisionClient() {
 
   // Effect to handle reconnection when settings change
   useEffect(() => {
-      if (mqttBrokerUrl) {
-          const client = mqttClientRef.current;
-          if (client && client.connected) {
-              const currentUrl = (client.options as any)?.href;
-              if (currentUrl && currentUrl !== mqttBrokerUrl) {
-                  connectToMqtt();
-              }
-          } else if (!client || !client.connecting) {
+    if (mqttBrokerUrl) {
+      if (!mqttClientRef.current) {
+        connectToMqtt();
+      } else {
+        try {
+          const clientUrl = new URL(mqttClientRef.current.options.href || '');
+          const stateUrl = new URL(mqttBrokerUrl);
+          if (clientUrl.host !== stateUrl.host || clientUrl.port !== stateUrl.port) {
               connectToMqtt();
           }
+        } catch (error) {
+           addLog("Invalid URL for MQTT broker. Reconnecting...");
+           connectToMqtt();
+        }
       }
-  }, [mqttBrokerUrl, connectToMqtt]);
+    }
+  }, [mqttBrokerUrl, connectToMqtt, addLog]);
 
 
   const getMqttBadgeVariant = () => {
