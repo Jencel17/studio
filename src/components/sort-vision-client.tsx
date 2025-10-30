@@ -1115,5 +1115,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
