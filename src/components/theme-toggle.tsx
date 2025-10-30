@@ -22,8 +22,8 @@ export function ThemeToggle() {
           <SidebarMenuButton
             onClick={() => setTheme(theme === 'light' ? 'dark' : 'light')}
             className={cn(
-              'w-full justify-center text-muted-foreground hover:text-foreground',
-              'group-data-[collapsible=icon]:h-10 group-data-[collapsible=icon]:w-10'
+              'w-full justify-start text-muted-foreground hover:text-foreground',
+              'group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:h-10 group-data-[collapsible=icon]:w-10'
             )}
             isActive={false}
             tooltip={{
