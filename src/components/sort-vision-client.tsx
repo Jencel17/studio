@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
@@ -20,7 +21,7 @@ import { MetalIcon, PaperIcon, PlasticIcon } from "@/components/icons";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { cn } from "@/lib/utils";
-import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarTitle } from "@/components/ui/sidebar";
+import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarInput, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Switch } from "@/components/ui/switch";
@@ -597,8 +598,9 @@ export default function SortVisionClient() {
   return (
     <>
       <Sidebar>
-        <SidebarHeader>
-          <SidebarTitle>Settings</SidebarTitle>
+        <SidebarHeader className="flex items-center justify-between">
+            <h2 className="text-lg font-semibold">Settings</h2>
+            <SidebarClose />
         </SidebarHeader>
         <SidebarContent className="p-0">
           <SidebarGroup>
