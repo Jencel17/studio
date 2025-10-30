@@ -303,22 +303,29 @@ export default function SortVisionClient() {
             mqttClientRef.current.end(true);
             mqttClientRef.current = null;
         }
+        
+        let urlToConnect = mqttBrokerUrl;
+        if (window.location.protocol === 'https:' && mqttBrokerUrl.startsWith('ws://')) {
+            urlToConnect = mqttBrokerUrl.replace('ws://', 'wss://');
+            addLog(`Insecure URL detected. Upgrading to wss:// for connection.`);
+        }
+
 
         setMqttStatus("Connecting");
-        addLog(`Connecting to MQTT broker at ${mqttBrokerUrl}...`);
+        addLog(`Connecting to MQTT broker at ${urlToConnect}...`);
         try {
             const options: IClientOptions = {
                 clientId: `sortvision_web_${Math.random().toString(16).substr(2, 8)}`,
                 reconnectPeriod: 5000,
                 connectTimeout: 60000,
             };
-            const client = mqtt.connect(mqttBrokerUrl, options);
+            const client = mqtt.connect(urlToConnect, options);
             mqttClientRef.current = client;
 
             client.on("connect", () => {
                 setMqttStatus("Connected");
                 addLog("MQTT Connected.");
-                toast({ title: "MQTT Connected", description: `Connected to ${mqttBrokerUrl}` });
+                toast({ title: "MQTT Connected", description: `Connected to ${urlToConnect}` });
             });
 
             client.on("error", (err) => {
@@ -603,8 +610,8 @@ export default function SortVisionClient() {
   
         setIsMqttOnCooldown(true); // Start cooldown
         cooldownTimerRef.current = setTimeout(() => {
-          addLog("MQTT cooldown finished. Restarting camera to prevent freeze...");
           setIsMqttOnCooldown(false);
+          addLog("MQTT cooldown finished. Restarting camera to prevent freeze...");
           stopCamera();
           // Short delay to ensure camera resources are released before restarting
           setTimeout(() => {
@@ -1108,3 +1115,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
