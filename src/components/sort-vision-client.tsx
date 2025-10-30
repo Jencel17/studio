@@ -33,6 +33,14 @@ type Prediction = {
   confidence: number;
 };
 
+type BoundingBox = [number, number, number, number]; // [x, y, width, height]
+
+type DetectedObject = {
+  label: "Plastic" | "Metal" | "Paper";
+  confidence: number;
+  bbox: BoundingBox;
+};
+
 type MqttStatus = "Connected" | "Disconnected" | "Connecting" | "Error";
 
 type LogEntry = {
@@ -57,7 +65,7 @@ export default function SortVisionClient() {
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
-  const [multipleItemsDetected, setMultipleItemsDetected] = useState(false);
+  const [detectedObjects, setDetectedObjects] = useState<DetectedObject[]>([]);
 
 
   // MQTT Settings
@@ -176,7 +184,7 @@ export default function SortVisionClient() {
     } else if(mqttStatus === "Connected"){
         // If already connected, but URL changed, reconnect.
         const currentUrl = mqttClientRef.current?.options.href;
-        if(currentUrl && currentUrl !== mqttBrokerUrl) {
+        if(currentUrl && mqttBrokerUrl && currentUrl !== mqttBrokerUrl) {
             addLog("Broker URL changed, reconnecting...");
             proceedWithConnection();
         }
@@ -206,7 +214,7 @@ export default function SortVisionClient() {
     inactivityTimerRef.current = setTimeout(() => {
         setIsHibernating(true);
         setPrediction(null);
-        setMultipleItemsDetected(false);
+        setDetectedObjects([]);
         addLog("Inactivity detected, entering hibernation mode.");
     }, INACTIVITY_TIMEOUT);
   }, [isHibernating, addLog]);
@@ -266,7 +274,7 @@ export default function SortVisionClient() {
     setIsCameraOn(false);
     setIsFlashOn(false);
     setPrediction(null);
-    setMultipleItemsDetected(false);
+    setDetectedObjects([]);
     setIsHibernating(false);
     addLog("Camera stopped.");
     if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
@@ -350,49 +358,42 @@ export default function SortVisionClient() {
     const isActivityDetected = Math.random() > 0.5;
 
     if (isActivityDetected) {
-      resetInactivityTimer();
+        resetInactivityTimer();
     }
 
     if (!isHibernating) {
-        const labels: Prediction["label"][] = ["Plastic", "Metal", "Paper"];
-        
-        // Improved detection simulation
+        const labels: DetectedObject["label"][] = ["Plastic", "Metal", "Paper"];
         const scenario = Math.random();
-        let predictions: Prediction[];
+        let newDetectedObjects: DetectedObject[] = [];
 
         if (scenario < 0.6) { // Single item
-            const mainLabel = labels[Math.floor(Math.random() * labels.length)];
-            predictions = labels.map(label => ({
-                label,
-                confidence: label === mainLabel ? Math.random() * 0.2 + 0.8 : Math.random() * 0.4
-            }));
+            newDetectedObjects = [{
+                label: labels[Math.floor(Math.random() * labels.length)],
+                confidence: Math.random() * 0.2 + 0.8,
+                bbox: [Math.random() * 0.4, Math.random() * 0.4, 0.4 + Math.random() * 0.2, 0.4 + Math.random() * 0.2]
+            }];
         } else if (scenario < 0.8) { // Multiple items
-            const firstLabel = labels[Math.floor(Math.random() * labels.length)];
-            let secondLabel: string;
-            do {
-                secondLabel = labels[Math.floor(Math.random() * labels.length)];
-            } while (secondLabel === firstLabel);
-            
-            predictions = labels.map(label => ({
-                label,
-                confidence: (label === firstLabel || label === secondLabel) ? Math.random() * 0.2 + 0.8 : Math.random() * 0.3
-            }));
+            const count = Math.floor(Math.random() * 2) + 2; // 2 or 3 items
+            for (let i = 0; i < count; i++) {
+                newDetectedObjects.push({
+                    label: labels[Math.floor(Math.random() * labels.length)],
+                    confidence: Math.random() * 0.3 + 0.7,
+                    bbox: [Math.random() * 0.7, Math.random() * 0.7, 0.2 + Math.random() * 0.1, 0.2 + Math.random() * 0.1]
+                });
+            }
         } else { // No clear item
-            predictions = labels.map(label => ({
-                label,
-                confidence: Math.random() * 0.7
-            }));
+             newDetectedObjects = [];
         }
+
+        setDetectedObjects(newDetectedObjects);
         
-        const highConfidencePredictions = predictions.filter(p => p.confidence > CONFIDENCE_THRESHOLD);
-        
-        if (highConfidencePredictions.length > 1) {
-            setMultipleItemsDetected(true);
+        const highConfidenceDetections = newDetectedObjects.filter(d => d.confidence > CONFIDENCE_THRESHOLD);
+
+        if (highConfidenceDetections.length > 1) {
             setPrediction(null);
-            addLog(`Multiple items detected: ${highConfidencePredictions.map(p => p.label).join(', ')}. No signal sent.`);
-        } else if (highConfidencePredictions.length === 1) {
-            const highestPrediction = highConfidencePredictions[0];
-            setMultipleItemsDetected(false);
+            addLog(`Multiple items detected: ${highConfidenceDetections.map(p => p.label).join(', ')}. No signal sent.`);
+        } else if (highConfidenceDetections.length === 1) {
+            const highestPrediction = highConfidenceDetections[0];
             setPrediction(highestPrediction);
 
             addLog(`Classified: ${highestPrediction.label} (Confidence: ${(highestPrediction.confidence * 100).toFixed(0)}%)`);
@@ -402,10 +403,10 @@ export default function SortVisionClient() {
             }
             setLastClassifications((prev) => [...prev, highestPrediction]);
         } else {
-             // No item has high enough confidence
-             setMultipleItemsDetected(false);
              setPrediction(null);
         }
+    } else {
+      setDetectedObjects([]);
     }
   }, [resetInactivityTimer, mqttTopic, isHibernating, addLog]);
 
@@ -487,7 +488,7 @@ export default function SortVisionClient() {
   
    useEffect(() => {
     // Initial connection
-    connectToMqtt();
+    if (mqttBrokerUrl) connectToMqtt();
 
     return () => {
       stopCamera();
@@ -498,29 +499,19 @@ export default function SortVisionClient() {
 
   // Effect to handle reconnection when settings change
   useEffect(() => {
-    if (mqttClientRef.current && mqttClientRef.current.options.href) {
-        try {
-            if (mqttBrokerUrl) {
-                const clientUrl = new URL(mqttClientRef.current.options.href);
-                const stateUrl = new URL(mqttBrokerUrl);
-                if (clientUrl.host !== stateUrl.host || clientUrl.port !== stateUrl.port) {
-                    connectToMqtt();
-                }
-            }
-        } catch (error) {
-            console.error("Error parsing URL for MQTT reconnection check:", error);
-            if (mqttBrokerUrl) { // Only attempt reconnect if there's a URL
-                addLog("Invalid URL, attempting to reconnect with current settings.");
-                connectToMqtt();
-            } else {
-                addLog("Invalid or empty broker URL. Cannot connect.");
-            }
-        }
-    } else if (mqttBrokerUrl && mqttStatus !== 'Connecting' && mqttStatus !== 'Connected') {
-      // If we don't have a client but we have a URL, try to connect
-      connectToMqtt();
-    }
-  }, [mqttBrokerUrl, connectToMqtt, mqttStatus]);
+      if (mqttBrokerUrl) {
+          const client = mqttClientRef.current;
+          if (client && client.connected) {
+              const currentUrl = (client.options as any)?.href;
+              if (currentUrl && currentUrl !== mqttBrokerUrl) {
+                  connectToMqtt();
+              }
+          } else if (!client || !client.connecting) {
+              connectToMqtt();
+          }
+      }
+  }, [mqttBrokerUrl, connectToMqtt]);
+
 
   const getMqttBadgeVariant = () => {
     switch (mqttStatus) {
@@ -533,7 +524,7 @@ export default function SortVisionClient() {
 
   const PredictionDisplay = () => (
     <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
-      {multipleItemsDetected && !isHibernating ? (
+      {detectedObjects.length > 1 && !isHibernating ? (
         <div className="flex items-center gap-2">
             <AlertTriangle className="h-6 w-6 text-yellow-400" />
             <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
@@ -564,7 +555,7 @@ export default function SortVisionClient() {
   );
 
   const ItemIcon = ({ label, confidence }: Prediction) => {
-    const isActive = confidence > CONFIDENCE_THRESHOLD && !isHibernating && !multipleItemsDetected;
+    const isActive = confidence > CONFIDENCE_THRESHOLD && !isHibernating && detectedObjects.length <= 1;
     const activeClass = "text-primary drop-shadow-[0_0_10px_hsl(var(--primary))]";
     const baseClass = "h-12 w-12 text-muted-foreground transition-all duration-300";
     
@@ -666,6 +657,43 @@ export default function SortVisionClient() {
                   </div>
               )}
               <PredictionDisplay />
+              {isCameraOn && !isHibernating && detectedObjects.map((obj, index) => {
+                const [x, y, w, h] = obj.bbox;
+                const colors = {
+                  Plastic: 'border-blue-400',
+                  Metal: 'border-yellow-400',
+                  Paper: 'border-green-400',
+                };
+                const textColors = {
+                  Plastic: 'bg-blue-400',
+                  Metal: 'bg-yellow-400',
+                  Paper: 'bg-green-400',
+                };
+                return (
+                  <div
+                    key={index}
+                    className={cn(
+                      'absolute transition-all duration-300 border-2',
+                      colors[obj.label]
+                    )}
+                    style={{
+                      left: `${x * 100}%`,
+                      top: `${y * 100}%`,
+                      width: `${w * 100}%`,
+                      height: `${h * 100}%`,
+                    }}
+                  >
+                    <div
+                      className={cn(
+                        'absolute -top-6 left-0 text-xs font-semibold text-white px-2 py-0.5 rounded-t-md',
+                        textColors[obj.label]
+                      )}
+                    >
+                      {obj.label} ({(obj.confidence * 100).toFixed(0)}%)
+                    </div>
+                  </div>
+                );
+              })}
               </div>
               <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full">
                 <ItemIcon {...(prediction || {label: 'Plastic', confidence: 0})} />
@@ -722,5 +750,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
