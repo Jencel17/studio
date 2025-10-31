@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube } from "lucide-react";
+import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Eraser } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -53,6 +53,7 @@ type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "A
 const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
 const MAX_LOGS = 100;
+const BACKGROUND_STORAGE_KEY = "sortvision-background";
 
 
 // Local implementation of the AI logic to avoid network latency
@@ -120,6 +121,7 @@ export default function SortVisionClient() {
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
   const [isTestMode, setIsTestMode] = useState(false);
+  const [backgroundClassName, setBackgroundClassName] = useState<string | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -136,6 +138,29 @@ export default function SortVisionClient() {
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
+
+  useEffect(() => {
+    const savedBackground = localStorage.getItem(BACKGROUND_STORAGE_KEY);
+    if (savedBackground) {
+      setBackgroundClassName(savedBackground);
+      addLog(`Loaded saved background: ${savedBackground}`);
+    }
+  }, [addLog]);
+
+  const handleSetBackground = () => {
+    if (currentPredictions.length > 0) {
+      const topPrediction = [...currentPredictions].sort((a, b) => b.probability - a.probability)[0];
+      if (topPrediction) {
+        setBackgroundClassName(topPrediction.className);
+        localStorage.setItem(BACKGROUND_STORAGE_KEY, topPrediction.className);
+        addLog(`Manual background set to: ${topPrediction.className}`);
+        toast({
+          title: "Background Set",
+          description: `"${topPrediction.className}" will now be ignored.`,
+        });
+      }
+    }
+  };
 
   const releaseWakeLock = useCallback(async () => {
     if (wakeLockRef.current) {
@@ -240,6 +265,25 @@ export default function SortVisionClient() {
         if(wakeLockEnabled) {
           requestWakeLock();
         }
+        // Auto-set background after 1 second if not already set
+        if (!backgroundClassName) {
+          setTimeout(async () => {
+            if (videoRef.current?.srcObject && model) {
+              const predictions = await model.predict(videoRef.current);
+              const topPrediction = predictions.sort((a,b) => b.probability - a.probability)[0];
+              if (topPrediction && topPrediction.probability > 0.5) { // A small threshold
+                setBackgroundClassName(topPrediction.className);
+                localStorage.setItem(BACKGROUND_STORAGE_KEY, topPrediction.className);
+                addLog(`Auto-background set to: ${topPrediction.className}`);
+                toast({
+                  title: "Auto-Background Set",
+                  description: `"${topPrediction.className}" is now ignored. You can change this in settings.`,
+                });
+              }
+            }
+          }, 1000);
+        }
+
       } catch (error: any) {
         console.error("Error accessing camera:", error);
         addLog(`Camera Error: ${error.message}`);
@@ -251,7 +295,7 @@ export default function SortVisionClient() {
         stopCamera();
       }
     }
-  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model]);
+  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model, backgroundClassName]);
 
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
@@ -318,8 +362,12 @@ export default function SortVisionClient() {
     if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
       const foundPrediction = predictions.find(p => p.className === localResult.primaryObject);
       if (foundPrediction) {
-        topPrediction = foundPrediction;
-        setPrimaryPrediction(foundPrediction);
+        if(foundPrediction.className === backgroundClassName) {
+            setPrimaryPrediction(null);
+        } else {
+            topPrediction = foundPrediction;
+            setPrimaryPrediction(foundPrediction);
+        }
       } else {
         setPrimaryPrediction(null);
       }
@@ -355,7 +403,7 @@ export default function SortVisionClient() {
     if (animationFrameRef.current) {
       animationFrameRef.current = requestAnimationFrame(runClassification);
     }
-  }, [isCameraOn, model, isHibernating, sendSortCommand, addLog, stopCamera, startCamera]);
+  }, [isCameraOn, model, isHibernating, sendSortCommand, addLog, stopCamera, startCamera, backgroundClassName]);
 
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
@@ -932,6 +980,9 @@ export default function SortVisionClient() {
               </Button>
                <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn}>
                 {isFlashOn ? <FlashlightOff /> : <Flashlight />}
+              </Button>
+              <Button onClick={handleSetBackground} variant="outline" size="icon" disabled={!isCameraOn || currentPredictions.length === 0}>
+                <Eraser />
               </Button>
               <div className="flex flex-col gap-2 w-full sm:w-auto">
                   <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="w-full">
