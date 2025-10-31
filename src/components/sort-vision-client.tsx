@@ -106,7 +106,6 @@ export default function SortVisionClient() {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
-  const [isHibernating, setIsHibernating] = useState(false);
   const [isWakeLockActive, setIsWakeLockActive] = useState(false);
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -130,7 +129,7 @@ export default function SortVisionClient() {
   const streamRef = useRef<MediaStream | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const animationFrameRef = useRef<number>();
+  const predictionIntervalRef = useRef<NodeJS.Timeout>();
 
   const { toast } = useToast();
   
@@ -207,9 +206,9 @@ export default function SortVisionClient() {
     if (videoRef.current) {
       videoRef.current.srcObject = null;
     }
-    if (animationFrameRef.current) {
-      cancelAnimationFrame(animationFrameRef.current);
-      animationFrameRef.current = undefined;
+    if (predictionIntervalRef.current) {
+      clearInterval(predictionIntervalRef.current);
+      predictionIntervalRef.current = undefined;
     }
     streamRef.current = null;
     setIsCameraOn(false);
@@ -314,6 +313,7 @@ export default function SortVisionClient() {
         const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
         addLog(errorMsg, "error");
         setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
+        toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security (mixed content)." });
         return;
     }
 
@@ -343,11 +343,7 @@ export default function SortVisionClient() {
   }, [addLog, toast, esp32Ip, isTestMode]);
 
   const runClassification = useCallback(async () => {
-    if (!isCameraOn || !videoRef.current?.srcObject || !model || isHibernating) {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = undefined;
-      }
+    if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
       return;
     }
 
@@ -382,9 +378,9 @@ export default function SortVisionClient() {
     if (topPrediction) { 
       setAppStatus("READY_TO_SEND");
       
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = undefined;
+      if (predictionIntervalRef.current) {
+        clearInterval(predictionIntervalRef.current);
+        predictionIntervalRef.current = undefined;
         addLog("Classification loop paused for command.", "info");
       }
       
@@ -404,10 +400,7 @@ export default function SortVisionClient() {
         setAppStatus("AWAITING_OBJECT");
     }
 
-    if (animationFrameRef.current) {
-      animationFrameRef.current = requestAnimationFrame(runClassification);
-    }
-  }, [isCameraOn, model, isHibernating, sendSortCommand, addLog, stopCamera, startCamera, backgroundClassName]);
+  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera, backgroundClassName]);
 
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
@@ -610,19 +603,19 @@ export default function SortVisionClient() {
   };
 
   useEffect(() => {
-    if (isCameraOn && model && !animationFrameRef.current) {
+    if (isCameraOn && model && !predictionIntervalRef.current) {
         addLog("Starting classification loop.", "info");
-        animationFrameRef.current = requestAnimationFrame(runClassification);
-    } else if ((!isCameraOn || !model) && animationFrameRef.current) {
+        predictionIntervalRef.current = setInterval(runClassification, 100);
+    } else if ((!isCameraOn || !model) && predictionIntervalRef.current) {
         addLog("Stopping classification loop.", "info");
-        cancelAnimationFrame(animationFrameRef.current);
-        animationFrameRef.current = undefined;
+        clearInterval(predictionIntervalRef.current);
+        predictionIntervalRef.current = undefined;
     }
 
     return () => {
-        if (animationFrameRef.current) {
-            cancelAnimationFrame(animationFrameRef.current);
-            animationFrameRef.current = undefined;
+        if (predictionIntervalRef.current) {
+            clearInterval(predictionIntervalRef.current);
+            predictionIntervalRef.current = undefined;
             addLog("Cleaned up classification loop.", "info");
         }
     };
@@ -752,9 +745,6 @@ export default function SortVisionClient() {
     const renderContent = () => {
         if (!isCameraOn) {
             return <p className="text-lg text-white/90 shadow-md">Camera is off</p>;
-        }
-        if (isHibernating) {
-            return <p className="text-lg text-white/90 shadow-md">Hibernating...</p>;
         }
         if (isModelLoading) {
             return <p className="text-lg text-white/90 shadow-md">Loading model...</p>;
@@ -1044,5 +1034,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
