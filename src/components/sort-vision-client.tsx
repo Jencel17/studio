@@ -144,7 +144,7 @@ export default function SortVisionClient() {
         message,
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
-  }, [addLog, toast]);
+  }, []);
 
   const loadAiLibraries = useCallback(async () => {
     if (tmImageRef.current && tfRef.current) {
@@ -1048,5 +1048,6 @@ export default function SortVisionClient() {
     </>
   );
 }
+
 
     
