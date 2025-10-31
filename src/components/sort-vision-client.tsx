@@ -36,9 +36,12 @@ type Prediction = {
   probability: number;
 };
 
+type LogLevel = "info" | "warning" | "error" | "success";
+
 type LogEntry = {
   timestamp: string;
   message: string;
+  level: LogLevel;
 };
 
 type AppStatus = "AWAITING_MODEL" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING";
@@ -131,10 +134,11 @@ export default function SortVisionClient() {
 
   const { toast } = useToast();
   
-  const addLog = useCallback((message: string) => {
+  const addLog = useCallback((message: string, level: LogLevel = "info") => {
     const newLog: LogEntry = {
         timestamp: new Date().toLocaleTimeString(),
         message,
+        level,
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
@@ -143,7 +147,7 @@ export default function SortVisionClient() {
     const savedBackground = localStorage.getItem(BACKGROUND_STORAGE_KEY);
     if (savedBackground) {
       setBackgroundClassName(savedBackground);
-      addLog(`Loaded saved background: ${savedBackground}`);
+      addLog(`Loaded saved background: ${savedBackground}`, "info");
     }
   }, [addLog]);
 
@@ -153,7 +157,7 @@ export default function SortVisionClient() {
       if (topPrediction) {
         setBackgroundClassName(topPrediction.className);
         localStorage.setItem(BACKGROUND_STORAGE_KEY, topPrediction.className);
-        addLog(`Manual background set to: ${topPrediction.className}`);
+        addLog(`Manual background set to: ${topPrediction.className}`, "success");
         toast({
           title: "Background Set",
           description: `"${topPrediction.className}" will now be ignored.`,
@@ -168,10 +172,10 @@ export default function SortVisionClient() {
         await wakeLockRef.current.release();
         wakeLockRef.current = null;
         setIsWakeLockActive(false);
-        addLog("Screen wake lock released.");
+        addLog("Screen wake lock released.", "info");
       } catch (error: any) {
         console.error("Could not release wake lock:", error);
-        addLog(`Error releasing wake lock: ${error.message}`);
+        addLog(`Error releasing wake lock: ${error.message}`, "error");
       }
     }
   }, [addLog]);
@@ -181,22 +185,22 @@ export default function SortVisionClient() {
       try {
         wakeLockRef.current = await navigator.wakeLock.request('screen');
         setIsWakeLockActive(true);
-        addLog("Screen wake lock acquired.");
+        addLog("Screen wake lock acquired.", "success");
         wakeLockRef.current.addEventListener('release', () => {
           wakeLockRef.current = null;
           setIsWakeLockActive(false);
-          addLog("Wake Lock was released by the system.");
+          addLog("Wake Lock was released by the system.", "warning");
         });
       } catch (err: any) {
         console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
-        addLog(`Wake Lock Error: ${err.message}`);
+        addLog(`Wake Lock Error: ${err.message}`, "error");
         setIsWakeLockActive(false);
       }
     }
   }, [wakeLockEnabled, addLog]);
 
   const stopCamera = useCallback(() => {
-    addLog("Stopping camera and classification loop.");
+    addLog("Stopping camera and classification loop.", "info");
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
     }
@@ -214,7 +218,7 @@ export default function SortVisionClient() {
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
     setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
-    addLog("Camera stopped.");
+    addLog("Camera stopped.", "info");
     releaseWakeLock();
   }, [releaseWakeLock, addLog, model]);
 
@@ -223,7 +227,7 @@ export default function SortVisionClient() {
       const useFlash = flashEnabled ?? isFlashOn;
 
       try {
-        addLog("Requesting camera access...");
+        addLog("Requesting camera access...", "info");
 
         if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
@@ -255,13 +259,13 @@ export default function SortVisionClient() {
           } else {
               setIsFlashOn(false);
               if (useFlash) {
-                  addLog("Flash/torch not supported on this device.");
+                  addLog("Flash/torch not supported on this device.", "warning");
                   toast({ variant: "destructive", title: "Flash Not Supported", description: "This device does not support camera flash control." });
               }
           }
         }
         
-        addLog(`Camera started ${useFlash ? 'with flash' : 'without flash'}.`);
+        addLog(`Camera started ${useFlash ? 'with flash' : 'without flash'}.`, "success");
         if(wakeLockEnabled) {
           requestWakeLock();
         }
@@ -274,7 +278,7 @@ export default function SortVisionClient() {
               if (topPrediction && topPrediction.probability > 0.5) { // A small threshold
                 setBackgroundClassName(topPrediction.className);
                 localStorage.setItem(BACKGROUND_STORAGE_KEY, topPrediction.className);
-                addLog(`Auto-background set to: ${topPrediction.className}`);
+                addLog(`Auto-background set to: ${topPrediction.className}`, "info");
                 toast({
                   title: "Auto-Background Set",
                   description: `"${topPrediction.className}" is now ignored. You can change this in settings.`,
@@ -286,7 +290,7 @@ export default function SortVisionClient() {
 
       } catch (error: any) {
         console.error("Error accessing camera:", error);
-        addLog(`Camera Error: ${error.message}`);
+        addLog(`Camera Error: ${error.message}`, "error");
         toast({
           variant: "destructive",
           title: "Camera Error",
@@ -300,7 +304,7 @@ export default function SortVisionClient() {
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
     if (isTestMode) {
-      addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
+      addLog(`TEST MODE: Simulating command for ${classificationLabel}`, "info");
       setCommandStatus({ status: "SUCCESS", message: `Success (Test): Sorted ${classificationLabel}` });
       toast({ title: "Command Sent (Test Mode)", description: `Sorted: ${classificationLabel}` });
       return;
@@ -308,32 +312,32 @@ export default function SortVisionClient() {
 
     if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
         const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
-        addLog(errorMsg);
+        addLog(errorMsg, "error");
         setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
         return;
     }
 
     const url = `${esp32Ip}/sort?class=${classificationLabel.toUpperCase()}`;
-    addLog(`Sending command to ESP32: ${url}`);
+    addLog(`Sending command to ESP32: ${url}`, "info");
     
     try {
       const response = await fetch(url, { method: 'GET' });
       
       if (response.ok) {
         setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
-        addLog(`Successfully sent command for ${classificationLabel}`);
+        addLog(`Successfully sent command for ${classificationLabel}`, "success");
         toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
       } else {
         const errorText = `Error: ESP32 responded with ${response.status}`;
         setCommandStatus({ status: "ERROR", message: errorText });
-        addLog(errorText);
+        addLog(errorText, "error");
         toast({ variant: "destructive", title: "ESP32 Error", description: `Received status ${response.status}` });
       }
     } catch (error: any) {
       console.error("Failed to send command to ESP32:", error);
       const errorMessage = `Error: Cannot reach ESP32. ${error.message}`;
       setCommandStatus({ status: "ERROR", message: errorMessage });
-      addLog(`ERROR: ${errorMessage}`);
+      addLog(`${errorMessage}`, "error");
       toast({ variant: "destructive", title: "ESP32 Error", description: "Could not send command." });
     }
   }, [addLog, toast, esp32Ip, isTestMode]);
@@ -381,16 +385,16 @@ export default function SortVisionClient() {
       if (animationFrameRef.current) {
         cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = undefined;
-        addLog("Classification loop paused for command.");
+        addLog("Classification loop paused for command.", "info");
       }
       
       sendSortCommand(topPrediction.className);
       
       stopCamera();
       setAppStatus("CAMERA_CYCLING");
-      addLog(`Command sent. Restarting camera in ${CAMERA_RESTART_DELAY / 1000} seconds...`);
+      addLog(`Command sent. Restarting camera in ${CAMERA_RESTART_DELAY / 1000} seconds...`, "info");
       setTimeout(() => {
-        addLog("Restarting camera now.");
+        addLog("Restarting camera now.", "info");
         startCamera();
       }, CAMERA_RESTART_DELAY);
 
@@ -408,12 +412,12 @@ export default function SortVisionClient() {
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
     setAppStatus("AWAITING_MODEL");
-    addLog("Loading Teachable Machine model from files...");
+    addLog("Loading Teachable Machine model from files...", "info");
     try {
       await tf.setBackend('cpu');
-      addLog("TensorFlow backend set to 'cpu'.");
+      addLog("TensorFlow backend set to 'cpu'.", "info");
       await tf.ready();
-      addLog("TensorFlow is ready.");
+      addLog("TensorFlow is ready.", "success");
       
       const loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
       
@@ -421,13 +425,13 @@ export default function SortVisionClient() {
       const labels = loadedModel.getClassLabels();
       setModelLabels(labels);
       
-      addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
+      addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`, "success");
       toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
       setAppStatus("AWAITING_OBJECT");
       
     } catch (error: any) {
         console.error("Model loading error:", error);
-        addLog(`Model loading failed: ${error.message}`);
+        addLog(`Model loading failed: ${error.message}`, "error");
         toast({ variant: "destructive", title: "Model Load Error", description: "Could not load the model. Check console for details." });
         setModel(null);
         setModelLabels([]);
@@ -441,17 +445,17 @@ export default function SortVisionClient() {
     event.preventDefault();
     event.stopPropagation();
     setIsDragging(false);
-    addLog("Files dropped.");
+    addLog("Files dropped.", "info");
 
     const files = event.dataTransfer.files;
     if (!files || files.length === 0) {
-      addLog("No files found in drop event.");
+      addLog("No files found in drop event.", "warning");
       return;
     }
 
     if (files.length === 1 && files[0].name.endsWith('.zip')) {
         const file = files[0];
-        addLog(`Zip file detected: ${file.name}. Unpacking...`);
+        addLog(`Zip file detected: ${file.name}. Unpacking...`, "info");
         try {
             const zip = await JSZip.loadAsync(file);
             const modelJsonFile = zip.file("model.json");
@@ -474,7 +478,7 @@ export default function SortVisionClient() {
 
         } catch (error: any) {
             console.error("Zip file processing error:", error);
-            addLog(`Error processing zip file: ${error.message}`);
+            addLog(`Error processing zip file: ${error.message}`, "error");
             toast({ variant: "destructive", title: "Zip File Error", description: "Could not process the zip file. Ensure it's a valid Teachable Machine export." });
         }
     } else {
@@ -485,21 +489,21 @@ export default function SortVisionClient() {
         Array.from(files).forEach(file => {
             if (file.name === 'model.json') {
                 droppedModelFile = file;
-                addLog('model.json found.');
+                addLog('model.json found.', "info");
             } else if (file.name === 'metadata.json') {
                 droppedMetadataFile = file;
-                addLog('metadata.json found.');
+                addLog('metadata.json found.', "info");
             } else if (file.name === 'weights.bin') {
                 droppedWeightsFile = file;
-                addLog('weights.bin found.');
+                addLog('weights.bin found.', "info");
             }
         });
 
         if (droppedModelFile && droppedMetadataFile && droppedWeightsFile) {
-             addLog('All model components found. Loading model.');
+             addLog('All model components found. Loading model.', "info");
              await loadModelFromFiles(droppedModelFile, droppedMetadataFile, droppedWeightsFile);
         } else {
-             addLog("Dropped files are not a valid model. Please drop a .zip file or model.json, metadata.json and weights.bin together.");
+             addLog("Dropped files are not a valid model. Please drop a .zip file or model.json, metadata.json and weights.bin together.", "warning");
              toast({ variant: "destructive", title: "Invalid Files", description: "Please drop a .zip file or all three model component files." });
         }
     }
@@ -523,7 +527,7 @@ export default function SortVisionClient() {
 
     if (files.length === 1 && files[0].name.endsWith('.zip')) {
       const file = files[0];
-      addLog(`Zip file selected: ${file.name}. Unpacking...`);
+      addLog(`Zip file selected: ${file.name}. Unpacking...`, "info");
       try {
         const zip = await JSZip.loadAsync(file);
         const modelJsonFile = zip.file("model.json");
@@ -545,7 +549,7 @@ export default function SortVisionClient() {
         await loadModelFromFiles(modelFile, metadataFile, weightsFile);
       } catch (error: any) {
         console.error("Zip file processing error:", error);
-        addLog(`Error processing zip file: ${error.message}`);
+        addLog(`Error processing zip file: ${error.message}`, "error");
         toast({ variant: "destructive", title: "Zip File Error", description: "Could not process the zip file." });
       }
     } else {
@@ -564,10 +568,10 @@ export default function SortVisionClient() {
        });
 
        if (selectedModelFile && selectedMetadataFile && selectedWeightsFile) {
-         addLog('All model components selected. Loading model.');
+         addLog('All model components selected. Loading model.', "info");
          await loadModelFromFiles(selectedModelFile, selectedMetadataFile, selectedWeightsFile);
        } else {
-         addLog("Invalid file selection. Please select a .zip file, or model.json, metadata.json and weights.bin.");
+         addLog("Invalid file selection. Please select a .zip file, or model.json, metadata.json and weights.bin.", "warning");
          toast({ variant: "destructive", title: "Invalid Files", description: "Select a .zip or all three model component files." });
        }
     }
@@ -576,7 +580,7 @@ export default function SortVisionClient() {
 
 
   useEffect(() => {
-    addLog("App initialized. Please load a model to begin.");
+    addLog("App initialized. Please load a model to begin.", "info");
   }, [addLog]);
   
   const handleWakeLockToggle = (checked: boolean) => {
@@ -607,10 +611,10 @@ export default function SortVisionClient() {
 
   useEffect(() => {
     if (isCameraOn && model && !animationFrameRef.current) {
-        addLog("Starting classification loop.");
+        addLog("Starting classification loop.", "info");
         animationFrameRef.current = requestAnimationFrame(runClassification);
     } else if ((!isCameraOn || !model) && animationFrameRef.current) {
-        addLog("Stopping classification loop.");
+        addLog("Stopping classification loop.", "info");
         cancelAnimationFrame(animationFrameRef.current);
         animationFrameRef.current = undefined;
     }
@@ -619,7 +623,7 @@ export default function SortVisionClient() {
         if (animationFrameRef.current) {
             cancelAnimationFrame(animationFrameRef.current);
             animationFrameRef.current = undefined;
-            addLog("Cleaned up classification loop.");
+            addLog("Cleaned up classification loop.", "info");
         }
     };
   }, [isCameraOn, model, runClassification, addLog]);
@@ -639,7 +643,7 @@ export default function SortVisionClient() {
   useEffect(() => {
     const checkModelPerformance = async () => {
       if (model && lastClassifications.length >= 20) {
-        addLog(`Checking model performance with ${lastClassifications.length} classifications.`);
+        addLog(`Checking model performance with ${lastClassifications.length} classifications.`, "info");
         const classificationsToAnalyze = [...lastClassifications];
         setLastClassifications([]);
 
@@ -663,7 +667,7 @@ export default function SortVisionClient() {
             }
         }
         
-        addLog(`Avg scores: ${JSON.stringify(averageConfidenceScores)}`);
+        addLog(`Avg scores: ${JSON.stringify(averageConfidenceScores)}`, "info");
         try {
           const result = await handleModelSwapCheck({
               averageConfidenceScores,
@@ -671,17 +675,17 @@ export default function SortVisionClient() {
           });
 
           if (result.shouldSuggestSwap) {
-            addLog(`AI Suggestion: ${result.reason}`);
+            addLog(`AI Suggestion: ${result.reason}`, "info");
             toast({
               title: "Model Performance Suggestion",
               description: result.reason,
               duration: 9000,
             });
           } else {
-              addLog(`AI Suggestion: No model swap needed. ${result.reason}`);
+              addLog(`AI Suggestion: No model swap needed. ${result.reason}`, "info");
           }
         } catch (e) {
-          addLog("Could not get model performance suggestion.");
+          addLog("Could not get model performance suggestion.", "warning");
         }
       }
     };
@@ -831,6 +835,35 @@ export default function SortVisionClient() {
                 <p className="text-sm text-muted-foreground text-center">Load a model to see categories.</p>
             )}
         </div>
+    );
+  };
+
+  const LogViewer = () => {
+    const getLevelColor = (level: LogLevel) => {
+        switch (level) {
+            case "error": return "text-red-500";
+            case "warning": return "text-yellow-500";
+            case "success": return "text-green-500";
+            case "info":
+            default:
+                return "text-foreground";
+        }
+    };
+
+    return (
+        <ScrollArea className="flex-1 my-4">
+            <div className="p-4 font-mono text-xs">
+                {logs.map((log, index) => (
+                    <p key={index} className="flex items-start">
+                       <span className="text-muted-foreground/50 w-20 shrink-0">{log.timestamp}</span>
+                       <span className={cn("ml-2", getLevelColor(log.level), 'flex-1')}>
+                            <span className="font-bold uppercase w-16 inline-block">{log.level}</span>
+                            {log.message}
+                        </span>
+                    </p>
+                ))}
+            </div>
+        </ScrollArea>
     );
   };
 
@@ -1002,16 +1035,7 @@ export default function SortVisionClient() {
                 </SheetDescription>
             </SheetHeader>
             <Separator />
-            <ScrollArea className="flex-1 my-4">
-                <div className="p-4 font-mono text-xs">
-                    {logs.map((log, index) => (
-                        <p key={index}>
-                           <span className="text-muted-foreground/50">{log.timestamp}</span>
-                           <span className="ml-2">{log.message}</span>
-                        </p>
-                    ))}
-                </div>
-            </ScrollArea>
+            <LogViewer />
             <SheetFooter>
                 <Button variant="outline" onClick={() => setLogs([])}>Clear Logs</Button>
             </SheetFooter>
@@ -1020,3 +1044,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
