@@ -120,8 +120,10 @@ export default function SortVisionClient() {
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
   const [isTestMode, setIsTestMode] = useState(false);
-  const [backgroundOverride, setBackgroundOverride] = useState<string>("");
   
+  const [backgroundOverride, setBackgroundOverride] = useState<string>("");
+  const [backgroundInput, setBackgroundInput] = useState<string>("");
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -142,22 +144,24 @@ export default function SortVisionClient() {
     const savedBackground = localStorage.getItem(BACKGROUND_STORAGE_KEY);
     if (savedBackground) {
       setBackgroundOverride(savedBackground);
+      setBackgroundInput(savedBackground);
       addLog(`Loaded saved background override: ${savedBackground}`);
     }
   }, [addLog]);
 
-  const handleSetBackgroundOverride = (value: string) => {
-    setBackgroundOverride(value);
-    localStorage.setItem(BACKGROUND_STORAGE_KEY, value);
-    addLog(`Manual background override set to: ${value}`);
+  const handleSaveBackgroundOverride = () => {
+    setBackgroundOverride(backgroundInput);
+    localStorage.setItem(BACKGROUND_STORAGE_KEY, backgroundInput);
+    addLog(`Manual background override saved: ${backgroundInput}`);
     toast({
-      title: "Background Override Set",
-      description: `"${value}" will now be ignored.`,
+      title: "Background Override Saved",
+      description: `"${backgroundInput}" will now be ignored.`,
     });
   };
 
   const handleClearBackgroundOverride = () => {
     setBackgroundOverride("");
+    setBackgroundInput("");
     localStorage.removeItem(BACKGROUND_STORAGE_KEY);
     addLog("Background override cleared.");
     toast({
@@ -170,7 +174,14 @@ export default function SortVisionClient() {
     if (currentPredictions.length > 0) {
       const topPrediction = [...currentPredictions].sort((a, b) => b.probability - a.probability)[0];
       if (topPrediction) {
-        handleSetBackgroundOverride(topPrediction.className);
+        setBackgroundInput(topPrediction.className);
+        setBackgroundOverride(topPrediction.className);
+        localStorage.setItem(BACKGROUND_STORAGE_KEY, topPrediction.className);
+        addLog(`Set current object as background: ${topPrediction.className}`);
+        toast({
+            title: "Background Set",
+            description: `"${topPrediction.className}" will now be ignored.`,
+        });
       }
     }
   };
@@ -932,10 +943,11 @@ export default function SortVisionClient() {
                   <div className="flex gap-2">
                       <Input
                           id="background-override"
-                          value={backgroundOverride}
-                          onChange={(e) => handleSetBackgroundOverride(e.target.value)}
+                          value={backgroundInput}
+                          onChange={(e) => setBackgroundInput(e.target.value)}
                           placeholder="e.g., table, floor"
                       />
+                      <Button onClick={handleSaveBackgroundOverride}>Save</Button>
                       <Button variant="outline" onClick={handleClearBackgroundOverride}>Clear</Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
@@ -1030,3 +1042,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
