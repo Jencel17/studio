@@ -2,8 +2,8 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
-import * as tmImage from "@teachablemachine/image";
-import * as tf from "@tensorflow/tfjs";
+import type * as tmImage from "@teachablemachine/image";
+import type * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
 import {
   Card,
@@ -41,7 +41,7 @@ type LogEntry = {
   message: string;
 };
 
-type AppStatus = "AWAITING_MODEL" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING";
+type AppStatus = "AWAITING_MODEL" | "LOADING_LIBS" | "LIBS_LOADED"| "MODEL_LOADING" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING";
 
 type CommandStatus = {
   status: "IDLE" | "SUCCESS" | "ERROR";
@@ -49,6 +49,11 @@ type CommandStatus = {
 };
 
 type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "AMBIGUOUS";
+
+// Dynamically import AI libraries
+type TeachableMachine = typeof import("@teachablemachine/image");
+type TensorFlow = typeof import("@tensorflow/tfjs");
+
 
 const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
@@ -114,6 +119,10 @@ export default function SortVisionClient() {
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
   const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
+
+  // AI library state
+  const tmImageRef = useRef<TeachableMachine | null>(null);
+  const tfRef = useRef<TensorFlow | null>(null);
   
   // New state for HTTP communication
   const [appStatus, setAppStatus] = useState<AppStatus>("AWAITING_MODEL");
@@ -135,7 +144,37 @@ export default function SortVisionClient() {
         message,
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
-  }, []);
+  }, [addLog, toast]);
+
+  const loadAiLibraries = useCallback(async () => {
+    if (tmImageRef.current && tfRef.current) {
+      addLog("AI libraries already loaded.");
+      return true;
+    }
+    setAppStatus("LOADING_LIBS");
+    addLog("Loading AI libraries (TensorFlow & Teachable Machine)...");
+    try {
+      const [tm, tf] = await Promise.all([
+        import("@teachablemachine/image"),
+        import("@tensorflow/tfjs"),
+      ]);
+      tmImageRef.current = tm;
+      tfRef.current = tf;
+      addLog("AI libraries loaded successfully.");
+      setAppStatus("LIBS_LOADED");
+      return true;
+    } catch (error: any) {
+      console.error("Failed to load AI libraries:", error);
+      addLog(`FATAL: Could not load AI libraries. ${error.message}`);
+      toast({
+        variant: "destructive",
+        title: "Library Load Error",
+        description: "Could not load core AI libraries. Please refresh the page.",
+      });
+      setAppStatus("AWAITING_MODEL");
+      return false;
+    }
+  }, [addLog, toast]);
 
   const releaseWakeLock = useCallback(async () => {
     if (wakeLockRef.current) {
@@ -194,6 +233,8 @@ export default function SortVisionClient() {
   }, [releaseWakeLock, addLog, model]);
 
   const startCamera = useCallback(async (flashEnabled?: boolean) => {
+    if (!(await loadAiLibraries())) return;
+
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       const useFlash = flashEnabled ?? isFlashOn;
 
@@ -252,7 +293,7 @@ export default function SortVisionClient() {
         stopCamera();
       }
     }
-  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model]);
+  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model, loadAiLibraries]);
 
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
@@ -357,9 +398,22 @@ export default function SortVisionClient() {
   }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera]);
 
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
+    if (!(await loadAiLibraries())) return;
+
     setIsModelLoading(true);
-    setAppStatus("AWAITING_MODEL");
+    setAppStatus("MODEL_LOADING");
     addLog("Loading Teachable Machine model from files...");
+    
+    const tmImage = tmImageRef.current;
+    const tf = tfRef.current;
+
+    if (!tmImage || !tf) {
+        addLog("Error: AI libraries not available for model loading.");
+        toast({ variant: "destructive", title: "Load Error", description: "AI Libraries not found." });
+        setIsModelLoading(false);
+        return;
+    }
+
     try {
       addLog("Setting TensorFlow backend to 'cpu'.");
       await tf.setBackend('cpu');
@@ -402,7 +456,7 @@ export default function SortVisionClient() {
         setIsModelLoading(false);
         addLog("Model loading process finished.");
     }
-  }, [addLog, toast]);
+  }, [addLog, toast, loadAiLibraries]);
 
   const handleFileDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -669,6 +723,9 @@ export default function SortVisionClient() {
     const getStatusText = () => {
         switch (appStatus) {
             case "AWAITING_MODEL": return "Awaiting Model";
+            case "LOADING_LIBS": return "Loading AI libs...";
+            case "LIBS_LOADED": return "AI libs loaded";
+            case "MODEL_LOADING": return "Loading Model...";
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
             case "CAMERA_CYCLING": return "CAMERA RESTARTING...";
@@ -682,17 +739,21 @@ export default function SortVisionClient() {
         switch (appStatus) {
             case "READY_TO_SEND": return "default";
             case "AWAITING_MODEL": return "secondary";
+            case "LOADING_LIBS":
+            case "MODEL_LOADING":
             case "CAMERA_CYCLING": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
             default: return "outline";
         }
     };
 
+    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING';
+
     return (
         <div className="flex flex-col gap-2">
             <div className="flex items-center gap-2">
                 <Badge variant={getStatusBadgeVariant()} className="text-xs">
-                    {appStatus === 'CAMERA_CYCLING' && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
+                    {isLoading && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
                     {getStatusText()}
                 </Badge>
                 <Badge variant={isTestMode ? "default" : "outline"} className="gap-2 text-xs">
@@ -716,7 +777,7 @@ export default function SortVisionClient() {
         if (!isCameraOn) {
             return <p className="text-lg text-white/90 shadow-md">Camera is off</p>;
         }
-        if (isModelLoading) {
+        if (appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING') {
             return <p className="text-lg text-white/90 shadow-md">Loading model...</p>;
         }
         if (!model) {
@@ -987,3 +1048,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
