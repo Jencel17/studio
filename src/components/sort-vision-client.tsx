@@ -940,15 +940,15 @@ export default function SortVisionClient() {
               <SidebarGroupLabel>Background Override</SidebarGroupLabel>
               <div className="space-y-2 p-4">
                   <Label htmlFor="background-override">Class to Ignore</Label>
+                  <Input
+                      id="background-override"
+                      value={backgroundInput}
+                      onChange={(e) => setBackgroundInput(e.target.value)}
+                      placeholder="e.g., table, floor"
+                  />
                   <div className="flex gap-2">
-                      <Input
-                          id="background-override"
-                          value={backgroundInput}
-                          onChange={(e) => setBackgroundInput(e.target.value)}
-                          placeholder="e.g., table, floor"
-                      />
-                      <Button onClick={handleSaveBackgroundOverride}>Save</Button>
-                      <Button variant="outline" onClick={handleClearBackgroundOverride}>Clear</Button>
+                      <Button onClick={handleSaveBackgroundOverride} className="w-full">Save</Button>
+                      <Button variant="outline" onClick={handleClearBackgroundOverride} className="w-full">Clear</Button>
                   </div>
                   <p className="text-xs text-muted-foreground">
                       Manually set a class name to be ignored by the detector.
@@ -1042,5 +1042,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
