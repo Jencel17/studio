@@ -370,24 +370,26 @@ export default function SortVisionClient() {
       const loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
       addLog("Model files loaded into memory.");
       
-      setModel(loadedModel);
       const labels = loadedModel.getClassLabels();
-      setModelLabels(labels);
       
-      addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
-
       if (!labels.some(label => label.toLowerCase() === 'background')) {
-        addLog("Warning: Model does not contain a 'background' category.");
+        addLog("Error: Model does not contain a 'background' category. Model rejected.");
         toast({
           variant: "destructive",
-          title: "Missing 'background' category",
-          description: "For optimal performance, please include a 'background' class in your Teachable Machine model.",
+          title: "Invalid Model: Missing 'background' category",
+          description: "The loaded model must include a class named 'background' to work correctly. Please train and export a new model.",
           duration: 9000,
         });
+        setModel(null);
+        setModelLabels([]);
+        setAppStatus("AWAITING_MODEL");
+      } else {
+        setModel(loadedModel);
+        setModelLabels(labels);
+        addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
+        toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
+        setAppStatus("AWAITING_OBJECT");
       }
-
-      toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
-      setAppStatus("AWAITING_OBJECT");
       
     } catch (error: any) {
         console.error("Model loading error:", error);
