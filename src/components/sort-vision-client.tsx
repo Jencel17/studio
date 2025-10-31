@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube } from "lucide-react";
+import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Eraser } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -53,6 +53,7 @@ type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "A
 const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
 const MAX_LOGS = 100;
+const PREDICTION_INTERVAL = 100;
 
 
 // Local implementation of the AI logic to avoid network latency
@@ -170,7 +171,7 @@ export default function SortVisionClient() {
   }, [wakeLockEnabled, addLog]);
 
   const stopCamera = useCallback(() => {
-    addLog("Stopping camera and classification loop.");
+    addLog("Stopping camera.");
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
     }
@@ -180,6 +181,7 @@ export default function SortVisionClient() {
     if (predictionIntervalRef.current) {
       clearInterval(predictionIntervalRef.current);
       predictionIntervalRef.current = undefined;
+      addLog("Classification loop stopped.");
     }
     streamRef.current = null;
     setIsCameraOn(false);
@@ -188,7 +190,6 @@ export default function SortVisionClient() {
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
     setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
-    addLog("Camera stopped.");
     releaseWakeLock();
   }, [releaseWakeLock, addLog, model]);
 
@@ -360,18 +361,31 @@ export default function SortVisionClient() {
     setAppStatus("AWAITING_MODEL");
     addLog("Loading Teachable Machine model from files...");
     try {
+      addLog("Setting TensorFlow backend to 'cpu'.");
       await tf.setBackend('cpu');
-      addLog("TensorFlow backend set to 'cpu'.");
       await tf.ready();
       addLog("TensorFlow is ready.");
       
+      addLog("Starting model load from files.");
       const loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
+      addLog("Model files loaded into memory.");
       
       setModel(loadedModel);
       const labels = loadedModel.getClassLabels();
       setModelLabels(labels);
       
       addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
+
+      if (!labels.some(label => label.toLowerCase() === 'background')) {
+        addLog("Warning: Model does not contain a 'background' category.");
+        toast({
+          variant: "destructive",
+          title: "Missing 'background' category",
+          description: "For optimal performance, please include a 'background' class in your Teachable Machine model.",
+          duration: 9000,
+        });
+      }
+
       toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
       setAppStatus("AWAITING_OBJECT");
       
@@ -384,6 +398,7 @@ export default function SortVisionClient() {
         setAppStatus("AWAITING_MODEL");
     } finally {
         setIsModelLoading(false);
+        addLog("Model loading process finished.");
     }
   }, [addLog, toast]);
 
@@ -558,7 +573,7 @@ export default function SortVisionClient() {
   useEffect(() => {
     if (isCameraOn && model && !predictionIntervalRef.current) {
         addLog("Starting classification loop.");
-        predictionIntervalRef.current = setInterval(runClassification, 100);
+        predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
     } else if ((!isCameraOn || !model) && predictionIntervalRef.current) {
         addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
