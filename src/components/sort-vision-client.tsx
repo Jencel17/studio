@@ -36,12 +36,9 @@ type Prediction = {
   probability: number;
 };
 
-type LogLevel = "info" | "warning" | "error" | "success";
-
 type LogEntry = {
   timestamp: string;
   message: string;
-  level: LogLevel;
 };
 
 type AppStatus = "AWAITING_MODEL" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING";
@@ -56,7 +53,7 @@ type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "A
 const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
 const MAX_LOGS = 100;
-const BACKGROUND_STORAGE_KEY = "sortvision-background";
+const BACKGROUND_STORAGE_KEY = "sortvision-background-override";
 
 
 // Local implementation of the AI logic to avoid network latency
@@ -123,7 +120,7 @@ export default function SortVisionClient() {
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
   const [isTestMode, setIsTestMode] = useState(false);
-  const [backgroundClassName, setBackgroundClassName] = useState<string | null>(null);
+  const [backgroundOverride, setBackgroundOverride] = useState<string>("");
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -133,11 +130,10 @@ export default function SortVisionClient() {
 
   const { toast } = useToast();
   
-  const addLog = useCallback((message: string, level: LogLevel = "info") => {
+  const addLog = useCallback((message: string) => {
     const newLog: LogEntry = {
         timestamp: new Date().toLocaleTimeString(),
         message,
-        level,
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
@@ -145,22 +141,36 @@ export default function SortVisionClient() {
   useEffect(() => {
     const savedBackground = localStorage.getItem(BACKGROUND_STORAGE_KEY);
     if (savedBackground) {
-      setBackgroundClassName(savedBackground);
-      addLog(`Loaded saved background: ${savedBackground}`, "info");
+      setBackgroundOverride(savedBackground);
+      addLog(`Loaded saved background override: ${savedBackground}`);
     }
   }, [addLog]);
 
-  const handleSetBackground = () => {
+  const handleSetBackgroundOverride = (value: string) => {
+    setBackgroundOverride(value);
+    localStorage.setItem(BACKGROUND_STORAGE_KEY, value);
+    addLog(`Manual background override set to: ${value}`);
+    toast({
+      title: "Background Override Set",
+      description: `"${value}" will now be ignored.`,
+    });
+  };
+
+  const handleClearBackgroundOverride = () => {
+    setBackgroundOverride("");
+    localStorage.removeItem(BACKGROUND_STORAGE_KEY);
+    addLog("Background override cleared.");
+    toast({
+      title: "Background Override Cleared",
+      description: "The background override has been removed.",
+    });
+  }
+
+  const handleSetCurrentAsBackground = () => {
     if (currentPredictions.length > 0) {
       const topPrediction = [...currentPredictions].sort((a, b) => b.probability - a.probability)[0];
       if (topPrediction) {
-        setBackgroundClassName(topPrediction.className);
-        localStorage.setItem(BACKGROUND_STORAGE_KEY, topPrediction.className);
-        addLog(`Manual background set to: ${topPrediction.className}`, "success");
-        toast({
-          title: "Background Set",
-          description: `"${topPrediction.className}" will now be ignored.`,
-        });
+        handleSetBackgroundOverride(topPrediction.className);
       }
     }
   };
@@ -171,10 +181,10 @@ export default function SortVisionClient() {
         await wakeLockRef.current.release();
         wakeLockRef.current = null;
         setIsWakeLockActive(false);
-        addLog("Screen wake lock released.", "info");
+        addLog("Screen wake lock released.");
       } catch (error: any) {
         console.error("Could not release wake lock:", error);
-        addLog(`Error releasing wake lock: ${error.message}`, "error");
+        addLog(`Error releasing wake lock: ${error.message}`);
       }
     }
   }, [addLog]);
@@ -184,22 +194,22 @@ export default function SortVisionClient() {
       try {
         wakeLockRef.current = await navigator.wakeLock.request('screen');
         setIsWakeLockActive(true);
-        addLog("Screen wake lock acquired.", "success");
+        addLog("Screen wake lock acquired.");
         wakeLockRef.current.addEventListener('release', () => {
           wakeLockRef.current = null;
           setIsWakeLockActive(false);
-          addLog("Wake Lock was released by the system.", "warning");
+          addLog("Wake Lock was released by the system.");
         });
       } catch (err: any) {
         console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
-        addLog(`Wake Lock Error: ${err.message}`, "error");
+        addLog(`Wake Lock Error: ${err.message}`);
         setIsWakeLockActive(false);
       }
     }
   }, [wakeLockEnabled, addLog]);
 
   const stopCamera = useCallback(() => {
-    addLog("Stopping camera and classification loop.", "info");
+    addLog("Stopping camera and classification loop.");
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
     }
@@ -217,7 +227,7 @@ export default function SortVisionClient() {
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
     setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
-    addLog("Camera stopped.", "info");
+    addLog("Camera stopped.");
     releaseWakeLock();
   }, [releaseWakeLock, addLog, model]);
 
@@ -226,7 +236,7 @@ export default function SortVisionClient() {
       const useFlash = flashEnabled ?? isFlashOn;
 
       try {
-        addLog("Requesting camera access...", "info");
+        addLog("Requesting camera access...");
 
         if (streamRef.current) {
             streamRef.current.getTracks().forEach(track => track.stop());
@@ -258,38 +268,20 @@ export default function SortVisionClient() {
           } else {
               setIsFlashOn(false);
               if (useFlash) {
-                  addLog("Flash/torch not supported on this device.", "warning");
+                  addLog("Flash/torch not supported on this device.");
                   toast({ variant: "destructive", title: "Flash Not Supported", description: "This device does not support camera flash control." });
               }
           }
         }
         
-        addLog(`Camera started ${useFlash ? 'with flash' : 'without flash'}.`, "success");
+        addLog(`Camera started ${useFlash ? 'with flash' : 'without flash'}.`);
         if(wakeLockEnabled) {
           requestWakeLock();
-        }
-        // Auto-set background after 1 second if not already set
-        if (!backgroundClassName) {
-          setTimeout(async () => {
-            if (videoRef.current?.srcObject && model) {
-              const predictions = await model.predict(videoRef.current);
-              const topPrediction = predictions.sort((a,b) => b.probability - a.probability)[0];
-              if (topPrediction && topPrediction.probability > 0.5) { // A small threshold
-                setBackgroundClassName(topPrediction.className);
-                localStorage.setItem(BACKGROUND_STORAGE_KEY, topPrediction.className);
-                addLog(`Auto-background set to: ${topPrediction.className}`, "info");
-                toast({
-                  title: "Auto-Background Set",
-                  description: `"${topPrediction.className}" is now ignored. You can change this in settings.`,
-                });
-              }
-            }
-          }, 1000);
         }
 
       } catch (error: any) {
         console.error("Error accessing camera:", error);
-        addLog(`Camera Error: ${error.message}`, "error");
+        addLog(`Camera Error: ${error.message}`);
         toast({
           variant: "destructive",
           title: "Camera Error",
@@ -298,12 +290,12 @@ export default function SortVisionClient() {
         stopCamera();
       }
     }
-  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model, backgroundClassName]);
+  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model]);
 
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
     if (isTestMode) {
-      addLog(`TEST MODE: Simulating command for ${classificationLabel}`, "info");
+      addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
       setCommandStatus({ status: "SUCCESS", message: `Success (Test): Sorted ${classificationLabel}` });
       toast({ title: "Command Sent (Test Mode)", description: `Sorted: ${classificationLabel}` });
       return;
@@ -311,33 +303,33 @@ export default function SortVisionClient() {
 
     if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
         const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
-        addLog(errorMsg, "error");
+        addLog(errorMsg);
         setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
         toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security (mixed content)." });
         return;
     }
 
     const url = `${esp32Ip}/sort?class=${classificationLabel.toUpperCase()}`;
-    addLog(`Sending command to ESP32: ${url}`, "info");
+    addLog(`Sending command to ESP32: ${url}`);
     
     try {
       const response = await fetch(url, { method: 'GET' });
       
       if (response.ok) {
         setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
-        addLog(`Successfully sent command for ${classificationLabel}`, "success");
+        addLog(`Successfully sent command for ${classificationLabel}`);
         toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
       } else {
         const errorText = `Error: ESP32 responded with ${response.status}`;
         setCommandStatus({ status: "ERROR", message: errorText });
-        addLog(errorText, "error");
+        addLog(errorText);
         toast({ variant: "destructive", title: "ESP32 Error", description: `Received status ${response.status}` });
       }
     } catch (error: any) {
       console.error("Failed to send command to ESP32:", error);
       const errorMessage = `Error: Cannot reach ESP32. ${error.message}`;
       setCommandStatus({ status: "ERROR", message: errorMessage });
-      addLog(`${errorMessage}`, "error");
+      addLog(`${errorMessage}`);
       toast({ variant: "destructive", title: "ESP32 Error", description: "Could not send command." });
     }
   }, [addLog, toast, esp32Ip, isTestMode]);
@@ -350,8 +342,12 @@ export default function SortVisionClient() {
     const predictions = await model.predict(videoRef.current);
     setCurrentPredictions(predictions);
 
+    const filteredPredictions = backgroundOverride
+      ? predictions.filter(p => p.className.toLowerCase() !== backgroundOverride.toLowerCase())
+      : predictions;
+
     const localResult = interpretDetectionsLocal(
-      predictions,
+      filteredPredictions,
       CONFIDENCE_THRESHOLD
     );
 
@@ -360,14 +356,10 @@ export default function SortVisionClient() {
     let topPrediction: Prediction | null = null;
     
     if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
-      const foundPrediction = predictions.find(p => p.className === localResult.primaryObject);
+      const foundPrediction = filteredPredictions.find(p => p.className === localResult.primaryObject);
       if (foundPrediction) {
-        if(foundPrediction.className === backgroundClassName) {
-            setPrimaryPrediction(null);
-        } else {
-            topPrediction = foundPrediction;
-            setPrimaryPrediction(foundPrediction);
-        }
+          topPrediction = foundPrediction;
+          setPrimaryPrediction(foundPrediction);
       } else {
         setPrimaryPrediction(null);
       }
@@ -381,36 +373,36 @@ export default function SortVisionClient() {
       if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
-        addLog("Classification loop paused for command.", "info");
+        addLog("Classification loop paused for command.");
       }
       
       sendSortCommand(topPrediction.className);
       
       stopCamera();
       setAppStatus("CAMERA_CYCLING");
-      addLog(`Command sent. Restarting camera in ${CAMERA_RESTART_DELAY / 1000} seconds...`, "info");
+      addLog(`Command sent. Restarting camera in ${CAMERA_RESTART_DELAY / 1000} seconds...`);
       setTimeout(() => {
-        addLog("Restarting camera now.", "info");
+        addLog("Restarting camera now.");
         startCamera();
       }, CAMERA_RESTART_DELAY);
 
-    } else if (predictions.some(p => p.probability > 0.5)) {
+    } else if (filteredPredictions.some(p => p.probability > 0.5)) {
         setAppStatus("CONFIDENCE_TOO_LOW");
     } else {
         setAppStatus("AWAITING_OBJECT");
     }
 
-  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera, backgroundClassName]);
+  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera, backgroundOverride]);
 
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
     setAppStatus("AWAITING_MODEL");
-    addLog("Loading Teachable Machine model from files...", "info");
+    addLog("Loading Teachable Machine model from files...");
     try {
       await tf.setBackend('cpu');
-      addLog("TensorFlow backend set to 'cpu'.", "info");
+      addLog("TensorFlow backend set to 'cpu'.");
       await tf.ready();
-      addLog("TensorFlow is ready.", "success");
+      addLog("TensorFlow is ready.");
       
       const loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
       
@@ -418,13 +410,13 @@ export default function SortVisionClient() {
       const labels = loadedModel.getClassLabels();
       setModelLabels(labels);
       
-      addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`, "success");
+      addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
       toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
       setAppStatus("AWAITING_OBJECT");
       
     } catch (error: any) {
         console.error("Model loading error:", error);
-        addLog(`Model loading failed: ${error.message}`, "error");
+        addLog(`Model loading failed: ${error.message}`);
         toast({ variant: "destructive", title: "Model Load Error", description: "Could not load the model. Check console for details." });
         setModel(null);
         setModelLabels([]);
@@ -438,17 +430,17 @@ export default function SortVisionClient() {
     event.preventDefault();
     event.stopPropagation();
     setIsDragging(false);
-    addLog("Files dropped.", "info");
+    addLog("Files dropped.");
 
     const files = event.dataTransfer.files;
     if (!files || files.length === 0) {
-      addLog("No files found in drop event.", "warning");
+      addLog("No files found in drop event.");
       return;
     }
 
     if (files.length === 1 && files[0].name.endsWith('.zip')) {
         const file = files[0];
-        addLog(`Zip file detected: ${file.name}. Unpacking...`, "info");
+        addLog(`Zip file detected: ${file.name}. Unpacking...`);
         try {
             const zip = await JSZip.loadAsync(file);
             const modelJsonFile = zip.file("model.json");
@@ -471,7 +463,7 @@ export default function SortVisionClient() {
 
         } catch (error: any) {
             console.error("Zip file processing error:", error);
-            addLog(`Error processing zip file: ${error.message}`, "error");
+            addLog(`Error processing zip file: ${error.message}`);
             toast({ variant: "destructive", title: "Zip File Error", description: "Could not process the zip file. Ensure it's a valid Teachable Machine export." });
         }
     } else {
@@ -482,21 +474,21 @@ export default function SortVisionClient() {
         Array.from(files).forEach(file => {
             if (file.name === 'model.json') {
                 droppedModelFile = file;
-                addLog('model.json found.', "info");
+                addLog('model.json found.');
             } else if (file.name === 'metadata.json') {
                 droppedMetadataFile = file;
-                addLog('metadata.json found.', "info");
+                addLog('metadata.json found.');
             } else if (file.name === 'weights.bin') {
                 droppedWeightsFile = file;
-                addLog('weights.bin found.', "info");
+                addLog('weights.bin found.');
             }
         });
 
         if (droppedModelFile && droppedMetadataFile && droppedWeightsFile) {
-             addLog('All model components found. Loading model.', "info");
+             addLog('All model components found. Loading model.');
              await loadModelFromFiles(droppedModelFile, droppedMetadataFile, droppedWeightsFile);
         } else {
-             addLog("Dropped files are not a valid model. Please drop a .zip file or model.json, metadata.json and weights.bin together.", "warning");
+             addLog("Dropped files are not a valid model. Please drop a .zip file or model.json, metadata.json and weights.bin together.");
              toast({ variant: "destructive", title: "Invalid Files", description: "Please drop a .zip file or all three model component files." });
         }
     }
@@ -520,7 +512,7 @@ export default function SortVisionClient() {
 
     if (files.length === 1 && files[0].name.endsWith('.zip')) {
       const file = files[0];
-      addLog(`Zip file selected: ${file.name}. Unpacking...`, "info");
+      addLog(`Zip file selected: ${file.name}. Unpacking...`);
       try {
         const zip = await JSZip.loadAsync(file);
         const modelJsonFile = zip.file("model.json");
@@ -542,7 +534,7 @@ export default function SortVisionClient() {
         await loadModelFromFiles(modelFile, metadataFile, weightsFile);
       } catch (error: any) {
         console.error("Zip file processing error:", error);
-        addLog(`Error processing zip file: ${error.message}`, "error");
+        addLog(`Error processing zip file: ${error.message}`);
         toast({ variant: "destructive", title: "Zip File Error", description: "Could not process the zip file." });
       }
     } else {
@@ -561,10 +553,10 @@ export default function SortVisionClient() {
        });
 
        if (selectedModelFile && selectedMetadataFile && selectedWeightsFile) {
-         addLog('All model components selected. Loading model.', "info");
+         addLog('All model components selected. Loading model.');
          await loadModelFromFiles(selectedModelFile, selectedMetadataFile, selectedWeightsFile);
        } else {
-         addLog("Invalid file selection. Please select a .zip file, or model.json, metadata.json and weights.bin.", "warning");
+         addLog("Invalid file selection. Please select a .zip file, or model.json, metadata.json and weights.bin.");
          toast({ variant: "destructive", title: "Invalid Files", description: "Select a .zip or all three model component files." });
        }
     }
@@ -573,7 +565,7 @@ export default function SortVisionClient() {
 
 
   useEffect(() => {
-    addLog("App initialized. Please load a model to begin.", "info");
+    addLog("App initialized. Please load a model to begin.");
   }, [addLog]);
   
   const handleWakeLockToggle = (checked: boolean) => {
@@ -604,10 +596,10 @@ export default function SortVisionClient() {
 
   useEffect(() => {
     if (isCameraOn && model && !predictionIntervalRef.current) {
-        addLog("Starting classification loop.", "info");
+        addLog("Starting classification loop.");
         predictionIntervalRef.current = setInterval(runClassification, 100);
     } else if ((!isCameraOn || !model) && predictionIntervalRef.current) {
-        addLog("Stopping classification loop.", "info");
+        addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
     }
@@ -616,7 +608,7 @@ export default function SortVisionClient() {
         if (predictionIntervalRef.current) {
             clearInterval(predictionIntervalRef.current);
             predictionIntervalRef.current = undefined;
-            addLog("Cleaned up classification loop.", "info");
+            addLog("Cleaned up classification loop.");
         }
     };
   }, [isCameraOn, model, runClassification, addLog]);
@@ -636,7 +628,7 @@ export default function SortVisionClient() {
   useEffect(() => {
     const checkModelPerformance = async () => {
       if (model && lastClassifications.length >= 20) {
-        addLog(`Checking model performance with ${lastClassifications.length} classifications.`, "info");
+        addLog(`Checking model performance with ${lastClassifications.length} classifications.`);
         const classificationsToAnalyze = [...lastClassifications];
         setLastClassifications([]);
 
@@ -660,7 +652,7 @@ export default function SortVisionClient() {
             }
         }
         
-        addLog(`Avg scores: ${JSON.stringify(averageConfidenceScores)}`, "info");
+        addLog(`Avg scores: ${JSON.stringify(averageConfidenceScores)}`);
         try {
           const result = await handleModelSwapCheck({
               averageConfidenceScores,
@@ -668,17 +660,17 @@ export default function SortVisionClient() {
           });
 
           if (result.shouldSuggestSwap) {
-            addLog(`AI Suggestion: ${result.reason}`, "info");
+            addLog(`AI Suggestion: ${result.reason}`);
             toast({
               title: "Model Performance Suggestion",
               description: result.reason,
               duration: 9000,
             });
           } else {
-              addLog(`AI Suggestion: No model swap needed. ${result.reason}`, "info");
+              addLog(`AI Suggestion: No model swap needed. ${result.reason}`);
           }
         } catch (e) {
-          addLog("Could not get model performance suggestion.", "warning");
+          addLog("Could not get model performance suggestion.");
         }
       }
     };
@@ -829,31 +821,17 @@ export default function SortVisionClient() {
   };
 
   const LogViewer = () => {
-    const getLevelColor = (level: LogLevel) => {
-        switch (level) {
-            case "error": return "text-red-500";
-            case "warning": return "text-yellow-500";
-            case "success": return "text-green-500";
-            case "info":
-            default:
-                return "text-foreground";
-        }
-    };
-
     return (
-        <ScrollArea className="flex-1 my-4">
-            <div className="p-4 font-mono text-xs">
-                {logs.map((log, index) => (
-                    <p key={index} className="flex items-start">
-                       <span className="text-muted-foreground/50 w-20 shrink-0">{log.timestamp}</span>
-                       <span className={cn("ml-2", getLevelColor(log.level), 'flex-1')}>
-                            <span className="font-bold uppercase w-16 inline-block">{log.level}</span>
-                            {log.message}
-                        </span>
-                    </p>
-                ))}
-            </div>
-        </ScrollArea>
+      <ScrollArea className="flex-1 my-4">
+        <div className="p-4 font-mono text-xs">
+          {logs.map((log, index) => (
+            <p key={index}>
+              <span className="text-muted-foreground/50">{log.timestamp}</span>
+              <span className="ml-2 text-foreground">{log.message}</span>
+            </p>
+          ))}
+        </div>
+      </ScrollArea>
     );
   };
 
@@ -947,6 +925,24 @@ export default function SortVisionClient() {
               </div>
             </div>
           </SidebarGroup>
+          <SidebarGroup>
+              <SidebarGroupLabel>Background Override</SidebarGroupLabel>
+              <div className="space-y-2 p-4">
+                  <Label htmlFor="background-override">Class to Ignore</Label>
+                  <div className="flex gap-2">
+                      <Input
+                          id="background-override"
+                          value={backgroundOverride}
+                          onChange={(e) => handleSetBackgroundOverride(e.target.value)}
+                          placeholder="e.g., table, floor"
+                      />
+                      <Button variant="outline" onClick={handleClearBackgroundOverride}>Clear</Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                      Manually set a class name to be ignored by the detector.
+                  </p>
+              </div>
+          </SidebarGroup>
         </SidebarContent>
         <SidebarFooter>
           <ThemeToggle />
@@ -1004,7 +1000,7 @@ export default function SortVisionClient() {
                <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn}>
                 {isFlashOn ? <FlashlightOff /> : <Flashlight />}
               </Button>
-              <Button onClick={handleSetBackground} variant="outline" size="icon" disabled={!isCameraOn || currentPredictions.length === 0}>
+              <Button onClick={handleSetCurrentAsBackground} variant="outline" size="icon" disabled={!isCameraOn || currentPredictions.length === 0}>
                 <Eraser />
               </Button>
               <div className="flex flex-col gap-2 w-full sm:w-auto">
