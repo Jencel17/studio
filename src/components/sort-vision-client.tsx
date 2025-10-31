@@ -36,26 +36,12 @@ type Prediction = {
   probability: number;
 };
 
-type BoundingBox = [number, number, number, number]; // [x, y, width, height]
-
-type DetectedObject = {
-  id: string; // Use string for more stable keys
-  label: Prediction['className'];
-  confidence: number;
-  bbox: BoundingBox;
-  // For animation
-  vx: number; 
-  vy: number;
-  vw: number;
-  vh: number;
-};
-
 type LogEntry = {
   timestamp: string;
   message: string;
 };
 
-type AppStatus = "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING";
+type AppStatus = "AWAITING_MODEL" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING";
 
 type CommandStatus = {
   status: "IDLE" | "SUCCESS" | "ERROR";
@@ -64,12 +50,10 @@ type CommandStatus = {
 
 type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "AMBIGUOUS";
 
-const CLASSIFICATION_INTERVAL = 200;
-const MODEL_SWAP_CHECK_THRESHOLD = 20;
-const INACTIVITY_TIMEOUT = 60000; // 1 minute
-const MAX_LOGS = 100;
 const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
+const MAX_LOGS = 100;
+
 
 // Local implementation of the AI logic to avoid network latency
 const interpretDetectionsLocal = (
@@ -123,7 +107,6 @@ export default function SortVisionClient() {
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
-  const [detectedObjects, setDetectedObjects] = useState<DetectedObject[]>([]);
   const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -133,15 +116,13 @@ export default function SortVisionClient() {
   const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
   
   // New state for HTTP communication
-  const [appStatus, setAppStatus] = useState<AppStatus>("AWAITING_OBJECT");
+  const [appStatus, setAppStatus] = useState<AppStatus>("AWAITING_MODEL");
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
   const [isTestMode, setIsTestMode] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const predictionIntervalRef = useRef<NodeJS.Timeout | null>(null);
-  const inactivityTimerRef = useRef<NodeJS.Timeout | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const animationFrameRef = useRef<number>();
@@ -155,27 +136,6 @@ export default function SortVisionClient() {
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
-
-  const resetInactivityTimer = useCallback(() => {
-    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
-    
-    if (isHibernating) {
-      setIsHibernating(false);
-      addLog("Activity detected, waking from hibernation.");
-    }
-
-    // Temporarily disable hibernation
-    /*
-    inactivityTimerRef.current = setTimeout(() => {
-        if (isCameraOn) {
-            setIsHibernating(true);
-            setPrimaryPrediction(null);
-            setDetectedObjects([]);
-            addLog("Inactivity detected, entering hibernation mode.");
-        }
-    }, INACTIVITY_TIMEOUT);
-    */
-  }, [isHibernating, addLog, isCameraOn]);
 
   const releaseWakeLock = useCallback(async () => {
     if (wakeLockRef.current) {
@@ -211,6 +171,7 @@ export default function SortVisionClient() {
   }, [wakeLockEnabled, addLog]);
 
   const stopCamera = useCallback(() => {
+    addLog("Stopping camera and classification loop.");
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
     }
@@ -219,26 +180,21 @@ export default function SortVisionClient() {
     }
     if (animationFrameRef.current) {
       cancelAnimationFrame(animationFrameRef.current);
+      animationFrameRef.current = undefined;
     }
     streamRef.current = null;
     setIsCameraOn(false);
     setIsFlashOn(false);
     setPrimaryPrediction(null);
-    setDetectedObjects([]);
-    if (predictionIntervalRef.current) {
-      clearInterval(predictionIntervalRef.current);
-      predictionIntervalRef.current = null;
-    }
-    setIsHibernating(false);
-    setAppStatus("AWAITING_OBJECT");
+    setCurrentPredictions([]);
+    setDetectionState("NO_DETECTION");
+    setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
     addLog("Camera stopped.");
-    if (inactivityTimerRef.current) clearTimeout(inactivityTimerRef.current);
     releaseWakeLock();
-  }, [releaseWakeLock, addLog]);
+  }, [releaseWakeLock, addLog, model]);
 
   const startCamera = useCallback(async (flashEnabled?: boolean) => {
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      // Use state for flash if no arg is passed, for restart
       const useFlash = flashEnabled ?? isFlashOn;
 
       try {
@@ -263,7 +219,7 @@ export default function SortVisionClient() {
         }
         streamRef.current = stream;
         setIsCameraOn(true);
-        setAppStatus("AWAITING_OBJECT");
+        setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
 
         const videoTrack = stream.getVideoTracks()[0];
         if (videoTrack) {
@@ -281,7 +237,6 @@ export default function SortVisionClient() {
         }
         
         addLog(`Camera started ${useFlash ? 'with flash' : 'without flash'}.`);
-        resetInactivityTimer();
         if(wakeLockEnabled) {
           requestWakeLock();
         }
@@ -296,7 +251,7 @@ export default function SortVisionClient() {
         stopCamera();
       }
     }
-  }, [addLog, isFlashOn, resetInactivityTimer, stopCamera, toast, wakeLockEnabled, requestWakeLock]);
+  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model]);
 
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
@@ -340,10 +295,13 @@ export default function SortVisionClient() {
   }, [addLog, toast, esp32Ip, isTestMode]);
 
   const runClassification = useCallback(async () => {
-    if (!isCameraOn || !videoRef.current || !model || isHibernating) {
+    if (!isCameraOn || !videoRef.current?.srcObject || !model || isHibernating) {
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = undefined;
+      }
       return;
     }
-    resetInactivityTimer();
 
     const predictions = await model.predict(videoRef.current);
     setCurrentPredictions(predictions);
@@ -353,7 +311,6 @@ export default function SortVisionClient() {
       CONFIDENCE_THRESHOLD
     );
 
-    addLog(`Local AI: ${localResult.reason}`);
     setDetectionState(localResult.detectionState);
 
     let topPrediction: Prediction | null = null;
@@ -370,25 +327,23 @@ export default function SortVisionClient() {
       setPrimaryPrediction(null);
     }
     
-    // Check if we have a high-confidence single object
     if (topPrediction) { 
       setAppStatus("READY_TO_SEND");
       
-      // Stop the classification loop immediately.
-      if (predictionIntervalRef.current) {
-        clearInterval(predictionIntervalRef.current);
-        predictionIntervalRef.current = null;
+      if (animationFrameRef.current) {
+        cancelAnimationFrame(animationFrameRef.current);
+        animationFrameRef.current = undefined;
+        addLog("Classification loop paused for command.");
       }
       
-      // Send the command once.
-      sendSortCommand(topPrediction.className); // Don't await
+      sendSortCommand(topPrediction.className);
       
-      // Turn off the camera and restart after a delay.
       stopCamera();
       setAppStatus("CAMERA_CYCLING");
       addLog(`Command sent. Restarting camera in ${CAMERA_RESTART_DELAY / 1000} seconds...`);
       setTimeout(() => {
-        startCamera(); // Restarts with the last known flash state
+        addLog("Restarting camera now.");
+        startCamera();
       }, CAMERA_RESTART_DELAY);
 
     } else if (predictions.some(p => p.probability > 0.5)) {
@@ -396,14 +351,21 @@ export default function SortVisionClient() {
     } else {
         setAppStatus("AWAITING_OBJECT");
     }
-  }, [isCameraOn, model, isHibernating, resetInactivityTimer, sendSortCommand, addLog, stopCamera, startCamera]);
+
+    if (animationFrameRef.current) {
+      animationFrameRef.current = requestAnimationFrame(runClassification);
+    }
+  }, [isCameraOn, model, isHibernating, sendSortCommand, addLog, stopCamera, startCamera]);
 
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
+    setAppStatus("AWAITING_MODEL");
     addLog("Loading Teachable Machine model from files...");
     try {
       await tf.setBackend('cpu');
+      addLog("TensorFlow backend set to 'cpu'.");
       await tf.ready();
+      addLog("TensorFlow is ready.");
       
       const loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
       
@@ -413,6 +375,7 @@ export default function SortVisionClient() {
       
       addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
       toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
+      setAppStatus("AWAITING_OBJECT");
       
     } catch (error: any) {
         console.error("Model loading error:", error);
@@ -420,6 +383,7 @@ export default function SortVisionClient() {
         toast({ variant: "destructive", title: "Model Load Error", description: "Could not load the model. Check console for details." });
         setModel(null);
         setModelLabels([]);
+        setAppStatus("AWAITING_MODEL");
     } finally {
         setIsModelLoading(false);
     }
@@ -564,7 +528,7 @@ export default function SortVisionClient() {
 
 
   useEffect(() => {
-    addLog("App initialized.");
+    addLog("App initialized. Please load a model to begin.");
   }, [addLog]);
   
   const handleWakeLockToggle = (checked: boolean) => {
@@ -593,72 +557,24 @@ export default function SortVisionClient() {
     }
   };
 
-
   useEffect(() => {
-    const animate = () => {
-      setDetectedObjects(currentObjects => 
-        currentObjects.map(obj => {
-          let [x, y, w, h] = obj.bbox;
-          let { vx, vy, vw, vh } = obj;
-
-          // Update position
-          x += vx;
-          y += vy;
-          
-          // Bounce off walls
-          if (x < 0 || x + w > 1) vx *= -1;
-          if (y < 0 || y + h > 1) vy *= -1;
-
-          // Update size
-          w += vw;
-          h += vh;
-
-          // Clamp size and reverse velocity if limits are hit
-          if (w < 0.2 || w > 0.7) vw *= -1;
-          if (h < 0.2 || h > 0.7) vh *= -1;
-          w = Math.max(0.2, Math.min(0.7, w));
-          h = Math.max(0.2, Math.min(0.7, h));
-
-          return {...obj, bbox: [x, y, w, h], vx, vy, vw, vh};
-        })
-      );
-      animationFrameRef.current = requestAnimationFrame(animate);
-    };
-
-    if (isCameraOn && model && !isHibernating && detectedObjects.length > 0) {
-      animationFrameRef.current = requestAnimationFrame(animate);
-    } else {
-      if (animationFrameRef.current) {
+    if (isCameraOn && model && !animationFrameRef.current) {
+        addLog("Starting classification loop.");
+        animationFrameRef.current = requestAnimationFrame(runClassification);
+    } else if ((!isCameraOn || !model) && animationFrameRef.current) {
+        addLog("Stopping classification loop.");
         cancelAnimationFrame(animationFrameRef.current);
-      }
+        animationFrameRef.current = undefined;
     }
 
     return () => {
-      if (animationFrameRef.current) {
-        cancelAnimationFrame(animationFrameRef.current);
-      }
+        if (animationFrameRef.current) {
+            cancelAnimationFrame(animationFrameRef.current);
+            animationFrameRef.current = undefined;
+            addLog("Cleaned up classification loop.");
+        }
     };
-  }, [isCameraOn, model, isHibernating, detectedObjects]);
-
-
-  useEffect(() => {
-    if (isCameraOn && model) {
-      if (!predictionIntervalRef.current) {
-        predictionIntervalRef.current = setInterval(runClassification, CLASSIFICATION_INTERVAL);
-      }
-    } else {
-      if (predictionIntervalRef.current) {
-        clearInterval(predictionIntervalRef.current);
-        predictionIntervalRef.current = null;
-      }
-    }
-
-    return () => {
-      if (predictionIntervalRef.current) {
-        clearInterval(predictionIntervalRef.current);
-      }
-    };
-  }, [isCameraOn, model, runClassification]);
+  }, [isCameraOn, model, runClassification, addLog]);
   
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -674,7 +590,7 @@ export default function SortVisionClient() {
 
   useEffect(() => {
     const checkModelPerformance = async () => {
-      if (lastClassifications.length >= MODEL_SWAP_CHECK_THRESHOLD) {
+      if (model && lastClassifications.length >= 20) {
         addLog(`Checking model performance with ${lastClassifications.length} classifications.`);
         const classificationsToAnalyze = [...lastClassifications];
         setLastClassifications([]);
@@ -726,9 +642,10 @@ export default function SortVisionClient() {
   }, [lastClassifications, toast, addLog, model]);
   
    useEffect(() => {
-    // ComponentWillUnmount
     return () => {
-      stopCamera();
+      if(isCameraOn) {
+        stopCamera();
+      }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -736,6 +653,7 @@ export default function SortVisionClient() {
   const StatusDisplay = () => {
     const getStatusText = () => {
         switch (appStatus) {
+            case "AWAITING_MODEL": return "Awaiting Model";
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
             case "CAMERA_CYCLING": return "CAMERA RESTARTING...";
@@ -748,6 +666,7 @@ export default function SortVisionClient() {
     const getStatusBadgeVariant = () => {
         switch (appStatus) {
             case "READY_TO_SEND": return "default";
+            case "AWAITING_MODEL": return "secondary";
             case "CAMERA_CYCLING": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
             default: return "outline";
@@ -784,6 +703,9 @@ export default function SortVisionClient() {
         }
         if (isHibernating) {
             return <p className="text-lg text-white/90 shadow-md">Hibernating...</p>;
+        }
+        if (isModelLoading) {
+            return <p className="text-lg text-white/90 shadow-md">Loading model...</p>;
         }
         if (!model) {
             return <p className="text-lg text-white/90 shadow-md">Awaiting model...</p>;
@@ -995,57 +917,6 @@ export default function SortVisionClient() {
                   </div>
               )}
               <PredictionDisplay />
-              {isCameraOn && !isHibernating && detectedObjects.map((obj) => {
-                const [x, y, w, h] = obj.bbox;
-                
-                const colors = {
-                  [modelLabels[0]]: 'border-blue-400',
-                  [modelLabels[1]]: 'border-yellow-400',
-                  [modelLabels[2]]: 'border-green-400',
-                };
-                const textColors = {
-                  [modelLabels[0]]: 'bg-blue-400',
-                  [modelLabels[1]]: 'bg-yellow-400',
-                  [modelLabels[2]]: 'bg-green-400',
-                };
-                 const bgColors = {
-                  [modelLabels[0]]: 'bg-blue-400/10',
-                  [modelLabels[1]]: 'bg-yellow-400/10',
-                  [modelLabels[2]]: 'bg-green-400/10',
-                };
-
-                const borderColor = colors[obj.label as keyof typeof colors] || 'border-gray-400';
-                const textColor = textColors[obj.label as keyof typeof textColors] || 'bg-gray-400';
-                const bgColor = bgColors[obj.label as keyof typeof bgColors] || 'bg-gray-400/10';
-
-
-                return (
-                  <div
-                    key={obj.id}
-                    className={cn(
-                      'absolute transition-all duration-300 border-2 rounded-md',
-                      borderColor,
-                      bgColor
-                    )}
-                    style={{
-                      left: `${x * 100}%`,
-                      top: `${y * 100}%`,
-                      width: `${w * 100}%`,
-                      height: `${h * 100}%`,
-                      opacity: obj.confidence,
-                    }}
-                  >
-                    <div
-                      className={cn(
-                        'absolute -top-6 left-0 text-xs font-semibold text-white px-2 py-0.5 rounded-tmd',
-                        textColor
-                      )}
-                    >
-                      {obj.label} ({(obj.confidence * 100).toFixed(0)}%)
-                    </div>
-                  </div>
-                );
-              })}
               </div>
               <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full w-[240px]">
                 <DetectionRates />
@@ -1055,7 +926,7 @@ export default function SortVisionClient() {
         <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 items-center">
             <p className="text-xs text-muted-foreground">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle sidebar.</p>
             <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
-              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0">
+              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={!model}>
                 {isCameraOn ? <CameraOff /> : <Camera />}
                 {isCameraOn ? "Stop Camera" : "Start Camera"}
               </Button>
@@ -1098,5 +969,3 @@ export default function SortVisionClient() {
     </>
   );
 }
-
-    
