@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Eraser } from "lucide-react";
+import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -53,7 +53,6 @@ type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "A
 const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
 const MAX_LOGS = 100;
-const BACKGROUND_STORAGE_KEY = "sortvision-background-override";
 
 
 // Local implementation of the AI logic to avoid network latency
@@ -121,9 +120,6 @@ export default function SortVisionClient() {
   const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
   const [isTestMode, setIsTestMode] = useState(false);
   
-  const [backgroundOverride, setBackgroundOverride] = useState<string>("");
-  const [backgroundInput, setBackgroundInput] = useState<string>("");
-
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
@@ -139,52 +135,6 @@ export default function SortVisionClient() {
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
-
-  useEffect(() => {
-    const savedBackground = localStorage.getItem(BACKGROUND_STORAGE_KEY);
-    if (savedBackground) {
-      setBackgroundOverride(savedBackground);
-      setBackgroundInput(savedBackground);
-      addLog(`Loaded saved background override: ${savedBackground}`);
-    }
-  }, [addLog]);
-
-  const handleSaveBackgroundOverride = () => {
-    setBackgroundOverride(backgroundInput);
-    localStorage.setItem(BACKGROUND_STORAGE_KEY, backgroundInput);
-    addLog(`Manual background override saved: ${backgroundInput}`);
-    toast({
-      title: "Background Override Saved",
-      description: `"${backgroundInput}" will now be ignored.`,
-    });
-  };
-
-  const handleClearBackgroundOverride = () => {
-    setBackgroundOverride("");
-    setBackgroundInput("");
-    localStorage.removeItem(BACKGROUND_STORAGE_KEY);
-    addLog("Background override cleared.");
-    toast({
-      title: "Background Override Cleared",
-      description: "The background override has been removed.",
-    });
-  }
-
-  const handleSetCurrentAsBackground = () => {
-    if (currentPredictions.length > 0) {
-      const topPrediction = [...currentPredictions].sort((a, b) => b.probability - a.probability)[0];
-      if (topPrediction) {
-        setBackgroundInput(topPrediction.className);
-        setBackgroundOverride(topPrediction.className);
-        localStorage.setItem(BACKGROUND_STORAGE_KEY, topPrediction.className);
-        addLog(`Set current object as background: ${topPrediction.className}`);
-        toast({
-            title: "Background Set",
-            description: `"${topPrediction.className}" will now be ignored.`,
-        });
-      }
-    }
-  };
 
   const releaseWakeLock = useCallback(async () => {
     if (wakeLockRef.current) {
@@ -353,9 +303,9 @@ export default function SortVisionClient() {
     const predictions = await model.predict(videoRef.current);
     setCurrentPredictions(predictions);
 
-    const filteredPredictions = backgroundOverride
-      ? predictions.filter(p => p.className.toLowerCase() !== backgroundOverride.toLowerCase())
-      : predictions;
+    const filteredPredictions = predictions.filter(
+        (p) => p.className.toLowerCase() !== "background"
+    );
 
     const localResult = interpretDetectionsLocal(
       filteredPredictions,
@@ -403,7 +353,7 @@ export default function SortVisionClient() {
         setAppStatus("AWAITING_OBJECT");
     }
 
-  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera, backgroundOverride]);
+  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera]);
 
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
@@ -809,7 +759,7 @@ export default function SortVisionClient() {
     return (
         <div className="flex flex-col justify-center h-full w-full p-4 space-y-3">
             {modelLabels.length > 0 ? (
-                modelLabels.map(label => {
+                modelLabels.filter(l => l.toLowerCase() !== 'background').map(label => {
                     const probability = getProbability(label);
                     const percentage = probability * 100;
                     return (
@@ -936,25 +886,6 @@ export default function SortVisionClient() {
               </div>
             </div>
           </SidebarGroup>
-          <SidebarGroup>
-              <SidebarGroupLabel>Background Override</SidebarGroupLabel>
-              <div className="space-y-2 p-4">
-                  <Label htmlFor="background-override">Class to Ignore</Label>
-                  <Input
-                      id="background-override"
-                      value={backgroundInput}
-                      onChange={(e) => setBackgroundInput(e.target.value)}
-                      placeholder="e.g., table, floor"
-                  />
-                  <div className="flex gap-2">
-                      <Button onClick={handleSaveBackgroundOverride} className="w-full">Save</Button>
-                      <Button variant="outline" onClick={handleClearBackgroundOverride} className="w-full">Clear</Button>
-                  </div>
-                  <p className="text-xs text-muted-foreground">
-                      Manually set a class name to be ignored by the detector.
-                  </p>
-              </div>
-          </SidebarGroup>
         </SidebarContent>
         <SidebarFooter>
           <ThemeToggle />
@@ -1012,9 +943,6 @@ export default function SortVisionClient() {
                <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn}>
                 {isFlashOn ? <FlashlightOff /> : <Flashlight />}
               </Button>
-              <Button onClick={handleSetCurrentAsBackground} variant="outline" size="icon" disabled={!isCameraOn || currentPredictions.length === 0}>
-                <Eraser />
-              </Button>
               <div className="flex flex-col gap-2 w-full sm:w-auto">
                   <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="w-full">
                     <Terminal />
@@ -1042,3 +970,5 @@ export default function SortVisionClient() {
     </>
   );
 }
+
+    
