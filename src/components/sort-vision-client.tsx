@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
+import { useState, useRef, useEffect, useCallback, ChangeEvent, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import type * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
@@ -27,7 +27,9 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { AppStatus, LogEntry } from "@/app/page";
+import { AppStatus } from "@/app/page";
+import { LogEntry } from "@/lib/types";
+
 
 type Prediction = {
   className: string;
@@ -41,11 +43,9 @@ type CommandStatus = {
 
 type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "AMBIGUOUS";
 
-type TeachableMachine = typeof import("@teachablemachine/image");
-type TensorFlow = typeof import("@tensorflow/tfjs");
-
 interface SortVisionClientProps {
     model: tmImage.CustomMobileNet | null;
+    setModel: (model: tmImage.CustomMobileNet | null) => void;
     modelLabels: string[];
     appStatus: AppStatus;
     setAppStatus: (status: AppStatus) => void;
@@ -60,6 +60,8 @@ interface SortVisionClientProps {
     setLogs: (logs: LogEntry[]) => void;
     libsLoaded: boolean;
     cameraRestartDelay: number;
+    tmImageRef: MutableRefObject<typeof tmImage | null>;
+    tfRef: MutableRefObject<typeof tf | null>;
 }
 
 const CONFIDENCE_THRESHOLD = 0.8;
@@ -127,6 +129,7 @@ const interpretDetectionsLocal = (
 
 export default function SortVisionClient({
     model,
+    setModel,
     modelLabels,
     appStatus,
     setAppStatus,
@@ -141,6 +144,8 @@ export default function SortVisionClient({
     setLogs,
     libsLoaded,
     cameraRestartDelay,
+    tmImageRef,
+    tfRef
 }: SortVisionClientProps) {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
@@ -160,44 +165,8 @@ export default function SortVisionClient({
   const predictionIntervalRef = useRef<NodeJS.Timeout>();
   const ambiguousDetectionTimer = useRef<NodeJS.Timeout | null>(null);
   
-  const tmImageRef = useRef<TeachableMachine | null>(null);
-  const tfRef = useRef<TensorFlow | null>(null);
-
 
   const { toast } = useToast();
-
-   const loadAiLibraries = useCallback(async () => {
-    if (tmImageRef.current && tfRef.current) {
-      addLog("AI libraries already loaded.");
-      return;
-    }
-    addLog("Loading AI libraries...");
-    setAppStatus("LOADING_LIBS");
-    try {
-      const [tm, tf] = await Promise.all([
-        import("@teachablemachine/image"),
-        import("@tensorflow/tfjs"),
-      ]);
-      tmImageRef.current = tm;
-      tfRef.current = tf;
-      addLog("AI libraries loaded successfully.");
-      setAppStatus("AWAITING_MODEL");
-    } catch (error: any) {
-      console.error("Failed to load AI libraries:", error);
-      toast({
-        variant: "destructive",
-        title: "Library Load Error",
-        description: "Could not load core AI libraries. Please refresh the page.",
-      });
-      addLog("FATAL: Failed to load AI libraries.");
-    }
-  }, [addLog, setAppStatus, toast]);
-
-  useEffect(() => {
-    if (!libsLoaded) {
-      loadAiLibraries();
-    }
-  }, [libsLoaded, loadAiLibraries]);
   
   const startImageCollection = useCallback(() => {
     if (!isCameraOn || !hasCameraPermission || isCollectingImages) return;
@@ -247,6 +216,11 @@ const startCamera = useCallback(async () => {
         setHasCameraPermission(false);
         return;
     }
+    
+    // Stop any existing camera stream before starting a new one.
+    if (streamRef.current) {
+        stopCamera();
+    }
 
     try {
         addLog("Requesting camera access...");
@@ -270,8 +244,12 @@ const startCamera = useCallback(async () => {
             if (isFlashOn && streamRef.current) {
                 const videoTrack = streamRef.current.getVideoTracks()[0];
                  if (videoTrack && 'torch' in videoTrack.getCapabilities()) {
-                    await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
-                    addLog("Flash re-enabled on camera start.");
+                    try {
+                        await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                        addLog("Flash re-enabled on camera start.");
+                    } catch (e: any) {
+                        addLog(`Could not re-enable flash: ${e.message}`);
+                    }
                  }
             }
         }
