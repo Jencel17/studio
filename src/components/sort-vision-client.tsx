@@ -575,7 +575,7 @@ export default function SortVisionClient({
             }
         }
         
-        addLog(`Avg scores: ${JSON.stringify(averageConfidenceScores)}`);
+        addLog(`Requesting AI analysis for model performance. Avg scores: ${JSON.stringify(averageConfidenceScores)}`);
         try {
           const result = await handleModelSwapCheck({
               averageConfidenceScores,
@@ -868,3 +868,5 @@ export default function SortVisionClient({
     </>
   );
 }
+
+    
