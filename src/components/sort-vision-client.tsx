@@ -256,29 +256,39 @@ const startCamera = useCallback(async () => {
         
         streamRef.current = stream;
         setHasCameraPermission(true);
+        const video = videoRef.current;
 
-        if (videoRef.current) {
-            videoRef.current.srcObject = stream;
-            await videoRef.current.play();
-            setIsCameraOn(true);
-            setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
-            addLog("Camera started successfully.");
+        if (video) {
+            video.srcObject = stream;
+            // The 'loadedmetadata' event is crucial for mobile.
+            video.onloadedmetadata = async () => {
+                try {
+                    await video.play();
+                    setIsCameraOn(true);
+                    setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
+                    addLog("Camera started successfully.");
 
-            if (wakeLockEnabled) {
-                requestWakeLock();
-            }
-
-            if (isFlashOn) {
-                const videoTrack = stream.getVideoTracks()[0];
-                if (videoTrack && 'torch' in videoTrack.getCapabilities()) {
-                    try {
-                        await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
-                        addLog("Flash enabled on camera start.");
-                    } catch (e: any) {
-                        addLog(`Could not enable flash on start: ${e.message}`);
+                    if (wakeLockEnabled) {
+                        requestWakeLock();
                     }
+
+                    if (isFlashOn) {
+                        const videoTrack = stream.getVideoTracks()[0];
+                        if (videoTrack && 'torch' in videoTrack.getCapabilities()) {
+                            try {
+                                await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                                addLog("Flash enabled on camera start.");
+                            } catch (e: any) {
+                                addLog(`Could not enable flash on start: ${e.message}`);
+                            }
+                        }
+                    }
+                } catch (playError: any) {
+                    // This catch block will handle the "interrupted by a new load request" error.
+                    console.error("Video play failed:", playError);
+                    addLog(`Video play error: ${playError.message}`);
                 }
-            }
+            };
         }
     } catch (error: any) {
         console.error("Error accessing camera:", error);
@@ -491,7 +501,6 @@ const startCamera = useCallback(async () => {
     return () => {
       if(isCameraOn) {
         stopCamera();
-        setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -960,5 +969,3 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
-
-    
