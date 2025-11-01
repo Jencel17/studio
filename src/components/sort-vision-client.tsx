@@ -167,14 +167,43 @@ export default function SortVisionClient({
   
 
   const { toast } = useToast();
+
+    const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
+        if (isTestMode) {
+          addLog(`TEST MODE: Simulating light ${state} command.`);
+          return true;
+        }
+        if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
+            addLog("SecurityError: Cannot send insecure 'http' light command from secure 'https' page.");
+            return false;
+        }
+
+        const url = `${esp32Ip}/light?state=${state}`;
+        addLog(`Sending light command to ESP32: ${url}`);
+        try {
+            const response = await fetch(url, { method: 'GET' });
+            if (response.ok) {
+                addLog(`Successfully sent light ${state} command.`);
+                return true;
+            } else {
+                addLog(`Error: ESP32 responded with ${response.status} for light command.`);
+                return false;
+            }
+        } catch (error: any) {
+            addLog(`Error sending light command: ${error.message}`);
+            return false;
+        }
+    }, [esp32Ip, isTestMode, addLog]);
   
-  const startImageCollection = useCallback(() => {
+  const startImageCollection = useCallback(async () => {
     if (!isCameraOn || !hasCameraPermission || isCollectingImages) return;
 
     if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
     }
+    
+    await sendLightCommand('ON');
 
     setIsCollectingImages(true);
     setAppStatus("COLLECTING_IMAGES");
@@ -182,7 +211,7 @@ export default function SortVisionClient({
     setCountdown(CAPTURE_COUNTDOWN_SECONDS);
     addLog(`Starting image capture in ${CAPTURE_COUNTDOWN_SECONDS} seconds.`);
 
-  }, [isCameraOn, hasCameraPermission, isCollectingImages, addLog, setAppStatus]);
+  }, [isCameraOn, hasCameraPermission, isCollectingImages, addLog, setAppStatus, sendLightCommand]);
 
   const stopCamera = useCallback(() => {
     addLog("Stopping camera.");
@@ -302,33 +331,6 @@ const startCamera = useCallback(async () => {
         });
     }
 }, [isCameraOn, isFlashOn, addLog, toast]);
-
-    const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
-        if (isTestMode) {
-          addLog(`TEST MODE: Simulating light ${state} command.`);
-          return true;
-        }
-        if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
-            addLog("SecurityError: Cannot send insecure 'http' light command from secure 'https' page.");
-            return false;
-        }
-
-        const url = `${esp32Ip}/light?state=${state}`;
-        addLog(`Sending light command to ESP32: ${url}`);
-        try {
-            const response = await fetch(url, { method: 'GET' });
-            if (response.ok) {
-                addLog(`Successfully sent light ${state} command.`);
-                return true;
-            } else {
-                addLog(`Error: ESP32 responded with ${response.status} for light command.`);
-                return false;
-            }
-        } catch (error: any) {
-            addLog(`Error sending light command: ${error.message}`);
-            return false;
-        }
-    }, [esp32Ip, isTestMode, addLog]);
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
     if (isTestMode) {
@@ -571,6 +573,7 @@ const startCamera = useCallback(async () => {
         } finally {
             setIsCollectingImages(false);
             setCollectedImages([]);
+            await sendLightCommand('OFF');
             if (autoCaptureEnabled) {
               setAppStatus("COOLDOWN");
               addLog(`Auto-capture finished. Entering ${AUTO_CAPTURE_COOLDOWN_TIME / 1000}s cooldown.`);
@@ -587,7 +590,7 @@ const startCamera = useCallback(async () => {
     if (isCollectingImages && collectedImages.length >= IMAGE_CAPTURE_COUNT) {
         zipAndDownloadImages();
     }
-}, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled, setAppStatus]);
+}, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled, setAppStatus, sendLightCommand]);
 
   useEffect(() => {
     if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
@@ -956,5 +959,3 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
-
-    
