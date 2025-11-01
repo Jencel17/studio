@@ -4,7 +4,6 @@
 
 import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
 import type * as tmImage from "@teachablemachine/image";
-import type * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -37,102 +36,35 @@ export default function SortVisionPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
   
-  const tmImageRef = useRef<TeachableMachine | null>(null);
-  const tfRef = useRef<TensorFlow | null>(null);
-
-  type TeachableMachine = typeof import("@teachablemachine/image");
-  type TensorFlow = typeof import("@tensorflow/tfjs");
+  const tmImageRef = useRef<typeof tmImage | null>(null);
+  const tfRef = useRef<typeof import("@tensorflow/tfjs") | null>(null);
   
   const addLog = (message: string) => {
-    // This is a placeholder for the logging functionality inside SortVisionClient
+    // This is a placeholder. The real addLog is in SortVisionClient.
+    // The client component will manage its own logs.
     console.log(`[LOG] ${new Date().toLocaleTimeString()}: ${message}`);
   };
 
-  const loadAiLibraries = useCallback(async () => {
-    if (tmImageRef.current && tfRef.current) {
-      addLog("AI libraries already loaded.");
-      return true;
-    }
-    addLog("Loading AI libraries (TensorFlow & Teachable Machine)...");
-    try {
-      const [tm, tf] = await Promise.all([
-        import("@teachablemachine/image"),
-        import("@tensorflow/tfjs"),
-      ]);
-      tmImageRef.current = tm;
-      tfRef.current = tf;
-      addLog("AI libraries loaded successfully.");
-      return true;
-    } catch (error: any) {
-      console.error("Failed to load AI libraries:", error);
-      addLog(`FATAL: Could not load AI libraries. ${error.message}`);
-      toast({
-        variant: "destructive",
-        title: "Library Load Error",
-        description: "Could not load core AI libraries. Please refresh the page.",
-      });
-      return false;
-    }
-  }, [toast]);
-  
-  const releaseWakeLock = useCallback(async () => {
-    if (wakeLockRef) {
-      try {
-        await wakeLockRef.release();
-        setWakeLockRef(null);
-        setIsWakeLockActive(false);
-        addLog("Screen wake lock released.");
-      } catch (error: any) {
-        console.error("Could not release wake lock:", error);
-        addLog(`Error releasing wake lock: ${error.message}`);
-      }
-    }
-  }, [wakeLockRef]);
-
-  const requestWakeLock = useCallback(async () => {
-    if ('wakeLock' in navigator && wakeLockEnabled && !wakeLockRef) {
-      try {
-        const lock = await navigator.wakeLock.request('screen');
-        setWakeLockRef(lock);
-        setIsWakeLockActive(true);
-        addLog("Screen wake lock acquired.");
-        lock.addEventListener('release', () => {
-          setWakeLockRef(null);
-          setIsWakeLockActive(false);
-          addLog("Wake Lock was released by the system.");
-        });
-      } catch (err: any) {
-        console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
-        addLog(`Wake Lock Error: ${err.message}`);
-        setIsWakeLockActive(false);
-      }
-    }
-  }, [wakeLockEnabled, wakeLockRef]);
-
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
-    if (!(await loadAiLibraries())) return;
-
     setIsModelLoading(true);
     addLog("Loading Teachable Machine model from files...");
-    
-    const tmImage = tmImageRef.current;
-    const tf = tfRef.current;
 
-    if (!tmImage || !tf) {
-        addLog("Error: AI libraries not available for model loading.");
-        toast({ variant: "destructive", title: "Load Error", description: "AI Libraries not found." });
+    if (!tmImageRef.current || !tfRef.current) {
+        // AI libs need to be loaded by the client first.
+        // This is a fallback in case the button is enabled before libs are ready.
+        toast({ variant: "destructive", title: "Load Error", description: "AI Libraries not ready. Please wait." });
         setIsModelLoading(false);
         return;
     }
 
     try {
       addLog("Setting TensorFlow backend to 'webgl'.");
-      await tf.setBackend('webgl');
-      await tf.ready();
+      await tfRef.current.setBackend('webgl');
+      await tfRef.current.ready();
       addLog("TensorFlow is ready.");
       
       addLog("Starting model load from files.");
-      const loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
+      const loadedModel = await tmImageRef.current.loadFromFiles(modelFile, weightsFile, metadataFile);
       addLog("Model files loaded into memory.");
       
       const labels = loadedModel.getClassLabels();
@@ -166,7 +98,41 @@ export default function SortVisionPage() {
         setIsModelLoading(false);
         addLog("Model loading process finished.");
     }
-  }, [addLog, toast, loadAiLibraries]);
+  }, [addLog, toast]);
+
+  const releaseWakeLock = useCallback(async () => {
+    if (wakeLockRef) {
+      try {
+        await wakeLockRef.release();
+        setWakeLockRef(null);
+        setIsWakeLockActive(false);
+        addLog("Screen wake lock released.");
+      } catch (error: any) {
+        console.error("Could not release wake lock:", error);
+        addLog(`Error releasing wake lock: ${error.message}`);
+      }
+    }
+  }, [wakeLockRef]);
+
+  const requestWakeLock = useCallback(async () => {
+    if ('wakeLock' in navigator && wakeLockEnabled && !wakeLockRef) {
+      try {
+        const lock = await navigator.wakeLock.request('screen');
+        setWakeLockRef(lock);
+        setIsWakeLockActive(true);
+        addLog("Screen wake lock acquired.");
+        lock.addEventListener('release', () => {
+          setWakeLockRef(null);
+          setIsWakeLockActive(false);
+          addLog("Wake Lock was released by the system.");
+        });
+      } catch (err: any) {
+        console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+        addLog(`Wake Lock Error: ${err.message}`);
+        setIsWakeLockActive(false);
+      }
+    }
+  }, [wakeLockEnabled, wakeLockRef]);
 
   const handleFileDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -540,7 +506,6 @@ export default function SortVisionPage() {
           releaseWakeLock={releaseWakeLock}
           tmImageRef={tmImageRef}
           tfRef={tfRef}
-          loadAiLibraries={loadAiLibraries}
           autoCaptureEnabled={autoCaptureEnabled}
         />
       </div>

@@ -60,7 +60,6 @@ interface SortVisionClientProps {
     releaseWakeLock: () => Promise<void>;
     tmImageRef: React.MutableRefObject<TeachableMachine | null>;
     tfRef: React.MutableRefObject<TensorFlow | null>;
-    loadAiLibraries: () => Promise<boolean>;
     autoCaptureEnabled: boolean;
 }
 
@@ -83,18 +82,21 @@ const interpretDetectionsLocal = (
   );
 
   if (significantPredictions.length === 0) {
+    if (predictions.some(p => p.probability > 0.5)) {
+      return {
+        detectionState: "AMBIGUOUS",
+        reason: `Highest confidence is below threshold.`
+      }
+    }
     return {
       detectionState: "NO_DETECTION",
       reason: "No prediction meets the confidence threshold.",
     };
   }
 
-  // Sort by probability to easily compare top predictions
   const sortedPredictions = [...predictions].sort((a,b) => b.probability - a.probability);
-
   const topPrediction = sortedPredictions[0];
 
-  // If the top prediction is below the threshold, it's ambiguous
   if(topPrediction.probability < confidenceThreshold){
     return {
       detectionState: "AMBIGUOUS",
@@ -102,10 +104,8 @@ const interpretDetectionsLocal = (
     };
   }
   
-  // SINGLE_OBJECT check: Top prediction is above threshold AND significantly higher than the second one.
   const secondPrediction = sortedPredictions.length > 1 ? sortedPredictions[1] : null;
   if (secondPrediction) {
-    // If the second best is also above threshold, it's MULTIPLE_OBJECTS
     if (secondPrediction.probability >= confidenceThreshold) {
       return {
           detectionState: "MULTIPLE_OBJECTS",
@@ -113,7 +113,6 @@ const interpretDetectionsLocal = (
           reason: "Multiple objects detected above confidence threshold.",
       };
     }
-    // If the top prediction is not much higher than the second, it's AMBIGUOUS
     if (topPrediction.probability < secondPrediction.probability * 2) {
        return {
         detectionState: "AMBIGUOUS",
@@ -122,7 +121,6 @@ const interpretDetectionsLocal = (
     }
   }
 
-  // If we get here, it means we have a clear winner.
   return {
     detectionState: "SINGLE_OBJECT",
     primaryObject: topPrediction.className,
@@ -138,7 +136,8 @@ export default function SortVisionClient({
     wakeLockEnabled,
     requestWakeLock,
     releaseWakeLock,
-    loadAiLibraries,
+    tmImageRef,
+    tfRef,
     autoCaptureEnabled
 }: SortVisionClientProps) {
   const [isCameraOn, setIsCameraOn] = useState(false);
@@ -170,6 +169,35 @@ export default function SortVisionClient({
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
+
+    const loadAiLibraries = useCallback(async () => {
+    if (tmImageRef.current && tfRef.current) {
+      addLog("AI libraries already loaded.");
+      return true;
+    }
+    addLog("Loading AI libraries (TensorFlow & Teachable Machine)...");
+    setAppStatus("LOADING_LIBS");
+    try {
+      const [tm, tf] = await Promise.all([
+        import("@teachablemachine/image"),
+        import("@tensorflow/tfjs"),
+      ]);
+      tmImageRef.current = tm;
+      tfRef.current = tf;
+      addLog("AI libraries loaded successfully.");
+      setAppStatus("LIBS_LOADED");
+      return true;
+    } catch (error: any) {
+      console.error("Failed to load AI libraries:", error);
+      addLog(`FATAL: Could not load AI libraries. ${error.message}`);
+      toast({
+        variant: "destructive",
+        title: "Library Load Error",
+        description: "Could not load core AI libraries. Please refresh the page.",
+      });
+      return false;
+    }
+  }, [addLog, toast, tmImageRef, tfRef]);
 
   const startImageCollection = useCallback(() => {
     if (!isCameraOn || isCollectingImages) return;
@@ -355,13 +383,15 @@ export default function SortVisionClient({
       }
     } else {
       setPrimaryPrediction(null);
-      if (filteredPredictions.some(p => p.probability > 0.5)) { // Check if there's any notable prediction
+      if (filteredPredictions.some(p => p.probability > 0.5)) {
         newAppStatus = "CONFIDENCE_TOO_LOW";
       }
     }
 
-    setAppStatus(newAppStatus);
-
+    if (appStatus !== 'COLLECTING_IMAGES' && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+      setAppStatus(newAppStatus);
+    }
+    
     // New auto-capture logic
     if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN') {
       const shouldTriggerCapture = 
@@ -409,7 +439,14 @@ export default function SortVisionClient({
 
   useEffect(() => {
     loadAiLibraries();
-  }, [loadAiLibraries]);
+     // This is a cleanup effect. It ensures the camera is turned off when the component unmounts.
+    return () => {
+      if(isCameraOn) {
+        stopCamera();
+      }
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const toggleCamera = () => {
     if (isCameraOn) {
@@ -595,16 +632,6 @@ export default function SortVisionClient({
     checkModelPerformance();
   }, [lastClassifications, toast, addLog, model]);
   
-   useEffect(() => {
-    // This is a cleanup effect. It ensures the camera is turned off when the component unmounts.
-    return () => {
-      if(isCameraOn) {
-        stopCamera();
-      }
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const StatusDisplay = () => {
     const getStatusText = () => {
         switch (appStatus) {
