@@ -25,6 +25,7 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
+import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 
 type Prediction = {
   className: string;
@@ -145,6 +146,7 @@ export default function SortVisionClient({
     setLogs,
 }: SortVisionClientProps) {
   const [isCameraOn, setIsCameraOn] = useState(false);
+  const [hasCameraPermission, setHasCameraPermission] = useState(false);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
@@ -165,7 +167,7 @@ export default function SortVisionClient({
   const { toast } = useToast();
   
   const startImageCollection = useCallback(() => {
-    if (!isCameraOn || isCollectingImages) return;
+    if (!isCameraOn || !hasCameraPermission || isCollectingImages) return;
 
     if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
@@ -178,7 +180,7 @@ export default function SortVisionClient({
     setCountdown(CAPTURE_COUNTDOWN_SECONDS);
     addLog(`Starting image capture in ${CAPTURE_COUNTDOWN_SECONDS} seconds.`);
 
-  }, [isCameraOn, isCollectingImages, addLog, setAppStatus]);
+  }, [isCameraOn, hasCameraPermission, isCollectingImages, addLog, setAppStatus]);
 
   const stopCamera = useCallback(() => {
     addLog("Stopping camera.");
@@ -199,7 +201,8 @@ export default function SortVisionClient({
     }
     streamRef.current = null;
     setIsCameraOn(false);
-    setIsFlashOn(false);
+    // Don't reset flash state, keep user preference
+    // setIsFlashOn(false); 
     setPrimaryPrediction(null);
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
@@ -209,67 +212,81 @@ export default function SortVisionClient({
     releaseWakeLock();
   }, [releaseWakeLock, addLog, model, appStatus, setAppStatus]);
 
-  const startCamera = useCallback(async (flashEnabled?: boolean) => {
-    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-      const useFlash = flashEnabled ?? isFlashOn;
+  const startCamera = useCallback(async () => {
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        addLog("Camera API not available in this browser.");
+        toast({ variant: "destructive", title: "Unsupported Browser", description: "Camera access is not available." });
+        return;
+    }
 
-      try {
+    try {
         addLog("Requesting camera access...");
-
-        if (streamRef.current) {
-            streamRef.current.getTracks().forEach(track => track.stop());
-        }
-
-        const constraints: MediaStreamConstraints = {
-          video: { 
-            facingMode: "environment",
-            advanced: [{ torch: useFlash }]
-          },
-        };
-
-        const stream = await navigator.mediaDevices.getUserMedia(constraints);
-        
-        if (videoRef.current) {
-          videoRef.current.srcObject = stream;
-          await videoRef.current.play();
-        }
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
+        setHasCameraPermission(true);
         streamRef.current = stream;
-        setIsCameraOn(true);
-        setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
 
-        const videoTrack = stream.getVideoTracks()[0];
-        if (videoTrack) {
-          const capabilities = videoTrack.getCapabilities();
-          const settings = videoTrack.getSettings();
-          if (capabilities.torch) {
-              setIsFlashOn(!!settings.torch);
-          } else {
-              setIsFlashOn(false);
-              if (useFlash) {
-                  addLog("Flash/torch not supported on this device.");
-                  toast({ variant: "destructive", title: "Flash Not Supported", description: "This device does not support camera flash control." });
-              }
-          }
-        }
-        
-        addLog(`Camera started ${useFlash ? 'with flash' : 'without flash'}.`);
-        if(wakeLockEnabled) {
-          requestWakeLock();
-        }
+        if (videoRef.current) {
+            videoRef.current.srcObject = stream;
+            // The `play()` call is crucial and should not be interrupted.
+            // We await it to ensure the video is playing before proceeding.
+            await videoRef.current.play();
+            setIsCameraOn(true);
+            setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
+            addLog("Camera started successfully.");
 
-      } catch (error: any) {
+            if (wakeLockEnabled) {
+                requestWakeLock();
+            }
+        }
+    } catch (error: any) {
         console.error("Error accessing camera:", error);
         addLog(`Camera Error: ${error.message}`);
+        setHasCameraPermission(false);
         toast({
-          variant: "destructive",
-          title: "Camera Error",
-          description: "Could not access the camera. Please check permissions.",
+            variant: "destructive",
+            title: "Camera Access Denied",
+            description: "Please enable camera permissions in your browser settings.",
         });
         stopCamera();
-      }
     }
-  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model, setAppStatus]);
+  }, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock]);
 
+
+  const toggleFlash = useCallback(async () => {
+    if (!isCameraOn || !streamRef.current) {
+        addLog("Cannot toggle flash: Camera is off.");
+        return;
+    }
+    
+    const newFlashState = !isFlashOn;
+    const videoTrack = streamRef.current.getVideoTracks()[0];
+    
+    if (videoTrack && 'torch' in videoTrack.getCapabilities()) {
+        try {
+            addLog(`Attempting to set flash to: ${newFlashState ? 'ON' : 'OFF'}`);
+            await videoTrack.applyConstraints({
+                advanced: [{ torch: newFlashState }]
+            });
+            setIsFlashOn(newFlashState);
+            addLog(`Flash is now ${newFlashState ? 'ON' : 'OFF'}.`);
+        } catch (error: any) {
+            console.error("Failed to toggle flash:", error);
+            addLog(`Flash Error: ${error.message}`);
+            toast({
+                variant: "destructive",
+                title: "Flash Control Failed",
+                description: "Could not change the flash setting.",
+            });
+        }
+    } else {
+        addLog("Flash/torch not supported on this device.");
+        toast({
+            variant: "destructive",
+            title: "Flash Not Supported",
+            description: "This device's camera does not support flash control.",
+        });
+    }
+}, [isCameraOn, isFlashOn, addLog, toast]);
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
     if (isTestMode) {
@@ -412,17 +429,10 @@ export default function SortVisionClient({
     if (isCameraOn) {
       stopCamera();
     } else {
-      startCamera(isFlashOn);
+      startCamera();
     }
   };
 
-  const toggleFlash = () => {
-    if (isCameraOn) {
-      const newFlashState = !isFlashOn;
-      startCamera(newFlashState);
-    }
-  };
-  
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (countdown > 0) {
@@ -652,6 +662,19 @@ export default function SortVisionClient({
   const PredictionDisplay = () => {
     const renderContent = () => {
         if (!isCameraOn) {
+            if (!hasCameraPermission && model) {
+                return (
+                    <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm p-4 text-center">
+                        <Alert variant="destructive">
+                            <AlertTriangle className="h-4 w-4" />
+                            <AlertTitle>Camera Access Required</AlertTitle>
+                            <AlertDescription>
+                                Please allow camera access in your browser settings to use this feature.
+                            </AlertDescription>
+                        </Alert>
+                    </div>
+                );
+            }
             return (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
                   <CameraOff className="h-16 w-16 text-muted-foreground" />
@@ -734,7 +757,7 @@ export default function SortVisionClient({
     
     return (
         <div className={cn("absolute inset-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex flex-col items-center", isCollectingImages || countdown > 0 ? "justify-center" : "justify-start")}>
-             {isCameraOn ? renderContent() : null}
+             {renderContent()}
         </div>
     );
   };
@@ -811,12 +834,6 @@ export default function SortVisionClient({
                   muted
                   autoPlay
               />
-              {!isCameraOn && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
-                      <CameraOff className="h-16 w-16 text-muted-foreground" />
-                      <p className="mt-2 text-muted-foreground">Camera is off</p>
-                  </div>
-              )}
               <PredictionDisplay />
               </div>
               <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full w-[240px]">
