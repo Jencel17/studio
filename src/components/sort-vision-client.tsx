@@ -350,8 +350,7 @@ export default function SortVisionClient({
      // New auto-capture logic
     if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN') {
       const shouldTriggerCapture = 
-        localResult.detectionState === 'AMBIGUOUS' || 
-        localResult.detectionState === 'MULTIPLE_OBJECTS' || 
+        localResult.detectionState === 'AMBIGUOUS' ||
         newAppStatus === 'CONFIDENCE_TOO_LOW';
       
       if (shouldTriggerCapture) {
