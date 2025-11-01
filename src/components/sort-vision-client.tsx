@@ -69,7 +69,7 @@ const PREDICTION_INTERVAL = 100;
 const IMAGE_CAPTURE_COUNT = 20;
 const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
-const AUTO_CAPTURE_TRIGGER_TIME = 2000; // 2 seconds
+const AUTO_CAPTURE_TRIGGER_TIME = 3000; // 3 seconds
 const AUTO_CAPTURE_COOLDOWN_TIME = 10000; // 10 seconds
 
 const interpretDetectionsLocal = (
@@ -898,6 +898,5 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
-
 
     
