@@ -139,7 +139,6 @@ export default function SortVisionClient({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const predictionIntervalRef = useRef<NodeJS.Timeout>();
-  const countdownIntervalRef = useRef<NodeJS.Timeout>();
 
   const { toast } = useToast();
   
@@ -376,43 +375,39 @@ export default function SortVisionClient({
     setCountdown(CAPTURE_COUNTDOWN_SECONDS);
     addLog(`Starting image capture in ${CAPTURE_COUNTDOWN_SECONDS} seconds.`);
 
-    countdownIntervalRef.current = setInterval(() => {
-        setCountdown(prev => {
-            if (prev <= 1) {
-                clearInterval(countdownIntervalRef.current!);
-                return 0;
-            }
-            return prev - 1;
-        });
-    }, 1000);
   }, [isCameraOn, isCollectingImages, addLog]);
 
   useEffect(() => {
-    if (countdown === 0 && isCollectingImages && collectedImages.length === 0) {
-      addLog("Countdown finished. Capturing images...");
-      
-      const captureInterval = setInterval(() => {
-        if (!videoRef.current) {
-          clearInterval(captureInterval);
-          return;
-        }
+    if (countdown > 0) {
+      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+      return () => clearTimeout(timer);
+    } else if (isCollectingImages && collectedImages.length === 0) {
+        addLog("Countdown finished. Capturing images...");
+        
+        const captureInterval = setInterval(() => {
+            setCollectedImages(prev => {
+                if (prev.length >= IMAGE_CAPTURE_COUNT -1) {
+                    clearInterval(captureInterval);
+                }
+                if (!videoRef.current) return prev;
 
-        const canvas = document.createElement('canvas');
-        canvas.width = videoRef.current.videoWidth;
-        canvas.height = videoRef.current.videoHeight;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-          const dataUri = canvas.toDataURL('image/jpeg');
-          setCollectedImages(prev => [...prev, dataUri]);
-        }
-      }, IMAGE_CAPTURE_INTERVAL);
+                const canvas = document.createElement('canvas');
+                canvas.width = videoRef.current.videoWidth;
+                canvas.height = videoRef.current.videoHeight;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                    const dataUri = canvas.toDataURL('image/jpeg');
+                    return [...prev, dataUri];
+                }
+                return prev;
+            });
+        }, IMAGE_CAPTURE_INTERVAL);
 
-      setTimeout(() => {
-        clearInterval(captureInterval);
-      }, IMAGE_CAPTURE_INTERVAL * IMAGE_CAPTURE_COUNT);
+        return () => clearInterval(captureInterval);
     }
-  }, [countdown, isCollectingImages, collectedImages.length, addLog]);
+  }, [countdown, isCollectingImages, addLog, collectedImages.length]);
+
 
   useEffect(() => {
     const zipAndDownloadImages = async () => {
@@ -470,9 +465,6 @@ export default function SortVisionClient({
             clearInterval(predictionIntervalRef.current);
             predictionIntervalRef.current = undefined;
             addLog("Cleaned up classification loop.");
-        }
-        if (countdownIntervalRef.current) {
-            clearInterval(countdownIntervalRef.current);
         }
     };
   }, [isCameraOn, model, runClassification, addLog, isCollectingImages]);
