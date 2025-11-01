@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download } from "lucide-react";
+import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Save, Trash2, Loader2, BrainCircuit } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -29,6 +29,7 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFo
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
+import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
 
 
 type Prediction = {
@@ -127,6 +128,11 @@ export default function SortVisionClient() {
   const [isCollectingImages, setIsCollectingImages] = useState(false);
   const [collectedImages, setCollectedImages] = useState<string[]>([]);
   const [countdown, setCountdown] = useState(0);
+
+  // Model Library State
+  const [savedModels, setSavedModels] = useState<StoredModel[]>([]);
+  const [newModelName, setNewModelName] = useState("");
+  const [modelFiles, setModelFiles] = useState<{ model: File; metadata: File; weights: File } | null>(null);
 
   // AI library state
   const tmImageRef = useRef<TeachableMachine | null>(null);
@@ -374,6 +380,7 @@ export default function SortVisionClient() {
       if (foundPrediction) {
           topPrediction = foundPrediction;
           setPrimaryPrediction(foundPrediction);
+          setLastClassifications(prev => [...prev, foundPrediction]);
       } else {
         setPrimaryPrediction(null);
       }
@@ -451,6 +458,8 @@ export default function SortVisionClient() {
       } else {
         setModel(loadedModel);
         setModelLabels(labels);
+        setModelFiles({ model: modelFile, metadata: metadataFile, weights: weightsFile });
+        setNewModelName(modelFile.name.replace('.json', ''));
         addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
         toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
         setAppStatus("AWAITING_OBJECT");
@@ -603,6 +612,7 @@ export default function SortVisionClient() {
          toast({ variant: "destructive", title: "Invalid Files", description: "Select a .zip or all three model component files." });
        }
     }
+    // Reset file input so the same file can be selected again
     event.target.value = '';
   };
 
@@ -610,7 +620,66 @@ export default function SortVisionClient() {
   useEffect(() => {
     loadAiLibraries();
   }, [loadAiLibraries]);
+
+  const refreshModelsFromDb = useCallback(async () => {
+    addLog("Refreshing model list from local DB...");
+    const models = await getModelsFromDb();
+    setSavedModels(models);
+    addLog(`Found ${models.length} saved models.`);
+  }, [addLog]);
+
+  useEffect(() => {
+    refreshModelsFromDb();
+  }, [refreshModelsFromDb]);
   
+  const handleSaveModel = async () => {
+    if (!modelFiles || !newModelName) {
+      toast({ variant: "destructive", title: "Cannot Save", description: "No model is loaded or name is empty." });
+      return;
+    }
+    try {
+      addLog(`Saving model "${newModelName}" to local library...`);
+      await saveModelToDb(newModelName, modelFiles.model, modelFiles.metadata, modelFiles.weights);
+      toast({ title: "Model Saved", description: `"${newModelName}" has been saved to your library.` });
+      setNewModelName("");
+      setModelFiles(null);
+      await refreshModelsFromDb();
+    } catch (error: any) {
+      console.error("Failed to save model:", error);
+      addLog(`Error saving model: ${error.message}`);
+      toast({ variant: "destructive", title: "Save Error", description: "Could not save the model to the local library." });
+    }
+  };
+
+  const handleLoadFromLibrary = async (name: string) => {
+    try {
+      addLog(`Loading model "${name}" from library...`);
+      const modelData = await getModelFromDb(name);
+      if (modelData) {
+        await loadModelFromFiles(modelData.model, modelData.metadata, modelData.weights);
+      } else {
+        throw new Error("Model not found in the database.");
+      }
+    } catch (error: any) {
+      console.error("Failed to load model from library:", error);
+      addLog(`Error loading model: ${error.message}`);
+      toast({ variant: "destructive", title: "Load Error", description: `Could not load "${name}" from the library.` });
+    }
+  };
+
+  const handleDeleteFromLibrary = async (name: string) => {
+    try {
+      addLog(`Deleting model "${name}" from library...`);
+      await deleteModelFromDb(name);
+      toast({ title: "Model Deleted", description: `"${name}" has been removed from your library.` });
+      await refreshModelsFromDb();
+    } catch (error: any) {
+      console.error("Failed to delete model from library:", error);
+      addLog(`Error deleting model: ${error.message}`);
+      toast({ variant: "destructive", title: "Delete Error", description: `Could not delete "${name}" from the library.` });
+    }
+  };
+
   const handleWakeLockToggle = (checked: boolean) => {
     setWakeLockEnabled(checked);
     if (checked) {
@@ -1045,6 +1114,46 @@ export default function SortVisionClient() {
                 onChange={handleFileSelect}
                 disabled={isModelLoading}
               />
+            </div>
+             {modelFiles && (
+              <div className="mx-4 mb-4 p-4 border rounded-lg bg-muted/30 space-y-3">
+                  <Label htmlFor="model-name">Save to Library</Label>
+                  <div className="flex gap-2">
+                      <Input 
+                          id="model-name"
+                          value={newModelName}
+                          onChange={(e) => setNewModelName(e.target.value)}
+                          placeholder="Enter model name..."
+                      />
+                      <Button onClick={handleSaveModel} size="icon">
+                          <Save />
+                      </Button>
+                  </div>
+              </div>
+            )}
+          </SidebarGroup>
+          <SidebarGroup>
+            <SidebarGroupLabel>Model Library</SidebarGroupLabel>
+            <div className="p-4 pt-0">
+              {savedModels.length > 0 ? (
+                <div className="space-y-2">
+                  {savedModels.map(m => (
+                    <div key={m.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                      <p className="text-sm font-medium truncate">{m.name}</p>
+                      <div className="flex gap-1">
+                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading}>
+                          {isModelLoading ? <Loader2 className="animate-spin"/> : <BrainCircuit />}
+                        </Button>
+                         <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
+                          <Trash2 />
+                        </Button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground text-center p-4">No models saved locally.</p>
+              )}
             </div>
           </SidebarGroup>
            <SidebarGroup>
