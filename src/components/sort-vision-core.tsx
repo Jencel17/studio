@@ -14,7 +14,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
 import SortVisionClient from "@/components/sort-vision-client";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/app/page";
 import { LogEntry } from "@/lib/types";
@@ -34,6 +34,7 @@ interface SortVisionCoreProps {
     logs: LogEntry[];
     setLogs: (logs: LogEntry[]) => void;
     releaseWakeLock: () => Promise<void>;
+    libsLoaded: boolean;
 }
 
 export default function SortVisionCore({
@@ -51,6 +52,7 @@ export default function SortVisionCore({
     logs,
     setLogs,
     releaseWakeLock,
+    libsLoaded,
 }: SortVisionCoreProps) {
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -61,6 +63,7 @@ export default function SortVisionCore({
   const [isTestMode, setIsTestMode] = useState(false);
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
   const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
+  const [cameraRestartDelay, setCameraRestartDelay] = useState(3);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -98,8 +101,10 @@ export default function SortVisionCore({
   }, [toast, setAppStatus, addLog]);
 
   useEffect(() => {
-    loadAiLibraries();
-  }, [loadAiLibraries]);
+    if (!libsLoaded) {
+      loadAiLibraries();
+    }
+  }, [libsLoaded, loadAiLibraries]);
 
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
@@ -396,13 +401,15 @@ export default function SortVisionCore({
                 className={cn(
                   "m-4 mt-0 p-4 border-2 border-dashed rounded-lg text-center transition-colors duration-200",
                   isDragging ? "border-primary bg-primary/10" : "border-border",
-                  isModelLoading && "pointer-events-none opacity-50"
+                  (isModelLoading || !libsLoaded) && "pointer-events-none opacity-50"
                 )}
               >
                 <FileUp className="mx-auto h-10 w-10 text-muted-foreground" />
                 <p className="mt-2 text-sm text-muted-foreground">
                   {isModelLoading 
                     ? "Loading model..." 
+                    : !libsLoaded
+                    ? "Loading AI libs..."
                     : isDragging 
                     ? "Release to upload" 
                     : "Drag & drop a .zip or model files"}
@@ -412,7 +419,7 @@ export default function SortVisionCore({
                   variant="link" 
                   className="p-0 h-auto text-sm"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isModelLoading}
+                  disabled={isModelLoading || !libsLoaded}
                 >
                   click to browse
                 </Button>
@@ -423,7 +430,7 @@ export default function SortVisionCore({
                   accept=".zip,model.json,metadata.json,application/octet-stream"
                   multiple
                   onChange={handleFileSelect}
-                  disabled={isModelLoading}
+                  disabled={isModelLoading || !libsLoaded}
                 />
               </div>
               {modelFiles && (
@@ -452,7 +459,7 @@ export default function SortVisionCore({
                       <div key={m.name} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
                         <p className="text-sm font-medium truncate">{m.name}</p>
                         <div className="flex gap-1">
-                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading}>
+                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !libsLoaded}>
                             {isModelLoading ? <Loader2 className="animate-spin"/> : <BrainCircuit />}
                           </Button>
                           <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
@@ -516,6 +523,20 @@ export default function SortVisionCore({
                     onCheckedChange={setIsTestMode}
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label htmlFor="restart-delay" className="flex items-center gap-2">
+                    <Timer className="h-4 w-4" />
+                    Camera Restart Delay (s)
+                  </Label>
+                  <Input
+                    id="restart-delay"
+                    type="number"
+                    value={cameraRestartDelay}
+                    onChange={(e) => setCameraRestartDelay(Math.max(0, Number(e.target.value)))}
+                    placeholder="e.g., 3"
+                    min="0"
+                  />
+                </div>
               </div>
             </SidebarGroup>
           </ScrollArea>
@@ -540,10 +561,10 @@ export default function SortVisionCore({
           addLog={addLog}
           logs={logs}
           setLogs={setLogs}
+          libsLoaded={libsLoaded}
+          cameraRestartDelay={cameraRestartDelay}
         />
       </div>
     </>
   );
 }
-
-    

@@ -59,9 +59,9 @@ interface SortVisionClientProps {
     logs: LogEntry[];
     setLogs: (logs: LogEntry[]) => void;
     libsLoaded: boolean;
+    cameraRestartDelay: number;
 }
 
-const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
 const PREDICTION_INTERVAL = 100;
 const IMAGE_CAPTURE_COUNT = 20;
@@ -140,6 +140,7 @@ export default function SortVisionClient({
     logs,
     setLogs,
     libsLoaded,
+    cameraRestartDelay,
 }: SortVisionClientProps) {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
@@ -370,16 +371,17 @@ const startCamera = useCallback(async () => {
     stopCamera();
     
     setAppStatus("CAMERA_CYCLING");
-    addLog(`Command sent for ${classification}. Restarting camera in ${CAMERA_RESTART_DELAY / 1000} seconds...`);
+    const delayInMs = cameraRestartDelay * 1000;
+    addLog(`Command sent for ${classification}. Restarting camera in ${cameraRestartDelay} seconds...`);
     
     await sendSortCommand(classification);
 
     setTimeout(() => {
         addLog("Restarting camera now.");
         startCamera();
-    }, CAMERA_RESTART_DELAY);
+    }, delayInMs);
 
-}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus]);
+}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, cameraRestartDelay]);
 
   const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
@@ -911,5 +913,3 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
-
-    
