@@ -36,7 +36,7 @@ type LogEntry = {
   message: string;
 };
 
-type AppStatus = "AWAITING_MODEL" | "LOADING_LIBS" | "LIBS_LOADED"| "MODEL_LOADING" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING" | "COLLECTING_IMAGES";
+type AppStatus = "AWAITING_MODEL" | "LOADING_LIBS" | "LIBS_LOADED"| "MODEL_LOADING" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING" | "COLLECTING_IMAGES" | "COOLDOWN";
 
 type CommandStatus = {
   status: "IDLE" | "SUCCESS" | "ERROR";
@@ -61,6 +61,7 @@ interface SortVisionClientProps {
     tmImageRef: React.MutableRefObject<TeachableMachine | null>;
     tfRef: React.MutableRefObject<TensorFlow | null>;
     loadAiLibraries: () => Promise<boolean>;
+    autoCaptureEnabled: boolean;
 }
 
 const CAMERA_RESTART_DELAY = 3000;
@@ -70,6 +71,8 @@ const PREDICTION_INTERVAL = 100;
 const IMAGE_CAPTURE_COUNT = 20;
 const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
+const AUTO_CAPTURE_TRIGGER_TIME = 2000; // 2 seconds
+const AUTO_CAPTURE_COOLDOWN_TIME = 10000; // 10 seconds
 
 const interpretDetectionsLocal = (
   predictions: Prediction[],
@@ -120,7 +123,8 @@ export default function SortVisionClient({
     wakeLockEnabled,
     requestWakeLock,
     releaseWakeLock,
-    loadAiLibraries
+    loadAiLibraries,
+    autoCaptureEnabled
 }: SortVisionClientProps) {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isFlashOn, setIsFlashOn] = useState(false);
@@ -139,6 +143,8 @@ export default function SortVisionClient({
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const predictionIntervalRef = useRef<NodeJS.Timeout>();
+  const ambiguousDetectionTimer = useRef<NodeJS.Timeout | null>(null);
+
 
   const { toast } = useToast();
   
@@ -149,6 +155,22 @@ export default function SortVisionClient({
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
+
+  const startImageCollection = useCallback(() => {
+    if (!isCameraOn || isCollectingImages) return;
+
+    if (predictionIntervalRef.current) {
+        clearInterval(predictionIntervalRef.current);
+        predictionIntervalRef.current = undefined;
+    }
+
+    setIsCollectingImages(true);
+    setAppStatus("COLLECTING_IMAGES");
+    setCollectedImages([]);
+    setCountdown(CAPTURE_COUNTDOWN_SECONDS);
+    addLog(`Starting image capture in ${CAPTURE_COUNTDOWN_SECONDS} seconds.`);
+
+  }, [isCameraOn, isCollectingImages, addLog]);
 
   const stopCamera = useCallback(() => {
     addLog("Stopping camera.");
@@ -162,6 +184,10 @@ export default function SortVisionClient({
       clearInterval(predictionIntervalRef.current);
       predictionIntervalRef.current = undefined;
       addLog("Classification loop stopped.");
+    }
+     if (ambiguousDetectionTimer.current) {
+      clearTimeout(ambiguousDetectionTimer.current);
+      ambiguousDetectionTimer.current = null;
     }
     streamRef.current = null;
     setIsCameraOn(false);
@@ -313,6 +339,28 @@ export default function SortVisionClient({
     } else {
       setPrimaryPrediction(null);
     }
+     // New auto-capture logic
+    if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN') {
+      const isAmbiguous = localResult.detectionState === 'AMBIGUOUS' || localResult.detectionState === 'MULTIPLE_OBJECTS';
+      
+      if (isAmbiguous) {
+        if (!ambiguousDetectionTimer.current) {
+          addLog(`Ambiguous detection started. Triggering capture in ${AUTO_CAPTURE_TRIGGER_TIME / 1000}s.`);
+          ambiguousDetectionTimer.current = setTimeout(() => {
+            addLog("Threshold met. Starting automatic image capture.");
+            startImageCollection();
+            ambiguousDetectionTimer.current = null;
+          }, AUTO_CAPTURE_TRIGGER_TIME);
+        }
+      } else {
+        if (ambiguousDetectionTimer.current) {
+          addLog("Detection became clear. Cancelling auto-capture trigger.");
+          clearTimeout(ambiguousDetectionTimer.current);
+          ambiguousDetectionTimer.current = null;
+        }
+      }
+    }
+
     
     if (topPrediction) { 
       setAppStatus("READY_TO_SEND");
@@ -339,7 +387,7 @@ export default function SortVisionClient({
         setAppStatus("AWAITING_OBJECT");
     }
 
-  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera]);
+  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection]);
 
 
   useEffect(() => {
@@ -361,26 +409,14 @@ export default function SortVisionClient({
     }
   };
   
-  const startImageCollection = useCallback(() => {
-    if (!isCameraOn || isCollectingImages) return;
-
-    if (predictionIntervalRef.current) {
-        clearInterval(predictionIntervalRef.current);
-        predictionIntervalRef.current = undefined;
-    }
-
-    setIsCollectingImages(true);
-    setAppStatus("COLLECTING_IMAGES");
-    setCollectedImages([]);
-    setCountdown(CAPTURE_COUNTDOWN_SECONDS);
-    addLog(`Starting image capture in ${CAPTURE_COUNTDOWN_SECONDS} seconds.`);
-
-  }, [isCameraOn, isCollectingImages, addLog]);
+  
 
   useEffect(() => {
+    let timer: NodeJS.Timeout;
     if (countdown > 0) {
-      const timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-      return () => clearTimeout(timer);
+      timer = setTimeout(() => {
+        setCountdown(countdown - 1)
+      }, 1000);
     } else if (isCollectingImages && collectedImages.length === 0) {
         addLog("Countdown finished. Capturing images...");
         
@@ -406,6 +442,7 @@ export default function SortVisionClient({
 
         return () => clearInterval(captureInterval);
     }
+     return () => clearTimeout(timer);
   }, [countdown, isCollectingImages, addLog, collectedImages.length]);
 
 
@@ -441,20 +478,29 @@ export default function SortVisionClient({
         } finally {
             setIsCollectingImages(false);
             setCollectedImages([]);
-            setAppStatus("AWAITING_OBJECT");
+            if (autoCaptureEnabled) {
+              setAppStatus("COOLDOWN");
+              addLog(`Auto-capture finished. Entering ${AUTO_CAPTURE_COOLDOWN_TIME / 1000}s cooldown.`);
+              setTimeout(() => {
+                setAppStatus("AWAITING_OBJECT");
+                addLog("Cooldown finished. Resuming analysis.");
+              }, AUTO_CAPTURE_COOLDOWN_TIME);
+            } else {
+               setAppStatus("AWAITING_OBJECT");
+            }
         }
     };
     
     if (isCollectingImages && collectedImages.length >= IMAGE_CAPTURE_COUNT) {
         zipAndDownloadImages();
     }
-}, [collectedImages, isCollectingImages, addLog, toast]);
+}, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled]);
 
   useEffect(() => {
-    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages) {
+    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN') {
         addLog("Starting classification loop.");
         predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
-    } else if ((!isCameraOn || !model || isCollectingImages) && predictionIntervalRef.current) {
+    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN') && predictionIntervalRef.current) {
         addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
@@ -467,7 +513,7 @@ export default function SortVisionClient({
             addLog("Cleaned up classification loop.");
         }
     };
-  }, [isCameraOn, model, runClassification, addLog, isCollectingImages]);
+  }, [isCameraOn, model, runClassification, addLog, isCollectingImages, appStatus]);
   
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -552,8 +598,9 @@ export default function SortVisionClient({
             case "MODEL_LOADING": return "Loading Model...";
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
-            case "CAMERA_CYCLING": return "CAMERA RESTARTING...";
+            case "CAMERA_CYCLING": return "Camera Restarting...";
             case "COLLECTING_IMAGES": return "Collecting Images...";
+            case "COOLDOWN": return "Auto-Capture Cooldown";
             case "READY_TO_SEND":
                 return `Sending: ${primaryPrediction?.className || '...'}`;
             default: return "Analyzing...";
@@ -565,6 +612,7 @@ export default function SortVisionClient({
             case "READY_TO_SEND": return "default";
             case "COLLECTING_IMAGES": return "default";
             case "AWAITING_MODEL": return "secondary";
+            case "COOLDOWN":
             case "LOADING_LIBS":
             case "MODEL_LOADING":
             case "CAMERA_CYCLING": return "secondary";
@@ -573,7 +621,7 @@ export default function SortVisionClient({
         }
     };
 
-    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES';
+    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN';
 
     return (
         <div className="flex flex-col gap-2">
@@ -798,4 +846,6 @@ export default function SortVisionClient({
     </>
   );
 }
+    
+
     

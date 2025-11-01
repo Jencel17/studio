@@ -17,7 +17,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Save, Trash2, Loader2, BrainCircuit } from "lucide-react";
+import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Save, Trash2, Loader2, BrainCircuit, Bot } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -46,6 +46,7 @@ export default function SortVisionPage() {
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
   const [wakeLockRef, setWakeLockRef] = useState<WakeLockSentinel | null>(null);
   const [isWakeLockActive, setIsWakeLockActive] = useState(false);
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
@@ -349,8 +350,8 @@ export default function SortVisionPage() {
   };
 
   const handleLoadFromLibrary = async (name: string) => {
-    setIsModelLoading(true);
     addLog(`Loading model "${name}" from library...`);
+    setIsModelLoading(true);
     try {
       const modelData = await getModelFromDb(name);
       if (modelData) {
@@ -509,6 +510,17 @@ export default function SortVisionPage() {
                     onCheckedChange={handleWakeLockToggle}
                   />
                 </div>
+                 <div className="flex items-center justify-between">
+                  <Label htmlFor="auto-capture" className="flex items-center gap-2">
+                    <Bot className="h-4 w-4" />
+                    Auto-Capture
+                  </Label>
+                  <Switch
+                    id="auto-capture"
+                    checked={autoCaptureEnabled}
+                    onCheckedChange={setAutoCaptureEnabled}
+                  />
+                </div>
                 <div className="flex items-center justify-between">
                   <Label htmlFor="test-mode" className="flex items-center gap-2">
                     <TestTube className="h-4 w-4" />
@@ -543,9 +555,12 @@ export default function SortVisionPage() {
           tmImageRef={tmImageRef}
           tfRef={tfRef}
           loadAiLibraries={loadAiLibraries}
+          autoCaptureEnabled={autoCaptureEnabled}
         />
       </div>
     </>
   );
 }
+    
+
     
