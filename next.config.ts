@@ -2,11 +2,12 @@
 import type {NextConfig} from 'next';
 import withPWA from 'next-pwa';
 
-const pwaConfig = withPWA({
+const pwaConfig = {
   dest: 'public',
   register: true,
   skipWaiting: true,
-});
+  disable: process.env.NODE_ENV === 'development',
+};
 
 const nextConfig: NextConfig = {
   webpack: (config, { isServer }) => {
@@ -48,9 +49,6 @@ const nextConfig: NextConfig = {
       },
     ],
   },
-  devIndicators: {
-    allowedDevOrigins: ['*'],
-  },
 };
 
-export default pwaConfig(nextConfig);
+export default withPWA(pwaConfig)(nextConfig);
