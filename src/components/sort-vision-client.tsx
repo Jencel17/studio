@@ -50,9 +50,10 @@ type TensorFlow = typeof import("@tensorflow/tfjs");
 
 interface SortVisionClientProps {
     model: tmImage.CustomMobileNet | null;
-    setModel: (model: tmImage.CustomMobileNet | null) => void;
     modelLabels: string[];
     isModelLoading: boolean;
+    appStatus: AppStatus;
+    setAppStatus: (status: AppStatus) => void;
     esp32Ip: string;
     isTestMode: boolean;
     wakeLockEnabled: boolean;
@@ -131,6 +132,8 @@ const interpretDetectionsLocal = (
 export default function SortVisionClient({
     model,
     modelLabels,
+    appStatus,
+    setAppStatus,
     esp32Ip,
     isTestMode,
     wakeLockEnabled,
@@ -151,7 +154,6 @@ export default function SortVisionClient({
   const [isCollectingImages, setIsCollectingImages] = useState(false);
   const [collectedImages, setCollectedImages] = useState<string[]>([]);
   const [countdown, setCountdown] = useState(0);
-  const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -170,35 +172,6 @@ export default function SortVisionClient({
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
 
-    const loadAiLibraries = useCallback(async () => {
-    if (tmImageRef.current && tfRef.current) {
-      addLog("AI libraries already loaded.");
-      return true;
-    }
-    addLog("Loading AI libraries (TensorFlow & Teachable Machine)...");
-    setAppStatus("LOADING_LIBS");
-    try {
-      const [tm, tf] = await Promise.all([
-        import("@teachablemachine/image"),
-        import("@tensorflow/tfjs"),
-      ]);
-      tmImageRef.current = tm;
-      tfRef.current = tf;
-      addLog("AI libraries loaded successfully.");
-      setAppStatus("LIBS_LOADED");
-      return true;
-    } catch (error: any) {
-      console.error("Failed to load AI libraries:", error);
-      addLog(`FATAL: Could not load AI libraries. ${error.message}`);
-      toast({
-        variant: "destructive",
-        title: "Library Load Error",
-        description: "Could not load core AI libraries. Please refresh the page.",
-      });
-      return false;
-    }
-  }, [addLog, toast, tmImageRef, tfRef]);
-
   const startImageCollection = useCallback(() => {
     if (!isCameraOn || isCollectingImages) return;
 
@@ -213,7 +186,7 @@ export default function SortVisionClient({
     setCountdown(CAPTURE_COUNTDOWN_SECONDS);
     addLog(`Starting image capture in ${CAPTURE_COUNTDOWN_SECONDS} seconds.`);
 
-  }, [isCameraOn, isCollectingImages, addLog]);
+  }, [isCameraOn, isCollectingImages, addLog, setAppStatus]);
 
   const stopCamera = useCallback(() => {
     addLog("Stopping camera.");
@@ -242,11 +215,9 @@ export default function SortVisionClient({
       setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
     }
     releaseWakeLock();
-  }, [releaseWakeLock, addLog, model, appStatus]);
+  }, [releaseWakeLock, addLog, model, appStatus, setAppStatus]);
 
   const startCamera = useCallback(async (flashEnabled?: boolean) => {
-    if (!(await loadAiLibraries())) return;
-
     if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
       const useFlash = flashEnabled ?? isFlashOn;
 
@@ -305,7 +276,7 @@ export default function SortVisionClient({
         stopCamera();
       }
     }
-  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model, loadAiLibraries]);
+  }, [addLog, isFlashOn, stopCamera, toast, wakeLockEnabled, requestWakeLock, model, setAppStatus]);
 
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
@@ -383,7 +354,7 @@ export default function SortVisionClient({
       }
     } else {
       setPrimaryPrediction(null);
-      if (filteredPredictions.some(p => p.probability > 0.5)) {
+      if (localResult.detectionState === 'AMBIGUOUS' || localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5)) {
         newAppStatus = "CONFIDENCE_TOO_LOW";
       }
     }
@@ -392,7 +363,6 @@ export default function SortVisionClient({
       setAppStatus(newAppStatus);
     }
     
-    // New auto-capture logic
     if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN') {
       const shouldTriggerCapture = 
         localResult.detectionState === 'AMBIGUOUS' ||
@@ -434,11 +404,10 @@ export default function SortVisionClient({
         startCamera();
       }, CAMERA_RESTART_DELAY);
     }
-  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection]);
+  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection, setAppStatus]);
 
 
   useEffect(() => {
-    loadAiLibraries();
      // This is a cleanup effect. It ensures the camera is turned off when the component unmounts.
     return () => {
       if(isCameraOn) {
@@ -546,13 +515,13 @@ export default function SortVisionClient({
     if (isCollectingImages && collectedImages.length >= IMAGE_CAPTURE_COUNT) {
         zipAndDownloadImages();
     }
-}, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled]);
+}, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled, setAppStatus]);
 
   useEffect(() => {
-    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN') {
+    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
         addLog("Starting classification loop.");
         predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
-    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN') && predictionIntervalRef.current) {
+    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_CYCLING') && predictionIntervalRef.current) {
         addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
