@@ -19,7 +19,6 @@ import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
-import { handleMaterialAnalysis } from "@/app/actions/material-analyzer";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -401,40 +400,8 @@ const startCamera = useCallback(async () => {
       setPrimaryPrediction(null);
       const isUncertain = localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5));
       newAppStatus = isUncertain ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
-
-      if (isUncertain) {
-          // New logic: Escalate to cloud AI
-          if (appStatus !== 'ANALYZING_MATERIAL' && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
-              addLog("Uncertain detection. Escalating to cloud AI for material analysis.");
-              setAppStatus("ANALYZING_MATERIAL");
-              
-              const canvas = document.createElement('canvas');
-              canvas.width = video.videoWidth;
-              canvas.height = video.videoHeight;
-              const ctx = canvas.getContext('2d');
-              if (ctx) {
-                  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                  const dataUri = canvas.toDataURL('image/jpeg');
-
-                  handleMaterialAnalysis({ photoDataUri: dataUri })
-                      .then(result => {
-                          if (result.material && ['Plastic', 'Metal', 'Paper'].includes(result.material)) {
-                              addLog(`Cloud AI identified material: ${result.material}. Reason: ${result.reason}`);
-                              handleSortAndRestart(result.material);
-                          } else {
-                              addLog(`Cloud AI could not determine material. Reason: ${result.reason}`);
-                              setAppStatus('CONFIDENCE_TOO_LOW'); // Go back to low confidence
-                          }
-                      })
-                      .catch(err => {
-                          addLog(`Cloud AI analysis failed: ${err.message}`);
-                          setAppStatus('CONFIDENCE_TOO_LOW');
-                      });
-              }
-          }
-      }
-      // Only set status if it has changed and not in a critical phase
-      if (appStatus !== newAppStatus && appStatus !== 'ANALYZING_MATERIAL' && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+      
+      if (appStatus !== newAppStatus) {
         setAppStatus(newAppStatus);
       }
     }
@@ -561,10 +528,10 @@ const startCamera = useCallback(async () => {
 }, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled, setAppStatus]);
 
   useEffect(() => {
-    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING' && appStatus !== 'ANALYZING_MATERIAL') {
+    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
         addLog("Starting classification loop.");
         predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
-    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_CYCLING' || appStatus === 'ANALYZING_MATERIAL') && predictionIntervalRef.current) {
+    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_CYCLING') && predictionIntervalRef.current) {
         addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
@@ -929,3 +896,5 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
+
+    
