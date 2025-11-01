@@ -11,6 +11,8 @@ const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 export const metadata: Metadata = {
   title: "SortVision",
   description: "AI-powered trash sorting assistant",
+  manifest: "/manifest.json",
+  themeColor: "#F5F5DC",
 };
 
 export default function RootLayout({

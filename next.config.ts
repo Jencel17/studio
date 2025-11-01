@@ -1,9 +1,12 @@
 import type {NextConfig} from 'next';
 
+const withPWA = require('next-pwa')({
+  dest: 'public',
+  register: true,
+  skipWaiting: true,
+});
+
 const nextConfig: NextConfig = {
-  devIndicators: {
-    allowedDevOrigins: ['*'],
-  },
   webpack: (config, { isServer }) => {
     // Exclude the 'encoding' module from the client-side bundle
     if (!isServer) {
@@ -43,6 +46,9 @@ const nextConfig: NextConfig = {
       },
     ],
   },
+  devIndicators: {
+    allowedDevOrigins: ['*'],
+  },
 };
 
-export default nextConfig;
+export default withPWA(nextConfig);
