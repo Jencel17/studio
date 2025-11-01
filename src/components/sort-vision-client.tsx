@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Eraser } from "lucide-react";
+import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -41,7 +41,7 @@ type LogEntry = {
   message: string;
 };
 
-type AppStatus = "AWAITING_MODEL" | "LOADING_LIBS" | "LIBS_LOADED"| "MODEL_LOADING" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING";
+type AppStatus = "AWAITING_MODEL" | "LOADING_LIBS" | "LIBS_LOADED"| "MODEL_LOADING" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING" | "COLLECTING_IMAGES";
 
 type CommandStatus = {
   status: "IDLE" | "SUCCESS" | "ERROR";
@@ -59,6 +59,9 @@ const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
 const MAX_LOGS = 100;
 const PREDICTION_INTERVAL = 100;
+const IMAGE_CAPTURE_COUNT = 20;
+const IMAGE_CAPTURE_INTERVAL = 100;
+const CAPTURE_COUNTDOWN_SECONDS = 3;
 
 
 // Local implementation of the AI logic to avoid network latency
@@ -120,12 +123,17 @@ export default function SortVisionClient() {
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
   const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
 
+  // Image capture state
+  const [isCollectingImages, setIsCollectingImages] = useState(false);
+  const [collectedImages, setCollectedImages] = useState<string[]>([]);
+  const [countdown, setCountdown] = useState(0);
+
   // AI library state
   const tmImageRef = useRef<TeachableMachine | null>(null);
   const tfRef = useRef<TensorFlow | null>(null);
   
   // New state for HTTP communication
-  const [appStatus, setAppStatus] = useState<AppStatus>("AWAITING_MODEL");
+  const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
   const [isTestMode, setIsTestMode] = useState(false);
@@ -135,6 +143,7 @@ export default function SortVisionClient() {
   const wakeLockRef = useRef<WakeLockSentinel | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const predictionIntervalRef = useRef<NodeJS.Timeout>();
+  const countdownIntervalRef = useRef<NodeJS.Timeout>();
 
   const { toast } = useToast();
   
@@ -161,7 +170,7 @@ export default function SortVisionClient() {
       tmImageRef.current = tm;
       tfRef.current = tf;
       addLog("AI libraries loaded successfully.");
-      setAppStatus("LIBS_LOADED");
+      setAppStatus("AWAITING_MODEL");
       return true;
     } catch (error: any) {
       console.error("Failed to load AI libraries:", error);
@@ -228,9 +237,11 @@ export default function SortVisionClient() {
     setPrimaryPrediction(null);
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
-    setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
+    if(appStatus !== 'COLLECTING_IMAGES') {
+      setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
+    }
     releaseWakeLock();
-  }, [releaseWakeLock, addLog, model]);
+  }, [releaseWakeLock, addLog, model, appStatus]);
 
   const startCamera = useCallback(async (flashEnabled?: boolean) => {
     if (!(await loadAiLibraries())) return;
@@ -597,8 +608,8 @@ export default function SortVisionClient() {
 
 
   useEffect(() => {
-    addLog("App initialized. Please load a model to begin.");
-  }, [addLog]);
+    loadAiLibraries();
+  }, [loadAiLibraries]);
   
   const handleWakeLockToggle = (checked: boolean) => {
     setWakeLockEnabled(checked);
@@ -625,12 +636,105 @@ export default function SortVisionClient() {
       startCamera(newFlashState);
     }
   };
+  
+  const startImageCollection = useCallback(() => {
+    if (!isCameraOn || isCollectingImages) return;
+
+    if (predictionIntervalRef.current) {
+        clearInterval(predictionIntervalRef.current);
+        predictionIntervalRef.current = undefined;
+    }
+
+    setIsCollectingImages(true);
+    setAppStatus("COLLECTING_IMAGES");
+    setCollectedImages([]);
+    setCountdown(CAPTURE_COUNTDOWN_SECONDS);
+    addLog(`Starting image capture in ${CAPTURE_COUNTDOWN_SECONDS} seconds.`);
+
+    countdownIntervalRef.current = setInterval(() => {
+        setCountdown(prev => {
+            if (prev <= 1) {
+                clearInterval(countdownIntervalRef.current);
+                return 0;
+            }
+            return prev - 1;
+        });
+    }, 1000);
+  }, [isCameraOn, isCollectingImages, addLog]);
 
   useEffect(() => {
-    if (isCameraOn && model && !predictionIntervalRef.current) {
+    if (countdown === 0 && isCollectingImages && collectedImages.length === 0) {
+      addLog("Countdown finished. Capturing images...");
+      
+      const captureInterval = setInterval(() => {
+        if (!videoRef.current) {
+          clearInterval(captureInterval);
+          return;
+        }
+
+        const canvas = document.createElement('canvas');
+        canvas.width = videoRef.current.videoWidth;
+        canvas.height = videoRef.current.videoHeight;
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+          const dataUri = canvas.toDataURL('image/jpeg');
+          setCollectedImages(prev => [...prev, dataUri]);
+        }
+      }, IMAGE_CAPTURE_INTERVAL);
+
+      setTimeout(() => {
+        clearInterval(captureInterval);
+      }, IMAGE_CAPTURE_INTERVAL * IMAGE_CAPTURE_COUNT);
+    }
+  }, [countdown, isCollectingImages, collectedImages.length, addLog]);
+
+  useEffect(() => {
+    const zipAndDownloadImages = async () => {
+        addLog(`Collected ${collectedImages.length} images. Zipping...`);
+        toast({ title: "Zipping Images", description: "Preparing images for download..." });
+        
+        const zip = new JSZip();
+        collectedImages.forEach((dataUri, index) => {
+            const base64Data = dataUri.split(',')[1];
+            zip.file(`image_${index + 1}.jpg`, base64Data, { base64: true });
+        });
+
+        try {
+            const content = await zip.generateAsync({ type: "blob" });
+            const url = URL.createObjectURL(content);
+            const a = document.createElement('a');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+            a.href = url;
+            a.download = `unidentified-images-${timestamp}.zip`;
+            document.body.appendChild(a);
+            a.click();
+            window.URL.revokeObjectURL(url);
+            document.body.removeChild(a);
+
+            addLog("Image archive downloaded successfully.");
+            toast({ title: "Download Complete", description: "Training images saved." });
+        } catch (error: any) {
+            console.error("Failed to create zip file:", error);
+            addLog(`Error creating zip file: ${error.message}`);
+            toast({ variant: "destructive", title: "Zip Error", description: "Could not create image archive." });
+        } finally {
+            setIsCollectingImages(false);
+            setCollectedImages([]);
+            setAppStatus("AWAITING_OBJECT");
+        }
+    };
+    
+    if (isCollectingImages && collectedImages.length >= IMAGE_CAPTURE_COUNT) {
+        zipAndDownloadImages();
+    }
+}, [collectedImages, isCollectingImages, addLog, toast]);
+
+  useEffect(() => {
+    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages) {
         addLog("Starting classification loop.");
         predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
-    } else if ((!isCameraOn || !model) && predictionIntervalRef.current) {
+    } else if ((!isCameraOn || !model || isCollectingImages) && predictionIntervalRef.current) {
         addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
@@ -642,8 +746,11 @@ export default function SortVisionClient() {
             predictionIntervalRef.current = undefined;
             addLog("Cleaned up classification loop.");
         }
+        if (countdownIntervalRef.current) {
+            clearInterval(countdownIntervalRef.current);
+        }
     };
-  }, [isCameraOn, model, runClassification, addLog]);
+  }, [isCameraOn, model, runClassification, addLog, isCollectingImages]);
   
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -729,6 +836,7 @@ export default function SortVisionClient() {
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
             case "CAMERA_CYCLING": return "CAMERA RESTARTING...";
+            case "COLLECTING_IMAGES": return "Collecting Images...";
             case "READY_TO_SEND":
                 return `Sending: ${primaryPrediction?.className || '...'}`;
             default: return "Analyzing...";
@@ -738,6 +846,7 @@ export default function SortVisionClient() {
     const getStatusBadgeVariant = () => {
         switch (appStatus) {
             case "READY_TO_SEND": return "default";
+            case "COLLECTING_IMAGES": return "default";
             case "AWAITING_MODEL": return "secondary";
             case "LOADING_LIBS":
             case "MODEL_LOADING":
@@ -747,7 +856,7 @@ export default function SortVisionClient() {
         }
     };
 
-    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING';
+    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES';
 
     return (
         <div className="flex flex-col gap-2">
@@ -777,6 +886,20 @@ export default function SortVisionClient() {
         if (!isCameraOn) {
             return <p className="text-lg text-white/90 shadow-md">Camera is off</p>;
         }
+
+        if (countdown > 0) {
+            return <h3 className="text-6xl font-bold text-white drop-shadow-lg animate-ping">{countdown}</h3>;
+        }
+
+        if (isCollectingImages) {
+            return (
+                <div className="w-full max-w-xs text-center">
+                    <p className="text-lg text-white/90 shadow-md mb-2">Capturing...</p>
+                    <Progress value={(collectedImages.length / IMAGE_CAPTURE_COUNT) * 100} className="h-2 w-full bg-white/30" />
+                </div>
+            );
+        }
+
         if (appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING') {
             return <p className="text-lg text-white/90 shadow-md">Loading model...</p>;
         }
@@ -822,7 +945,7 @@ export default function SortVisionClient() {
     };
     
     return (
-        <div className="absolute top-0 left-0 right-0 p-4 bg-gradient-to-b from-black/60 to-transparent">
+        <div className={cn("absolute inset-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex flex-col items-center", isCollectingImages || countdown > 0 ? "justify-center" : "justify-start")}>
             {renderContent()}
         </div>
     );
@@ -1014,12 +1137,15 @@ export default function SortVisionClient() {
         <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 items-center">
             <p className="text-xs text-muted-foreground">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle sidebar.</p>
             <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
-              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={!model}>
+              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={!model || isCollectingImages}>
                 {isCameraOn ? <CameraOff /> : <Camera />}
                 {isCameraOn ? "Stop Camera" : "Start Camera"}
               </Button>
-               <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn}>
+               <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
                 {isFlashOn ? <FlashlightOff /> : <Flashlight />}
+              </Button>
+              <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
+                <Download />
               </Button>
               <div className="flex flex-col gap-2 w-full sm:w-auto">
                   <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="w-full">
@@ -1050,4 +1176,5 @@ export default function SortVisionClient() {
 }
 
 
+    
     
