@@ -284,9 +284,17 @@ const startCamera = useCallback(async () => {
                         }
                     }
                 } catch (playError: any) {
-                    // This catch block will handle the "interrupted by a new load request" error.
-                    console.error("Video play failed:", playError);
-                    addLog(`Video play error: ${playError.message}`);
+                    if (playError.name === 'NotAllowedError') {
+                        addLog('Video play was prevented by browser policy.');
+                        toast({ variant: 'destructive', title: 'Playback Error', description: 'Auto-play was blocked. Please start the camera again.' });
+                        stopCamera();
+                    } else if(playError.name === 'AbortError') {
+                         addLog('Video play was aborted. This is expected on re-render.');
+                    }
+                    else {
+                        console.error("Video play failed:", playError);
+                        addLog(`Video play error: ${playError.message}`);
+                    }
                 }
             };
         }
@@ -516,38 +524,36 @@ const startCamera = useCallback(async () => {
   };
 
   useEffect(() => {
-    let timer: NodeJS.Timeout;
+    let timer: NodeJS.Timeout | undefined = undefined;
     if (countdown > 0) {
-      timer = setTimeout(() => {
-        setCountdown(countdown - 1)
-      }, 1000);
-    } else if (isCollectingImages && countdown === 0 && collectedImages.length === 0) { // Start capture only when countdown finishes
-        addLog("Countdown finished. Capturing images...");
-        
-        const captureInterval = setInterval(() => {
-            setCollectedImages(prev => {
-                if (prev.length >= IMAGE_CAPTURE_COUNT) {
-                    clearInterval(captureInterval);
-                    return prev;
-                }
-                if (!videoRef.current) return prev;
+      timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+    } else if (isCollectingImages && countdown === 0 && collectedImages.length === 0) {
+      addLog("Countdown finished. Capturing images...");
+      
+      const captureInterval = setInterval(() => {
+        setCollectedImages(prev => {
+          if (prev.length >= IMAGE_CAPTURE_COUNT) {
+            clearInterval(captureInterval);
+            return prev;
+          }
+          if (!videoRef.current) return prev;
 
-                const canvas = document.createElement('canvas');
-                canvas.width = videoRef.current.videoWidth;
-                canvas.height = videoRef.current.videoHeight;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-                    const dataUri = canvas.toDataURL('image/jpeg');
-                    return [...prev, dataUri];
-                }
-                return prev;
-            });
-        }, IMAGE_CAPTURE_INTERVAL);
+          const canvas = document.createElement('canvas');
+          canvas.width = videoRef.current.videoWidth;
+          canvas.height = videoRef.current.videoHeight;
+          const ctx = canvas.getContext('2d');
+          if (ctx) {
+            ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+            const dataUri = canvas.toDataURL('image/jpeg');
+            return [...prev, dataUri];
+          }
+          return prev;
+        });
+      }, IMAGE_CAPTURE_INTERVAL);
 
-        return () => clearInterval(captureInterval);
+      return () => clearInterval(captureInterval);
     }
-     return () => clearTimeout(timer);
+    return () => clearTimeout(timer);
   }, [countdown, isCollectingImages, addLog, collectedImages.length]);
 
 
@@ -969,3 +975,5 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
+
+    
