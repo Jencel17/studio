@@ -234,9 +234,8 @@ export default function SortVisionClient({
     setPrimaryPrediction(null);
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
-    setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
     releaseWakeLock();
-  }, [releaseWakeLock, addLog, model, setAppStatus]);
+  }, [releaseWakeLock, addLog]);
 
 const startCamera = useCallback(async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -492,6 +491,7 @@ const startCamera = useCallback(async () => {
     return () => {
       if(isCameraOn) {
         stopCamera();
+        setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
       }
     };
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -500,6 +500,7 @@ const startCamera = useCallback(async () => {
   const toggleCamera = () => {
     if (isCameraOn) {
       stopCamera();
+      setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
     } else {
       startCamera();
     }
@@ -959,3 +960,5 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
+
+    
