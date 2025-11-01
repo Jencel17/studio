@@ -1,4 +1,5 @@
 
+
 "use client";
 
 import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
@@ -348,8 +349,9 @@ export default function SortVisionPage() {
   };
 
   const handleLoadFromLibrary = async (name: string) => {
+    setIsModelLoading(true);
+    addLog(`Loading model "${name}" from library...`);
     try {
-      addLog(`Loading model "${name}" from library...`);
       const modelData = await getModelFromDb(name);
       if (modelData) {
         await loadModelFromFiles(modelData.model, modelData.metadata, modelData.weights);
@@ -360,6 +362,8 @@ export default function SortVisionPage() {
       console.error("Failed to load model from library:", error);
       addLog(`Error loading model: ${error.message}`);
       toast({ variant: "destructive", title: "Load Error", description: `Could not load "${name}" from the library.` });
+    } finally {
+        setIsModelLoading(false);
     }
   };
 
@@ -460,7 +464,7 @@ export default function SortVisionPage() {
                 {savedModels.length > 0 ? (
                   <div className="space-y-2">
                     {savedModels.map(m => (
-                      <div key={m.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                      <div key={m.name} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
                         <p className="text-sm font-medium truncate">{m.name}</p>
                         <div className="flex gap-1">
                           <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading}>
