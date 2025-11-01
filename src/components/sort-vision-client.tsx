@@ -391,7 +391,9 @@ const startCamera = useCallback(async () => {
           setPrimaryPrediction(foundPrediction);
           setLastClassifications(prev => [...prev, foundPrediction]);
           newAppStatus = "READY_TO_SEND";
-          setAppStatus(newAppStatus);
+          if (appStatus !== newAppStatus) {
+            setAppStatus(newAppStatus);
+          }
           handleSortAndRestart(foundPrediction.className);
       } else {
         setPrimaryPrediction(null);
@@ -896,5 +898,6 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
+
 
     
