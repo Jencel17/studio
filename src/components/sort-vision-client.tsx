@@ -70,7 +70,7 @@ const IMAGE_CAPTURE_COUNT = 20;
 const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
 const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
-const AUTO_CAPTURE_COOLDOWN_TIME = 10000; // 10 seconds
+const AUTO_CAPTURE_COOLDOWN_TIME = 0;
 
 const interpretDetectionsLocal = (
   predictions: Prediction[],
@@ -247,55 +247,37 @@ const startCamera = useCallback(async () => {
     
     if (streamRef.current) {
         stopCamera();
-        await new Promise(resolve => setTimeout(resolve, 100)); // Short delay to ensure hardware is released
+        await new Promise(resolve => setTimeout(resolve, 100));
     }
 
+    addLog("Requesting camera access...");
     try {
-        addLog("Requesting camera access...");
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        
         streamRef.current = stream;
         setHasCameraPermission(true);
+        
         const video = videoRef.current;
-
         if (video) {
             video.srcObject = stream;
-            // The 'loadedmetadata' event is crucial for mobile.
-            video.onloadedmetadata = async () => {
-                try {
-                    await video.play();
+            video.onloadedmetadata = () => {
+                video.play().then(() => {
                     setIsCameraOn(true);
                     setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
                     addLog("Camera started successfully.");
-
                     if (wakeLockEnabled) {
                         requestWakeLock();
                     }
-
-                    if (isFlashOn) {
-                        const videoTrack = stream.getVideoTracks()[0];
-                        if (videoTrack && 'torch' in videoTrack.getCapabilities()) {
-                            try {
-                                await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
-                                addLog("Flash enabled on camera start.");
-                            } catch (e: any) {
-                                addLog(`Could not enable flash on start: ${e.message}`);
-                            }
-                        }
-                    }
-                } catch (playError: any) {
-                    if (playError.name === 'NotAllowedError') {
-                        addLog('Video play was prevented by browser policy.');
-                        toast({ variant: 'destructive', title: 'Playback Error', description: 'Auto-play was blocked. Please start the camera again.' });
+                }).catch((error) => {
+                    console.error("Video play failed:", error);
+                    addLog(`Video play error: ${error.message}`);
+                    // Specific error for play interruption
+                    if (error.name === 'AbortError') {
+                        addLog('Video play was aborted, likely by a component re-render. This is often safe to ignore.');
+                    } else if (error.name === 'NotAllowedError') {
+                        toast({ variant: 'destructive', title: 'Playback Error', description: 'Auto-play was blocked by the browser. Please press Start again.' });
                         stopCamera();
-                    } else if(playError.name === 'AbortError') {
-                         addLog('Video play was aborted. This is expected on re-render.');
                     }
-                    else {
-                        console.error("Video play failed:", playError);
-                        addLog(`Video play error: ${playError.message}`);
-                    }
-                }
+                });
             };
         }
     } catch (error: any) {
@@ -309,7 +291,7 @@ const startCamera = useCallback(async () => {
         });
         stopCamera();
     }
-}, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isFlashOn]);
+}, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock]);
 
 
   const toggleFlash = useCallback(async () => {
@@ -396,7 +378,6 @@ const startCamera = useCallback(async () => {
     setAppStatus("CAMERA_CYCLING");
     addLog(`Command sent for ${classification}. Restarting camera in ${cameraRestartDelay} seconds...`);
     
-    // Always ensure light is turned off as part of the cycle.
     await sendLightCommand('OFF');
 
     if (classification !== "RESTART_NO_SORT") {
@@ -442,9 +423,7 @@ const startCamera = useCallback(async () => {
           setPrimaryPrediction(foundPrediction);
           setLastClassifications(prev => [...prev, foundPrediction]);
           newAppStatus = "READY_TO_SEND";
-          if (appStatus !== newAppStatus) {
-            setAppStatus(newAppStatus);
-          }
+          setAppStatus(newAppStatus);
           
           if (predictionIntervalRef.current) {
             clearInterval(predictionIntervalRef.current);
@@ -455,7 +434,7 @@ const startCamera = useCallback(async () => {
           await sendLightCommand('ON');
           
           setTimeout(async () => {
-            if (!videoRef.current) { // Check if component is still mounted
+            if (!videoRef.current) { 
                 await sendLightCommand('OFF');
                 return;
             }
@@ -481,7 +460,6 @@ const startCamera = useCallback(async () => {
       setPrimaryPrediction(null);
       const isUncertain = localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5));
       newAppStatus = isUncertain ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
-      
       if (appStatus !== newAppStatus) {
         setAppStatus(newAppStatus);
       }
@@ -517,7 +495,6 @@ const startCamera = useCallback(async () => {
   const toggleCamera = () => {
     if (isCameraOn) {
       stopCamera();
-      setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
     } else {
       startCamera();
     }
@@ -528,36 +505,32 @@ const startCamera = useCallback(async () => {
     if (countdown > 0) {
       timer = setTimeout(() => setCountdown(countdown - 1), 1000);
     } else if (isCollectingImages && countdown === 0) {
-        // Condition to check if capture should start
-        if (collectedImages.length === 0) {
-            addLog("Countdown finished. Capturing images...");
-            
-            const captureInterval = setInterval(() => {
-                setCollectedImages(prev => {
-                    if (prev.length >= IMAGE_CAPTURE_COUNT) {
-                        clearInterval(captureInterval);
-                        return prev;
-                    }
-                    if (!videoRef.current) return prev;
-
-                    const canvas = document.createElement('canvas');
-                    canvas.width = videoRef.current.videoWidth;
-                    canvas.height = videoRef.current.videoHeight;
-                    const ctx = canvas.getContext('2d');
-                    if (ctx) {
-                        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-                        const dataUri = canvas.toDataURL('image/jpeg');
-                        return [...prev, dataUri];
-                    }
+        const captureInterval = setInterval(() => {
+            setCollectedImages(prev => {
+                if (prev.length >= IMAGE_CAPTURE_COUNT) {
+                    clearInterval(captureInterval);
                     return prev;
-                });
-            }, IMAGE_CAPTURE_INTERVAL);
+                }
+                if (!videoRef.current) return prev;
 
-            return () => clearInterval(captureInterval);
-        }
+                const canvas = document.createElement('canvas');
+                canvas.width = videoRef.current.videoWidth;
+                canvas.height = videoRef.current.videoHeight;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                    const dataUri = canvas.toDataURL('image/jpeg');
+                    addLog(`Captured image ${prev.length + 1}/${IMAGE_CAPTURE_COUNT}`);
+                    return [...prev, dataUri];
+                }
+                return prev;
+            });
+        }, IMAGE_CAPTURE_INTERVAL);
+
+        return () => clearInterval(captureInterval);
     }
     return () => clearTimeout(timer);
-}, [countdown, isCollectingImages, addLog, collectedImages.length]);
+}, [countdown, isCollectingImages, addLog]);
 
 
   useEffect(() => {
