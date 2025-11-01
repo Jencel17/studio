@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download } from "lucide-react";
+import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -26,18 +26,13 @@ import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFo
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+import { AppStatus, LogEntry } from "@/app/page";
 
 type Prediction = {
   className: string;
   probability: number;
 };
-
-type LogEntry = {
-  timestamp: string;
-  message: string;
-};
-
-type AppStatus = "AWAITING_MODEL" | "LOADING_LIBS" | "LIBS_LOADED"| "MODEL_LOADING" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING" | "COLLECTING_IMAGES" | "COOLDOWN";
 
 type CommandStatus = {
   status: "IDLE" | "SUCCESS" | "ERROR";
@@ -63,11 +58,11 @@ interface SortVisionClientProps {
     addLog: (message: string) => void;
     logs: LogEntry[];
     setLogs: (logs: LogEntry[]) => void;
+    libsLoaded: boolean;
 }
 
 const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
-const MAX_LOGS = 100;
 const PREDICTION_INTERVAL = 100;
 const IMAGE_CAPTURE_COUNT = 20;
 const IMAGE_CAPTURE_INTERVAL = 100;
@@ -144,12 +139,13 @@ export default function SortVisionClient({
     addLog,
     logs,
     setLogs,
+    libsLoaded,
 }: SortVisionClientProps) {
   const [isCameraOn, setIsCameraOn] = useState(false);
-  const [hasCameraPermission, setHasCameraPermission] = useState(false);
+  const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
-  const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [isConsoleFullscreen, setIsConsoleFullscreen] = useState(false);
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
   const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
@@ -162,9 +158,45 @@ export default function SortVisionClient({
   const streamRef = useRef<MediaStream | null>(null);
   const predictionIntervalRef = useRef<NodeJS.Timeout>();
   const ambiguousDetectionTimer = useRef<NodeJS.Timeout | null>(null);
+  
+  const tmImageRef = useRef<TeachableMachine | null>(null);
+  const tfRef = useRef<TensorFlow | null>(null);
 
 
   const { toast } = useToast();
+
+   const loadAiLibraries = useCallback(async () => {
+    if (tmImageRef.current && tfRef.current) {
+      addLog("AI libraries already loaded.");
+      return;
+    }
+    addLog("Loading AI libraries...");
+    setAppStatus("LOADING_LIBS");
+    try {
+      const [tm, tf] = await Promise.all([
+        import("@teachablemachine/image"),
+        import("@tensorflow/tfjs"),
+      ]);
+      tmImageRef.current = tm;
+      tfRef.current = tf;
+      addLog("AI libraries loaded successfully.");
+      setAppStatus("AWAITING_MODEL");
+    } catch (error: any) {
+      console.error("Failed to load AI libraries:", error);
+      toast({
+        variant: "destructive",
+        title: "Library Load Error",
+        description: "Could not load core AI libraries. Please refresh the page.",
+      });
+      addLog("FATAL: Failed to load AI libraries.");
+    }
+  }, [addLog, setAppStatus, toast]);
+
+  useEffect(() => {
+    if (!libsLoaded) {
+      loadAiLibraries();
+    }
+  }, [libsLoaded, loadAiLibraries]);
   
   const startImageCollection = useCallback(() => {
     if (!isCameraOn || !hasCameraPermission || isCollectingImages) return;
@@ -193,7 +225,6 @@ export default function SortVisionClient({
     if (predictionIntervalRef.current) {
       clearInterval(predictionIntervalRef.current);
       predictionIntervalRef.current = undefined;
-      addLog("Classification loop stopped.");
     }
      if (ambiguousDetectionTimer.current) {
       clearTimeout(ambiguousDetectionTimer.current);
@@ -201,8 +232,6 @@ export default function SortVisionClient({
     }
     streamRef.current = null;
     setIsCameraOn(false);
-    // Don't reset flash state, keep user preference
-    // setIsFlashOn(false); 
     setPrimaryPrediction(null);
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
@@ -210,24 +239,23 @@ export default function SortVisionClient({
     releaseWakeLock();
   }, [releaseWakeLock, addLog, model, setAppStatus]);
 
-  const startCamera = useCallback(async () => {
+const startCamera = useCallback(async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         addLog("Camera API not available in this browser.");
         toast({ variant: "destructive", title: "Unsupported Browser", description: "Camera access is not available." });
+        setHasCameraPermission(false);
         return;
     }
-    if (isCameraOn) return;
 
     try {
         addLog("Requesting camera access...");
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        setHasCameraPermission(true);
+        
         streamRef.current = stream;
+        setHasCameraPermission(true);
 
         if (videoRef.current) {
             videoRef.current.srcObject = stream;
-            // The `play()` call is crucial and should not be interrupted.
-            // We await it to ensure the video is playing before proceeding.
             await videoRef.current.play();
             setIsCameraOn(true);
             setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
@@ -235,6 +263,15 @@ export default function SortVisionClient({
 
             if (wakeLockEnabled) {
                 requestWakeLock();
+            }
+
+            // Apply flash if it was on before
+            if (isFlashOn && streamRef.current) {
+                const videoTrack = streamRef.current.getVideoTracks()[0];
+                 if (videoTrack && 'torch' in videoTrack.getCapabilities()) {
+                    await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
+                    addLog("Flash re-enabled on camera start.");
+                 }
             }
         }
     } catch (error: any) {
@@ -248,7 +285,7 @@ export default function SortVisionClient({
         });
         stopCamera();
     }
-  }, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isCameraOn]);
+}, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isFlashOn]);
 
 
   const toggleFlash = useCallback(async () => {
@@ -259,8 +296,9 @@ export default function SortVisionClient({
     
     const newFlashState = !isFlashOn;
     const videoTrack = streamRef.current.getVideoTracks()[0];
-    
-    if (videoTrack && 'torch' in videoTrack.getCapabilities()) {
+    const capabilities = videoTrack.getCapabilities();
+
+    if (capabilities.torch) {
         try {
             addLog(`Attempting to set flash to: ${newFlashState ? 'ON' : 'OFF'}`);
             await videoTrack.applyConstraints({
@@ -328,6 +366,21 @@ export default function SortVisionClient({
     }
   }, [addLog, toast, esp32Ip, isTestMode]);
 
+ const handleSortAndRestart = useCallback(async (classification: string) => {
+    stopCamera();
+    
+    setAppStatus("CAMERA_CYCLING");
+    addLog(`Command sent for ${classification}. Restarting camera in ${CAMERA_RESTART_DELAY / 1000} seconds...`);
+    
+    await sendSortCommand(classification);
+
+    setTimeout(() => {
+        addLog("Restarting camera now.");
+        startCamera();
+    }, CAMERA_RESTART_DELAY);
+
+}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus]);
+
   const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
       return;
@@ -371,7 +424,7 @@ export default function SortVisionClient({
       setAppStatus(newAppStatus);
     }
     
-    if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN') {
+    if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
       const shouldTriggerCapture = 
         localResult.detectionState === 'AMBIGUOUS' ||
         newAppStatus === 'CONFIDENCE_TOO_LOW';
@@ -393,26 +446,11 @@ export default function SortVisionClient({
         }
       }
     }
-
     
     if (topPrediction) { 
-      if (predictionIntervalRef.current) {
-        clearInterval(predictionIntervalRef.current);
-        predictionIntervalRef.current = undefined;
-        addLog("Classification loop paused for command.");
-      }
-      
-      sendSortCommand(topPrediction.className);
-      
-      stopCamera();
-      setAppStatus("CAMERA_CYCLING");
-      addLog(`Command sent. Restarting camera in ${CAMERA_RESTART_DELAY / 1000} seconds...`);
-      setTimeout(() => {
-        addLog("Restarting camera now.");
-        startCamera();
-      }, CAMERA_RESTART_DELAY);
+        handleSortAndRestart(topPrediction.className);
     }
-  }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection, setAppStatus]);
+  }, [isCameraOn, model, addLog, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection, setAppStatus, handleSortAndRestart]);
 
 
   useEffect(() => {
@@ -627,6 +665,7 @@ export default function SortVisionClient({
             case "AWAITING_MODEL": return "secondary";
             case "COOLDOWN":
             case "LOADING_LIBS":
+            case "LIBS_LOADED":
             case "MODEL_LOADING":
             case "CAMERA_CYCLING": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
@@ -637,8 +676,8 @@ export default function SortVisionClient({
     const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN';
 
     return (
-        <div className="flex flex-col gap-2">
-             <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-col items-end gap-2">
+             <div className="flex flex-wrap items-center justify-end gap-2">
                 <Badge variant={getStatusBadgeVariant()} className="text-xs">
                     {isLoading && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
                     {getStatusText()}
@@ -662,7 +701,7 @@ export default function SortVisionClient({
   const PredictionDisplay = () => {
     const renderContent = () => {
         if (!isCameraOn) {
-            if (!hasCameraPermission && model) {
+            if (!hasCameraPermission) {
                 return (
                     <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm p-4 text-center">
                         <Alert variant="destructive">
@@ -696,18 +735,15 @@ export default function SortVisionClient({
             );
         }
 
-        if (appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING') {
-            return <p className="text-lg text-white/90 shadow-md">Loading model...</p>;
-        }
-        if (!model) {
+        if (appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || !model) {
            return (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
                   <Upload className="h-16 w-16 text-muted-foreground animate-pulse" />
-                  <p className="mt-2 text-muted-foreground">Please load a model from settings.</p>
+                  <p className="mt-2 text-muted-foreground">{appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' ? 'Loading Model...' : 'Please load a model from settings.'}</p>
               </div>
             );
         }
-
+       
         switch (detectionState) {
             case "SINGLE_OBJECT":
                 if (primaryPrediction) {
@@ -793,9 +829,9 @@ export default function SortVisionClient({
     );
   };
 
-  const LogViewer = () => {
+  const LogViewer = ({ fullscreen }: {fullscreen: boolean}) => {
     return (
-      <ScrollArea className="flex-1 my-4">
+      <ScrollArea className={cn("w-full my-4", fullscreen ? "flex-1" : "h-[150px]")}>
         <div className="p-4 font-mono text-xs">
           {logs.map((log, index) => (
             <p key={index}>
@@ -809,8 +845,7 @@ export default function SortVisionClient({
   };
 
   return (
-    <>
-      <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20">
+      <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20 flex flex-col">
         <CardHeader className="flex-col sm:flex-row items-start justify-between gap-4">
           <div className="flex items-start gap-4">
             <div className="sm:hidden">
@@ -824,24 +859,38 @@ export default function SortVisionClient({
           <StatusDisplay />
         </CardHeader>
 
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
+        <CardContent className="flex-1 flex flex-col gap-4">
+          <div className={cn("grid md:grid-cols-[1fr_auto] gap-4 items-center", isConsoleFullscreen && "hidden")}>
               <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border-2 border-border/30">
-              <video
-                  ref={videoRef}
-                  className="h-full w-full object-cover"
-                  playsInline
-                  muted
-                  autoPlay
-              />
-              <PredictionDisplay />
+                <video
+                    ref={videoRef}
+                    className="h-full w-full object-cover"
+                    playsInline
+                    muted
+                    autoPlay
+                />
+                <PredictionDisplay />
               </div>
               <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full w-[240px]">
                 <DetectionRates />
               </div>
           </div>
+          <Accordion type="single" collapsible className="w-full" defaultValue="console">
+            <AccordionItem value="console" className="border-b-0">
+                <AccordionTrigger className="text-sm font-semibold hover:no-underline">Console</AccordionTrigger>
+                <AccordionContent className="flex flex-col">
+                    <LogViewer fullscreen={isConsoleFullscreen}/>
+                     <div className="flex justify-end gap-2">
+                      <Button variant="outline" onClick={() => setIsConsoleFullscreen(!isConsoleFullscreen)} size="icon">
+                        {isConsoleFullscreen ? <Minimize /> : <Expand />}
+                      </Button>
+                      <Button variant="outline" onClick={() => setLogs([])}>Clear Logs</Button>
+                    </div>
+                </AccordionContent>
+            </AccordionItem>
+          </Accordion>
         </CardContent>
-        <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-4 items-center">
+        <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-4 items-center pt-6">
             <div className="hidden sm:flex items-center">
               <SidebarTrigger />
               <p className="text-xs text-muted-foreground ml-2">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle.</p>
@@ -857,31 +906,10 @@ export default function SortVisionClient({
               <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
                 <Download />
               </Button>
-              <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="flex-grow sm:flex-grow-0">
-                    <Terminal />
-                    Console
-              </Button>
             </div>
         </CardFooter>
       </Card>
-      <Sheet open={isConsoleOpen} onOpenChange={setIsConsoleOpen}>
-        <SheetContent side="bottom" className="h-1/2 flex flex-col">
-            <SheetHeader>
-                <SheetTitle>Console Logs</SheetTitle>
-                <SheetDescription>
-                    Real-time logs from the application.
-                </SheetDescription>
-            </SheetHeader>
-            <Separator />
-            <LogViewer />
-            <SheetFooter>
-                <Button variant="outline" onClick={() => setLogs([])}>Clear Logs</Button>
-            </SheetFooter>
-        </SheetContent>
-      </Sheet>
-    </>
   );
 }
-
 
     
