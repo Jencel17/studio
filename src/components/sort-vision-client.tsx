@@ -206,11 +206,9 @@ export default function SortVisionClient({
     setPrimaryPrediction(null);
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
-    if(appStatus !== 'COLLECTING_IMAGES') {
-      setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
-    }
+    setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
     releaseWakeLock();
-  }, [releaseWakeLock, addLog, model, appStatus, setAppStatus]);
+  }, [releaseWakeLock, addLog, model, setAppStatus]);
 
   const startCamera = useCallback(async () => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
@@ -218,6 +216,7 @@ export default function SortVisionClient({
         toast({ variant: "destructive", title: "Unsupported Browser", description: "Camera access is not available." });
         return;
     }
+    if (isCameraOn) return;
 
     try {
         addLog("Requesting camera access...");
@@ -249,7 +248,7 @@ export default function SortVisionClient({
         });
         stopCamera();
     }
-  }, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock]);
+  }, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isCameraOn]);
 
 
   const toggleFlash = useCallback(async () => {
@@ -444,8 +443,9 @@ export default function SortVisionClient({
         
         const captureInterval = setInterval(() => {
             setCollectedImages(prev => {
-                if (prev.length >= IMAGE_CAPTURE_COUNT -1) {
+                if (prev.length >= IMAGE_CAPTURE_COUNT) {
                     clearInterval(captureInterval);
+                    return prev;
                 }
                 if (!videoRef.current) return prev;
 
@@ -882,5 +882,6 @@ export default function SortVisionClient({
     </>
   );
 }
+
 
     
