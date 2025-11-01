@@ -326,6 +326,7 @@ export default function SortVisionClient({
     setDetectionState(localResult.detectionState);
 
     let topPrediction: Prediction | null = null;
+    let newAppStatus: AppStatus = "AWAITING_OBJECT";
     
     if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
       const foundPrediction = filteredPredictions.find(p => p.className === localResult.primaryObject);
@@ -333,19 +334,29 @@ export default function SortVisionClient({
           topPrediction = foundPrediction;
           setPrimaryPrediction(foundPrediction);
           setLastClassifications(prev => [...prev, foundPrediction]);
+          newAppStatus = "READY_TO_SEND";
       } else {
         setPrimaryPrediction(null);
       }
     } else {
       setPrimaryPrediction(null);
+      if (filteredPredictions.some(p => p.probability > 0.5)) {
+        newAppStatus = "CONFIDENCE_TOO_LOW";
+      }
     }
+
+    setAppStatus(newAppStatus);
+
      // New auto-capture logic
     if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN') {
-      const isAmbiguous = localResult.detectionState === 'AMBIGUOUS' || localResult.detectionState === 'MULTIPLE_OBJECTS';
+      const shouldTriggerCapture = 
+        localResult.detectionState === 'AMBIGUOUS' || 
+        localResult.detectionState === 'MULTIPLE_OBJECTS' || 
+        newAppStatus === 'CONFIDENCE_TOO_LOW';
       
-      if (isAmbiguous) {
+      if (shouldTriggerCapture) {
         if (!ambiguousDetectionTimer.current) {
-          addLog(`Ambiguous detection started. Triggering capture in ${AUTO_CAPTURE_TRIGGER_TIME / 1000}s.`);
+          addLog(`Uncertain detection. Triggering capture in ${AUTO_CAPTURE_TRIGGER_TIME / 1000}s.`);
           ambiguousDetectionTimer.current = setTimeout(() => {
             addLog("Threshold met. Starting automatic image capture.");
             startImageCollection();
@@ -363,8 +374,6 @@ export default function SortVisionClient({
 
     
     if (topPrediction) { 
-      setAppStatus("READY_TO_SEND");
-      
       if (predictionIntervalRef.current) {
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
@@ -380,13 +389,7 @@ export default function SortVisionClient({
         addLog("Restarting camera now.");
         startCamera();
       }, CAMERA_RESTART_DELAY);
-
-    } else if (filteredPredictions.some(p => p.probability > 0.5)) {
-        setAppStatus("CONFIDENCE_TOO_LOW");
-    } else {
-        setAppStatus("AWAITING_OBJECT");
     }
-
   }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection]);
 
 
@@ -705,6 +708,16 @@ export default function SortVisionClient({
                 );
             case "NO_DETECTION":
             default:
+                if (appStatus === 'CONFIDENCE_TOO_LOW') {
+                    return (
+                        <div className="flex items-center gap-2">
+                            <AlertTriangle className="h-6 w-6 text-yellow-400" />
+                            <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
+                                Confidence Too Low
+                            </h3>
+                        </div>
+                    );
+                }
                 return <p className="text-lg text-white/90 shadow-md">Analyzing...</p>;
         }
     };
@@ -846,6 +859,4 @@ export default function SortVisionClient({
     </>
   );
 }
-    
-
     
