@@ -333,8 +333,8 @@ const startCamera = useCallback(async () => {
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
     if (isTestMode) {
       addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
-      setCommandStatus({ status: "SUCCESS", message: `Success (Test): Sorted ${classificationLabel}` });
-      toast({ title: "Command Sent (Test Mode)", description: `Sorted: ${classificationLabel}` });
+      setCommandStatus({ status: "SUCCESS", message: `Test: Sorted ${classificationLabel}` });
+      toast({ title: "Command Sent (Test Mode)", description: `Simulated sort for: ${classificationLabel}` });
       return;
     }
 
@@ -375,17 +375,22 @@ const startCamera = useCallback(async () => {
     stopCamera();
     
     setAppStatus("CAMERA_CYCLING");
-    const delayInMs = cameraRestartDelay * 1000;
     addLog(`Command sent for ${classification}. Restarting camera in ${cameraRestartDelay} seconds...`);
     
-    await sendSortCommand(classification);
+    // Always ensure light is turned off as part of the cycle.
+    await sendLightCommand('OFF');
 
+    if (classification !== "RESTART_NO_SORT") {
+        await sendSortCommand(classification);
+    }
+
+    const delayInMs = cameraRestartDelay * 1000;
     setTimeout(() => {
         addLog("Restarting camera now.");
         startCamera();
     }, delayInMs);
 
-}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, cameraRestartDelay]);
+}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, cameraRestartDelay, sendLightCommand]);
 
  const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
@@ -431,17 +436,21 @@ const startCamera = useCallback(async () => {
           await sendLightCommand('ON');
           
           setTimeout(async () => {
+            if (!videoRef.current) { // Check if component is still mounted
+                await sendLightCommand('OFF');
+                return;
+            }
             addLog("Re-classifying with light on...");
             const finalPredictions = await model.predict(video);
-            const finalResult = interpretDetectionsLocal(finalPredictions, CONFIDENCE_THRESHOLD);
+            const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
+            const finalResult = interpretDetectionsLocal(finalFiltered, CONFIDENCE_THRESHOLD);
 
             if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
                 addLog(`Final confirmation: ${finalResult.primaryObject}. Sorting.`);
                 handleSortAndRestart(finalResult.primaryObject);
             } else {
                 addLog(`Final check failed. Result: ${finalResult.detectionState}. Restarting camera.`);
-                await sendLightCommand('OFF'); // Turn off light if sort fails
-                handleSortAndRestart("RESTART_NO_SORT"); // Special command or handle restart
+                handleSortAndRestart("RESTART_NO_SORT");
             }
           }, 500);
 
