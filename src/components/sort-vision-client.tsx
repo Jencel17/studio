@@ -69,7 +69,7 @@ const PREDICTION_INTERVAL = 100;
 const IMAGE_CAPTURE_COUNT = 20;
 const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
-const AUTO_CAPTURE_TRIGGER_TIME = 3000; 
+const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
 const AUTO_CAPTURE_COOLDOWN_TIME = 10000; // 10 seconds
 
 const interpretDetectionsLocal = (
@@ -527,34 +527,37 @@ const startCamera = useCallback(async () => {
     let timer: NodeJS.Timeout | undefined = undefined;
     if (countdown > 0) {
       timer = setTimeout(() => setCountdown(countdown - 1), 1000);
-    } else if (isCollectingImages && countdown === 0 && collectedImages.length === 0) {
-      addLog("Countdown finished. Capturing images...");
-      
-      const captureInterval = setInterval(() => {
-        setCollectedImages(prev => {
-          if (prev.length >= IMAGE_CAPTURE_COUNT) {
-            clearInterval(captureInterval);
-            return prev;
-          }
-          if (!videoRef.current) return prev;
+    } else if (isCollectingImages && countdown === 0) {
+        // Condition to check if capture should start
+        if (collectedImages.length === 0) {
+            addLog("Countdown finished. Capturing images...");
+            
+            const captureInterval = setInterval(() => {
+                setCollectedImages(prev => {
+                    if (prev.length >= IMAGE_CAPTURE_COUNT) {
+                        clearInterval(captureInterval);
+                        return prev;
+                    }
+                    if (!videoRef.current) return prev;
 
-          const canvas = document.createElement('canvas');
-          canvas.width = videoRef.current.videoWidth;
-          canvas.height = videoRef.current.videoHeight;
-          const ctx = canvas.getContext('2d');
-          if (ctx) {
-            ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-            const dataUri = canvas.toDataURL('image/jpeg');
-            return [...prev, dataUri];
-          }
-          return prev;
-        });
-      }, IMAGE_CAPTURE_INTERVAL);
+                    const canvas = document.createElement('canvas');
+                    canvas.width = videoRef.current.videoWidth;
+                    canvas.height = videoRef.current.videoHeight;
+                    const ctx = canvas.getContext('2d');
+                    if (ctx) {
+                        ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                        const dataUri = canvas.toDataURL('image/jpeg');
+                        return [...prev, dataUri];
+                    }
+                    return prev;
+                });
+            }, IMAGE_CAPTURE_INTERVAL);
 
-      return () => clearInterval(captureInterval);
+            return () => clearInterval(captureInterval);
+        }
     }
     return () => clearTimeout(timer);
-  }, [countdown, isCollectingImages, addLog, collectedImages.length]);
+}, [countdown, isCollectingImages, addLog, collectedImages.length]);
 
 
   useEffect(() => {
@@ -975,5 +978,3 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
-
-    
