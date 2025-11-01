@@ -51,7 +51,6 @@ type TensorFlow = typeof import("@tensorflow/tfjs");
 interface SortVisionClientProps {
     model: tmImage.CustomMobileNet | null;
     modelLabels: string[];
-    isModelLoading: boolean;
     appStatus: AppStatus;
     setAppStatus: (status: AppStatus) => void;
     esp32Ip: string;
@@ -59,9 +58,10 @@ interface SortVisionClientProps {
     wakeLockEnabled: boolean;
     requestWakeLock: () => Promise<void>;
     releaseWakeLock: () => Promise<void>;
-    tmImageRef: React.MutableRefObject<TeachableMachine | null>;
-    tfRef: React.MutableRefObject<TensorFlow | null>;
     autoCaptureEnabled: boolean;
+    addLog: (message: string) => void;
+    logs: LogEntry[];
+    setLogs: (logs: LogEntry[]) => void;
 }
 
 const CAMERA_RESTART_DELAY = 3000;
@@ -139,14 +139,14 @@ export default function SortVisionClient({
     wakeLockEnabled,
     requestWakeLock,
     releaseWakeLock,
-    tmImageRef,
-    tfRef,
-    autoCaptureEnabled
+    autoCaptureEnabled,
+    addLog,
+    logs,
+    setLogs,
 }: SortVisionClientProps) {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
-  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
@@ -164,14 +164,6 @@ export default function SortVisionClient({
 
   const { toast } = useToast();
   
-  const addLog = useCallback((message: string) => {
-    const newLog: LogEntry = {
-        timestamp: new Date().toLocaleTimeString(),
-        message,
-    };
-    setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
-  }, []);
-
   const startImageCollection = useCallback(() => {
     if (!isCameraOn || isCollectingImages) return;
 
@@ -354,7 +346,7 @@ export default function SortVisionClient({
       }
     } else {
       setPrimaryPrediction(null);
-      if (localResult.detectionState === 'AMBIGUOUS' || localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5)) {
+      if (localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5))) {
         newAppStatus = "CONFIDENCE_TOO_LOW";
       }
     }
@@ -408,7 +400,6 @@ export default function SortVisionClient({
 
 
   useEffect(() => {
-     // This is a cleanup effect. It ensures the camera is turned off when the component unmounts.
     return () => {
       if(isCameraOn) {
         stopCamera();
@@ -637,7 +628,7 @@ export default function SortVisionClient({
 
     return (
         <div className="flex flex-col gap-2">
-            <div className="flex items-center gap-2">
+             <div className="flex flex-wrap items-center gap-2">
                 <Badge variant={getStatusBadgeVariant()} className="text-xs">
                     {isLoading && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
                     {getStatusText()}
@@ -661,7 +652,12 @@ export default function SortVisionClient({
   const PredictionDisplay = () => {
     const renderContent = () => {
         if (!isCameraOn) {
-            return <p className="text-lg text-white/90 shadow-md">Camera is off</p>;
+            return (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
+                  <CameraOff className="h-16 w-16 text-muted-foreground" />
+                  <p className="mt-2 text-muted-foreground">Camera is off</p>
+              </div>
+            );
         }
 
         if (countdown > 0) {
@@ -681,7 +677,12 @@ export default function SortVisionClient({
             return <p className="text-lg text-white/90 shadow-md">Loading model...</p>;
         }
         if (!model) {
-            return <p className="text-lg text-white/90 shadow-md">Awaiting model...</p>;
+           return (
+              <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
+                  <Upload className="h-16 w-16 text-muted-foreground animate-pulse" />
+                  <p className="mt-2 text-muted-foreground">Please load a model from settings.</p>
+              </div>
+            );
         }
 
         switch (detectionState) {
@@ -733,7 +734,7 @@ export default function SortVisionClient({
     
     return (
         <div className={cn("absolute inset-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex flex-col items-center", isCollectingImages || countdown > 0 ? "justify-center" : "justify-start")}>
-            {renderContent()}
+             {isCameraOn ? renderContent() : null}
         </div>
     );
   };
@@ -786,19 +787,20 @@ export default function SortVisionClient({
 
   return (
     <>
-      <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20 relative">
-        <div className="absolute top-4 left-4 z-10">
-          <SidebarTrigger />
-        </div>
-        <CardHeader className="flex-row items-start justify-between text-center">
-          <div className="w-full">
-            <CardTitle className="text-2xl font-bold">SortVision</CardTitle>
-            <CardDescription>AI-Powered Waste Classification</CardDescription>
+      <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20">
+        <CardHeader className="flex-col sm:flex-row items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div className="sm:hidden">
+              <SidebarTrigger />
+            </div>
+            <div>
+              <CardTitle className="text-2xl font-bold">SortVision</CardTitle>
+              <CardDescription>AI-Powered Waste Classification</CardDescription>
+            </div>
           </div>
-           <div className="absolute top-4 right-4 flex items-center gap-2 pt-1">
-              <StatusDisplay />
-          </div>
+          <StatusDisplay />
         </CardHeader>
+
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-[1fr_auto] gap-4 items-center">
               <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border-2 border-border/30">
@@ -815,12 +817,6 @@ export default function SortVisionClient({
                       <p className="mt-2 text-muted-foreground">Camera is off</p>
                   </div>
               )}
-              {isCameraOn && !model && (
-                  <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
-                      <Upload className="h-16 w-16 text-muted-foreground animate-pulse" />
-                      <p className="mt-2 text-muted-foreground">Please load a model from settings.</p>
-                  </div>
-              )}
               <PredictionDisplay />
               </div>
               <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full w-[240px]">
@@ -828,12 +824,15 @@ export default function SortVisionClient({
               </div>
           </div>
         </CardContent>
-        <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-2 items-center">
-            <p className="text-xs text-muted-foreground">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle sidebar.</p>
+        <CardFooter className="flex flex-col sm:flex-row sm:justify-between gap-4 items-center">
+            <div className="hidden sm:flex items-center">
+              <SidebarTrigger />
+              <p className="text-xs text-muted-foreground ml-2">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle.</p>
+            </div>
             <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
               <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={!model || isCollectingImages}>
                 {isCameraOn ? <CameraOff /> : <Camera />}
-                {isCameraOn ? "Stop Camera" : "Start Camera"}
+                {isCameraOn ? "Stop" : "Start"}
               </Button>
                <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
                 {isFlashOn ? <FlashlightOff /> : <Flashlight />}
@@ -841,12 +840,10 @@ export default function SortVisionClient({
               <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
                 <Download />
               </Button>
-              <div className="flex flex-col gap-2 w-full sm:w-auto">
-                  <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="w-full">
+              <Button onClick={() => setIsConsoleOpen(true)} variant="outline" className="flex-grow sm:flex-grow-0">
                     <Terminal />
                     Console
-                  </Button>
-              </div>
+              </Button>
             </div>
         </CardFooter>
       </Card>
