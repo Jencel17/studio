@@ -69,7 +69,7 @@ const PREDICTION_INTERVAL = 100;
 const IMAGE_CAPTURE_COUNT = 20;
 const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
-const AUTO_CAPTURE_TRIGGER_TIME = 3000; // 3 seconds
+const AUTO_CAPTURE_TRIGGER_TIME = 3000; 
 const AUTO_CAPTURE_COOLDOWN_TIME = 10000; // 10 seconds
 
 const interpretDetectionsLocal = (
@@ -303,6 +303,33 @@ const startCamera = useCallback(async () => {
     }
 }, [isCameraOn, isFlashOn, addLog, toast]);
 
+    const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
+        if (isTestMode) {
+          addLog(`TEST MODE: Simulating light ${state} command.`);
+          return true;
+        }
+        if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
+            addLog("SecurityError: Cannot send insecure 'http' light command from secure 'https' page.");
+            return false;
+        }
+
+        const url = `${esp32Ip}/light?state=${state}`;
+        addLog(`Sending light command to ESP32: ${url}`);
+        try {
+            const response = await fetch(url, { method: 'GET' });
+            if (response.ok) {
+                addLog(`Successfully sent light ${state} command.`);
+                return true;
+            } else {
+                addLog(`Error: ESP32 responded with ${response.status} for light command.`);
+                return false;
+            }
+        } catch (error: any) {
+            addLog(`Error sending light command: ${error.message}`);
+            return false;
+        }
+    }, [esp32Ip, isTestMode, addLog]);
+
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
     if (isTestMode) {
       addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
@@ -394,7 +421,31 @@ const startCamera = useCallback(async () => {
           if (appStatus !== newAppStatus) {
             setAppStatus(newAppStatus);
           }
-          handleSortAndRestart(foundPrediction.className);
+          
+          if (predictionIntervalRef.current) {
+            clearInterval(predictionIntervalRef.current);
+            predictionIntervalRef.current = undefined;
+          }
+
+          addLog(`Initial detection: ${foundPrediction.className}. Turning on light for final check.`);
+          await sendLightCommand('ON');
+          
+          setTimeout(async () => {
+            addLog("Re-classifying with light on...");
+            const finalPredictions = await model.predict(video);
+            const finalResult = interpretDetectionsLocal(finalPredictions, CONFIDENCE_THRESHOLD);
+
+            if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
+                addLog(`Final confirmation: ${finalResult.primaryObject}. Sorting.`);
+                handleSortAndRestart(finalResult.primaryObject);
+            } else {
+                addLog(`Final check failed. Result: ${finalResult.detectionState}. Restarting camera.`);
+                await sendLightCommand('OFF'); // Turn off light if sort fails
+                handleSortAndRestart("RESTART_NO_SORT"); // Special command or handle restart
+            }
+          }, 500);
+
+
       } else {
         setPrimaryPrediction(null);
       }
@@ -424,7 +475,7 @@ const startCamera = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isCameraOn, model, addLog, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection, setAppStatus, handleSortAndRestart]);
+  }, [isCameraOn, model, addLog, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection, setAppStatus, handleSortAndRestart, sendLightCommand]);
 
   useEffect(() => {
     return () => {
@@ -622,7 +673,6 @@ const startCamera = useCallback(async () => {
             case "MODEL_LOADING": return "Loading Model...";
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
-            case "ANALYZING_MATERIAL": return "Analyzing Material...";
             case "CAMERA_CYCLING": return "Camera Restarting...";
             case "COLLECTING_IMAGES": return "Collecting Images...";
             case "COOLDOWN": return "Auto-Capture Cooldown";
@@ -635,7 +685,6 @@ const startCamera = useCallback(async () => {
     const getStatusBadgeVariant = () => {
         switch (appStatus) {
             case "READY_TO_SEND": return "default";
-            case "ANALYZING_MATERIAL": return "default";
             case "COLLECTING_IMAGES": return "default";
             case "AWAITING_MODEL": return "secondary";
             case "COOLDOWN":
@@ -648,7 +697,7 @@ const startCamera = useCallback(async () => {
         }
     };
 
-    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN' || appStatus === 'ANALYZING_MATERIAL';
+    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN';
 
     return (
         <div className="flex flex-col items-end gap-2">
