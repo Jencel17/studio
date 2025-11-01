@@ -8,7 +8,7 @@ import dynamic from "next/dynamic";
 import { LogEntry } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 
-export type AppStatus = "AWAITING_MODEL" | "LOADING_LIBS" | "LIBS_LOADED"| "MODEL_LOADING" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING" | "COLLECTING_IMAGES" | "COOLDOWN";
+export type AppStatus = "AWAITING_MODEL" | "LOADING_LIBS" | "LIBS_LOADED"| "MODEL_LOADING" | "AWAITING_OBJECT" | "CONFIDENCE_TOO_LOW" | "READY_TO_SEND" | "CAMERA_CYCLING" | "COLLECTING_IMAGES" | "COOLDOWN" | "ANALYZING_MATERIAL";
 const MAX_LOGS = 100;
 
 const SortVisionCore = dynamic(

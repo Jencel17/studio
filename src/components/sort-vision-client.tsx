@@ -16,9 +16,10 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize } from "lucide-react";
+import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
+import { handleMaterialAnalysis } from "@/app/actions/material-analyzer";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -217,9 +218,9 @@ const startCamera = useCallback(async () => {
         return;
     }
     
-    // Stop any existing camera stream before starting a new one.
     if (streamRef.current) {
         stopCamera();
+        await new Promise(resolve => setTimeout(resolve, 100)); // Short delay to ensure hardware is released
     }
 
     try {
@@ -240,17 +241,16 @@ const startCamera = useCallback(async () => {
                 requestWakeLock();
             }
 
-            // Apply flash if it was on before
-            if (isFlashOn && streamRef.current) {
-                const videoTrack = streamRef.current.getVideoTracks()[0];
-                 if (videoTrack && 'torch' in videoTrack.getCapabilities()) {
+            if (isFlashOn) {
+                const videoTrack = stream.getVideoTracks()[0];
+                if (videoTrack && 'torch' in videoTrack.getCapabilities()) {
                     try {
                         await videoTrack.applyConstraints({ advanced: [{ torch: true }] });
-                        addLog("Flash re-enabled on camera start.");
+                        addLog("Flash enabled on camera start.");
                     } catch (e: any) {
-                        addLog(`Could not re-enable flash: ${e.message}`);
+                        addLog(`Could not enable flash on start: ${e.message}`);
                     }
-                 }
+                }
             }
         }
     } catch (error: any) {
@@ -361,12 +361,17 @@ const startCamera = useCallback(async () => {
 
 }, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, cameraRestartDelay]);
 
-  const runClassification = useCallback(async () => {
+ const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
       return;
     }
+  
+    const video = videoRef.current;
+    if (video.readyState < video.HAVE_ENOUGH_DATA) {
+        return; 
+    }
 
-    const predictions = await model.predict(videoRef.current);
+    const predictions = await model.predict(video);
     setCurrentPredictions(predictions);
 
     const filteredPredictions = predictions.filter(
@@ -379,59 +384,78 @@ const startCamera = useCallback(async () => {
     );
 
     setDetectionState(localResult.detectionState);
-
-    let topPrediction: Prediction | null = null;
-    let newAppStatus: AppStatus = "AWAITING_OBJECT";
+    let newAppStatus: AppStatus = appStatus;
     
     if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
       const foundPrediction = filteredPredictions.find(p => p.className === localResult.primaryObject);
       if (foundPrediction) {
-          topPrediction = foundPrediction;
           setPrimaryPrediction(foundPrediction);
           setLastClassifications(prev => [...prev, foundPrediction]);
           newAppStatus = "READY_TO_SEND";
+          setAppStatus(newAppStatus);
+          handleSortAndRestart(foundPrediction.className);
       } else {
         setPrimaryPrediction(null);
       }
     } else {
       setPrimaryPrediction(null);
-      if (localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5))) {
-        newAppStatus = "CONFIDENCE_TOO_LOW";
+      const isUncertain = localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5));
+      newAppStatus = isUncertain ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
+
+      if (isUncertain) {
+          // New logic: Escalate to cloud AI
+          if (appStatus !== 'ANALYZING_MATERIAL' && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+              addLog("Uncertain detection. Escalating to cloud AI for material analysis.");
+              setAppStatus("ANALYZING_MATERIAL");
+              
+              const canvas = document.createElement('canvas');
+              canvas.width = video.videoWidth;
+              canvas.height = video.videoHeight;
+              const ctx = canvas.getContext('2d');
+              if (ctx) {
+                  ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+                  const dataUri = canvas.toDataURL('image/jpeg');
+
+                  handleMaterialAnalysis({ photoDataUri: dataUri })
+                      .then(result => {
+                          if (result.material && ['Plastic', 'Metal', 'Paper'].includes(result.material)) {
+                              addLog(`Cloud AI identified material: ${result.material}. Reason: ${result.reason}`);
+                              handleSortAndRestart(result.material);
+                          } else {
+                              addLog(`Cloud AI could not determine material. Reason: ${result.reason}`);
+                              setAppStatus('CONFIDENCE_TOO_LOW'); // Go back to low confidence
+                          }
+                      })
+                      .catch(err => {
+                          addLog(`Cloud AI analysis failed: ${err.message}`);
+                          setAppStatus('CONFIDENCE_TOO_LOW');
+                      });
+              }
+          }
+      }
+      // Only set status if it has changed and not in a critical phase
+      if (appStatus !== newAppStatus && appStatus !== 'ANALYZING_MATERIAL' && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+        setAppStatus(newAppStatus);
       }
     }
 
-    if (appStatus !== 'COLLECTING_IMAGES' && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
-      setAppStatus(newAppStatus);
-    }
-    
-    if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
-      const shouldTriggerCapture = 
-        localResult.detectionState === 'AMBIGUOUS' ||
-        newAppStatus === 'CONFIDENCE_TOO_LOW';
-      
-      if (shouldTriggerCapture) {
-        if (!ambiguousDetectionTimer.current) {
-          addLog(`Uncertain detection. Triggering capture in ${AUTO_CAPTURE_TRIGGER_TIME / 1000}s.`);
-          ambiguousDetectionTimer.current = setTimeout(() => {
-            addLog("Threshold met. Starting automatic image capture.");
-            startImageCollection();
-            ambiguousDetectionTimer.current = null;
-          }, AUTO_CAPTURE_TRIGGER_TIME);
-        }
-      } else {
-        if (ambiguousDetectionTimer.current) {
-          addLog("Detection became clear. Cancelling auto-capture trigger.");
-          clearTimeout(ambiguousDetectionTimer.current);
+    if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING' && newAppStatus === "CONFIDENCE_TOO_LOW") {
+      if (!ambiguousDetectionTimer.current) {
+        addLog(`Uncertain detection. Triggering training image capture in ${AUTO_CAPTURE_TRIGGER_TIME / 1000}s.`);
+        ambiguousDetectionTimer.current = setTimeout(() => {
+          addLog("Threshold met. Starting automatic training image capture.");
+          startImageCollection();
           ambiguousDetectionTimer.current = null;
-        }
+        }, AUTO_CAPTURE_TRIGGER_TIME);
       }
-    }
-    
-    if (topPrediction) { 
-        handleSortAndRestart(topPrediction.className);
+    } else {
+      if (ambiguousDetectionTimer.current) {
+        addLog("Detection became clear or changed state. Cancelling auto-capture trigger.");
+        clearTimeout(ambiguousDetectionTimer.current);
+        ambiguousDetectionTimer.current = null;
+      }
     }
   }, [isCameraOn, model, addLog, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection, setAppStatus, handleSortAndRestart]);
-
 
   useEffect(() => {
     return () => {
@@ -537,10 +561,10 @@ const startCamera = useCallback(async () => {
 }, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled, setAppStatus]);
 
   useEffect(() => {
-    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING' && appStatus !== 'ANALYZING_MATERIAL') {
         addLog("Starting classification loop.");
         predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
-    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_CYCLING') && predictionIntervalRef.current) {
+    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_CYCLING' || appStatus === 'ANALYZING_MATERIAL') && predictionIntervalRef.current) {
         addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
@@ -629,6 +653,7 @@ const startCamera = useCallback(async () => {
             case "MODEL_LOADING": return "Loading Model...";
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
+            case "ANALYZING_MATERIAL": return "Analyzing Material...";
             case "CAMERA_CYCLING": return "Camera Restarting...";
             case "COLLECTING_IMAGES": return "Collecting Images...";
             case "COOLDOWN": return "Auto-Capture Cooldown";
@@ -641,6 +666,7 @@ const startCamera = useCallback(async () => {
     const getStatusBadgeVariant = () => {
         switch (appStatus) {
             case "READY_TO_SEND": return "default";
+            case "ANALYZING_MATERIAL": return "default";
             case "COLLECTING_IMAGES": return "default";
             case "AWAITING_MODEL": return "secondary";
             case "COOLDOWN":
@@ -653,13 +679,14 @@ const startCamera = useCallback(async () => {
         }
     };
 
-    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN';
+    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN' || appStatus === 'ANALYZING_MATERIAL';
 
     return (
         <div className="flex flex-col items-end gap-2">
              <div className="flex flex-wrap items-center justify-end gap-2">
                 <Badge variant={getStatusBadgeVariant()} className="text-xs">
                     {isLoading && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
+                    {appStatus === 'ANALYZING_MATERIAL' && <Sparkles className="h-3 w-3 mr-1 animate-pulse" />}
                     {getStatusText()}
                 </Badge>
                 <Badge variant={isTestMode ? "default" : "outline"} className="gap-2 text-xs">
@@ -721,6 +748,17 @@ const startCamera = useCallback(async () => {
                   <Upload className="h-16 w-16 text-muted-foreground animate-pulse" />
                   <p className="mt-2 text-muted-foreground">{appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' ? 'Loading Model...' : 'Please load a model from settings.'}</p>
               </div>
+            );
+        }
+
+        if (appStatus === 'ANALYZING_MATERIAL') {
+             return (
+                <div className="flex items-center gap-2">
+                    <Sparkles className="h-6 w-6 text-blue-400 animate-pulse" />
+                    <h3 className="text-xl font-bold text-blue-400 drop-shadow-lg">
+                        Analyzing Material...
+                    </h3>
+                </div>
             );
         }
        
