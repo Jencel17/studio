@@ -6,32 +6,18 @@ import { useState, useRef, useEffect, useCallback, ChangeEvent } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import type * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-  CardFooter,
-  CardDescription,
-} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Save, Trash2, Loader2, BrainCircuit, Bot } from "lucide-react";
-import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck } from "@/app/actions/ai";
-import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { Switch } from "@/components/ui/switch";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
 import SortVisionClient from "@/components/sort-vision-client";
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot } from 'lucide-react';
+import { useToast } from "@/hooks/use-toast";
 
 export default function SortVisionPage() {
   const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
@@ -561,6 +547,3 @@ export default function SortVisionPage() {
     </>
   );
 }
-    
-
-    

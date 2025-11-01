@@ -89,29 +89,44 @@ const interpretDetectionsLocal = (
     };
   }
 
-  if (significantPredictions.length === 1) {
-    const topPrediction = significantPredictions[0];
-    const secondPrediction = predictions.sort((a,b) => b.probability - a.probability)[1];
-    if (secondPrediction && topPrediction.probability > secondPrediction.probability * 2) {
+  // Sort by probability to easily compare top predictions
+  const sortedPredictions = [...predictions].sort((a,b) => b.probability - a.probability);
+
+  const topPrediction = sortedPredictions[0];
+
+  // If the top prediction is below the threshold, it's ambiguous
+  if(topPrediction.probability < confidenceThreshold){
+    return {
+      detectionState: "AMBIGUOUS",
+      reason: `Highest confidence (${topPrediction.probability.toFixed(2)}) is below threshold.`,
+    };
+  }
+  
+  // SINGLE_OBJECT check: Top prediction is above threshold AND significantly higher than the second one.
+  const secondPrediction = sortedPredictions.length > 1 ? sortedPredictions[1] : null;
+  if (secondPrediction) {
+    // If the second best is also above threshold, it's MULTIPLE_OBJECTS
+    if (secondPrediction.probability >= confidenceThreshold) {
       return {
-        detectionState: "SINGLE_OBJECT",
-        primaryObject: topPrediction.className,
-        reason: `Single object detected with high confidence: ${topPrediction.className}.`,
+          detectionState: "MULTIPLE_OBJECTS",
+          detectedObjects: significantPredictions.map((p) => p.className),
+          reason: "Multiple objects detected above confidence threshold.",
+      };
+    }
+    // If the top prediction is not much higher than the second, it's AMBIGUOUS
+    if (topPrediction.probability < secondPrediction.probability * 2) {
+       return {
+        detectionState: "AMBIGUOUS",
+        reason: "Confidence scores are too close to make a clear decision.",
       };
     }
   }
 
-  if (significantPredictions.length > 1) {
-    return {
-      detectionState: "MULTIPLE_OBJECTS",
-      detectedObjects: significantPredictions.map((p) => p.className),
-      reason: "Multiple objects detected above confidence threshold.",
-    };
-  }
-
+  // If we get here, it means we have a clear winner.
   return {
-    detectionState: "AMBIGUOUS",
-    reason: "Predictions are ambiguous, with no single clear object.",
+    detectionState: "SINGLE_OBJECT",
+    primaryObject: topPrediction.className,
+    reason: `Single object detected with high confidence: ${topPrediction.className}.`,
   };
 };
 
@@ -340,14 +355,14 @@ export default function SortVisionClient({
       }
     } else {
       setPrimaryPrediction(null);
-      if (filteredPredictions.some(p => p.probability > 0.5)) {
+      if (filteredPredictions.some(p => p.probability > 0.5)) { // Check if there's any notable prediction
         newAppStatus = "CONFIDENCE_TOO_LOW";
       }
     }
 
     setAppStatus(newAppStatus);
 
-     // New auto-capture logic
+    // New auto-capture logic
     if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN') {
       const shouldTriggerCapture = 
         localResult.detectionState === 'AMBIGUOUS' ||
@@ -411,15 +426,13 @@ export default function SortVisionClient({
     }
   };
   
-  
-
   useEffect(() => {
     let timer: NodeJS.Timeout;
     if (countdown > 0) {
       timer = setTimeout(() => {
         setCountdown(countdown - 1)
       }, 1000);
-    } else if (isCollectingImages && collectedImages.length === 0) {
+    } else if (isCollectingImages && countdown === 0 && collectedImages.length === 0) { // Start capture only when countdown finishes
         addLog("Countdown finished. Capturing images...");
         
         const captureInterval = setInterval(() => {
@@ -583,6 +596,7 @@ export default function SortVisionClient({
   }, [lastClassifications, toast, addLog, model]);
   
    useEffect(() => {
+    // This is a cleanup effect. It ensures the camera is turned off when the component unmounts.
     return () => {
       if(isCameraOn) {
         stopCamera();
@@ -858,4 +872,3 @@ export default function SortVisionClient({
     </>
   );
 }
-    

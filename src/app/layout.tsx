@@ -4,6 +4,7 @@ import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import SortVisionLoader from "@/components/sort-vision-loader";
 
 const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
 
@@ -28,7 +29,7 @@ export default function RootLayout({
         >
           <SidebarProvider>
             <SidebarInset>
-              {children}
+              <SortVisionLoader />
             </SidebarInset>
           </SidebarProvider>
           <Toaster />
@@ -37,5 +38,3 @@ export default function RootLayout({
     </html>
   );
 }
-
-    
