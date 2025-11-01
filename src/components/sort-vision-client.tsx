@@ -16,21 +16,15 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Smartphone, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, FileUp, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Save, Trash2, Loader2, BrainCircuit } from "lucide-react";
+import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
-import { Sidebar, SidebarContent, SidebarHeader, SidebarTrigger, SidebarGroup, SidebarGroupLabel, SidebarFooter, SidebarClose } from "@/components/ui/sidebar";
-import { Label } from "@/components/ui/label";
-import { ThemeToggle } from "@/components/theme-toggle";
-import { Switch } from "@/components/ui/switch";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
-import { Input } from "@/components/ui/input";
-import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-
 
 type Prediction = {
   className: string;
@@ -51,10 +45,23 @@ type CommandStatus = {
 
 type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "AMBIGUOUS";
 
-// Dynamically import AI libraries
 type TeachableMachine = typeof import("@teachablemachine/image");
 type TensorFlow = typeof import("@tensorflow/tfjs");
 
+interface SortVisionClientProps {
+    model: tmImage.CustomMobileNet | null;
+    setModel: (model: tmImage.CustomMobileNet | null) => void;
+    modelLabels: string[];
+    isModelLoading: boolean;
+    esp32Ip: string;
+    isTestMode: boolean;
+    wakeLockEnabled: boolean;
+    requestWakeLock: () => Promise<void>;
+    releaseWakeLock: () => Promise<void>;
+    tmImageRef: React.MutableRefObject<TeachableMachine | null>;
+    tfRef: React.MutableRefObject<TensorFlow | null>;
+    loadAiLibraries: () => Promise<boolean>;
+}
 
 const CAMERA_RESTART_DELAY = 3000;
 const CONFIDENCE_THRESHOLD = 0.8;
@@ -64,8 +71,6 @@ const IMAGE_CAPTURE_COUNT = 20;
 const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
 
-
-// Local implementation of the AI logic to avoid network latency
 const interpretDetectionsLocal = (
   predictions: Prediction[],
   confidenceThreshold: number
@@ -101,53 +106,38 @@ const interpretDetectionsLocal = (
     };
   }
 
-  // If one is above, but others are close, it's ambiguous.
   return {
     detectionState: "AMBIGUOUS",
     reason: "Predictions are ambiguous, with no single clear object.",
   };
 };
 
-export default function SortVisionClient() {
+export default function SortVisionClient({
+    model,
+    modelLabels,
+    esp32Ip,
+    isTestMode,
+    wakeLockEnabled,
+    requestWakeLock,
+    releaseWakeLock,
+    loadAiLibraries
+}: SortVisionClientProps) {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
-  const [isWakeLockActive, setIsWakeLockActive] = useState(false);
-  const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
-  const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
-  const [isModelLoading, setIsModelLoading] = useState(false);
-  const [isDragging, setIsDragging] = useState(false);
-  const [modelLabels, setModelLabels] = useState<string[]>([]);
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
   const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
-
-  // Image capture state
   const [isCollectingImages, setIsCollectingImages] = useState(false);
   const [collectedImages, setCollectedImages] = useState<string[]>([]);
   const [countdown, setCountdown] = useState(0);
-
-  // Model Library State
-  const [savedModels, setSavedModels] = useState<StoredModel[]>([]);
-  const [newModelName, setNewModelName] = useState("");
-  const [modelFiles, setModelFiles] = useState<{ model: File; metadata: File; weights: File } | null>(null);
-
-  // AI library state
-  const tmImageRef = useRef<TeachableMachine | null>(null);
-  const tfRef = useRef<TensorFlow | null>(null);
-  
-  // New state for HTTP communication
   const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
-  const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
-  const [isTestMode, setIsTestMode] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const wakeLockRef = useRef<WakeLockSentinel | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const predictionIntervalRef = useRef<NodeJS.Timeout>();
   const countdownIntervalRef = useRef<NodeJS.Timeout>();
 
@@ -160,69 +150,6 @@ export default function SortVisionClient() {
     };
     setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, MAX_LOGS));
   }, []);
-
-  const loadAiLibraries = useCallback(async () => {
-    if (tmImageRef.current && tfRef.current) {
-      addLog("AI libraries already loaded.");
-      return true;
-    }
-    setAppStatus("LOADING_LIBS");
-    addLog("Loading AI libraries (TensorFlow & Teachable Machine)...");
-    try {
-      const [tm, tf] = await Promise.all([
-        import("@teachablemachine/image"),
-        import("@tensorflow/tfjs"),
-      ]);
-      tmImageRef.current = tm;
-      tfRef.current = tf;
-      addLog("AI libraries loaded successfully.");
-      setAppStatus("AWAITING_MODEL");
-      return true;
-    } catch (error: any) {
-      console.error("Failed to load AI libraries:", error);
-      addLog(`FATAL: Could not load AI libraries. ${error.message}`);
-      toast({
-        variant: "destructive",
-        title: "Library Load Error",
-        description: "Could not load core AI libraries. Please refresh the page.",
-      });
-      setAppStatus("AWAITING_MODEL");
-      return false;
-    }
-  }, [addLog, toast]);
-
-  const releaseWakeLock = useCallback(async () => {
-    if (wakeLockRef.current) {
-      try {
-        await wakeLockRef.current.release();
-        wakeLockRef.current = null;
-        setIsWakeLockActive(false);
-        addLog("Screen wake lock released.");
-      } catch (error: any) {
-        console.error("Could not release wake lock:", error);
-        addLog(`Error releasing wake lock: ${error.message}`);
-      }
-    }
-  }, [addLog]);
-
-  const requestWakeLock = useCallback(async () => {
-    if ('wakeLock' in navigator && wakeLockEnabled && !wakeLockRef.current) {
-      try {
-        wakeLockRef.current = await navigator.wakeLock.request('screen');
-        setIsWakeLockActive(true);
-        addLog("Screen wake lock acquired.");
-        wakeLockRef.current.addEventListener('release', () => {
-          wakeLockRef.current = null;
-          setIsWakeLockActive(false);
-          addLog("Wake Lock was released by the system.");
-        });
-      } catch (err: any) {
-        console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
-        addLog(`Wake Lock Error: ${err.message}`);
-        setIsWakeLockActive(false);
-      }
-    }
-  }, [wakeLockEnabled, addLog]);
 
   const stopCamera = useCallback(() => {
     addLog("Stopping camera.");
@@ -415,281 +342,10 @@ export default function SortVisionClient() {
 
   }, [isCameraOn, model, sendSortCommand, addLog, stopCamera, startCamera]);
 
-  const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
-    if (!(await loadAiLibraries())) return;
-
-    setIsModelLoading(true);
-    setAppStatus("MODEL_LOADING");
-    addLog("Loading Teachable Machine model from files...");
-    
-    const tmImage = tmImageRef.current;
-    const tf = tfRef.current;
-
-    if (!tmImage || !tf) {
-        addLog("Error: AI libraries not available for model loading.");
-        toast({ variant: "destructive", title: "Load Error", description: "AI Libraries not found." });
-        setIsModelLoading(false);
-        return;
-    }
-
-    try {
-      addLog("Setting TensorFlow backend to 'cpu'.");
-      await tf.setBackend('cpu');
-      await tf.ready();
-      addLog("TensorFlow is ready.");
-      
-      addLog("Starting model load from files.");
-      const loadedModel = await tmImage.loadFromFiles(modelFile, weightsFile, metadataFile);
-      addLog("Model files loaded into memory.");
-      
-      const labels = loadedModel.getClassLabels();
-      
-      if (!labels.some(label => label.toLowerCase() === 'background')) {
-        addLog("Error: Model does not contain a 'background' category. Model rejected.");
-        toast({
-          variant: "destructive",
-          title: "Invalid Model: Missing 'background' category",
-          description: "The loaded model must include a class named 'background' to work correctly. Please train and export a new model.",
-          duration: 9000,
-        });
-        setModel(null);
-        setModelLabels([]);
-        setAppStatus("AWAITING_MODEL");
-      } else {
-        setModel(loadedModel);
-        setModelLabels(labels);
-        setModelFiles({ model: modelFile, metadata: metadataFile, weights: weightsFile });
-        setNewModelName(modelFile.name.replace('.json', ''));
-        addLog(`Model loaded successfully. Classes: ${labels.join(', ')}`);
-        toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
-        setAppStatus("AWAITING_OBJECT");
-      }
-      
-    } catch (error: any) {
-        console.error("Model loading error:", error);
-        addLog(`Model loading failed: ${error.message}`);
-        toast({ variant: "destructive", title: "Model Load Error", description: "Could not load the model. Check console for details." });
-        setModel(null);
-        setModelLabels([]);
-        setAppStatus("AWAITING_MODEL");
-    } finally {
-        setIsModelLoading(false);
-        addLog("Model loading process finished.");
-    }
-  }, [addLog, toast, loadAiLibraries]);
-
-  const handleFileDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDragging(false);
-    addLog("Files dropped.");
-
-    const files = event.dataTransfer.files;
-    if (!files || files.length === 0) {
-      addLog("No files found in drop event.");
-      return;
-    }
-
-    if (files.length === 1 && files[0].name.endsWith('.zip')) {
-        const file = files[0];
-        addLog(`Zip file detected: ${file.name}. Unpacking...`);
-        try {
-            const zip = await JSZip.loadAsync(file);
-            const modelJsonFile = zip.file("model.json");
-            const weightsBinFile = zip.file("weights.bin");
-            const metadataJsonFile = zip.file("metadata.json");
-
-            if (!modelJsonFile || !metadataJsonFile || !weightsBinFile) {
-                throw new Error("model.json, weights.bin, or metadata.json not found in the zip file.");
-            }
-
-            const modelBlob = await modelJsonFile.async("blob");
-            const weightsBlob = await weightsBinFile.async("blob");
-            const metadataBlob = await metadataJsonFile.async("blob");
-
-            const modelFile = new File([modelBlob], "model.json", { type: "application/json" });
-            const weightsFile = new File([weightsBlob], "weights.bin", { type: "application/octet-stream" });
-            const metadataFile = new File([metadataBlob], "metadata.json", { type: "application/json" });
-            
-            await loadModelFromFiles(modelFile, metadataFile, weightsFile);
-
-        } catch (error: any) {
-            console.error("Zip file processing error:", error);
-            addLog(`Error processing zip file: ${error.message}`);
-            toast({ variant: "destructive", title: "Zip File Error", description: "Could not process the zip file. Ensure it's a valid Teachable Machine export." });
-        }
-    } else {
-        let droppedModelFile: File | null = null;
-        let droppedMetadataFile: File | null = null;
-        let droppedWeightsFile: File | null = null;
-
-        Array.from(files).forEach(file => {
-            if (file.name === 'model.json') {
-                droppedModelFile = file;
-                addLog('model.json found.');
-            } else if (file.name === 'metadata.json') {
-                droppedMetadataFile = file;
-                addLog('metadata.json found.');
-            } else if (file.name === 'weights.bin') {
-                droppedWeightsFile = file;
-                addLog('weights.bin found.');
-            }
-        });
-
-        if (droppedModelFile && droppedMetadataFile && droppedWeightsFile) {
-             addLog('All model components found. Loading model.');
-             await loadModelFromFiles(droppedModelFile, droppedMetadataFile, droppedWeightsFile);
-        } else {
-             addLog("Dropped files are not a valid model. Please drop a .zip file or model.json, metadata.json and weights.bin together.");
-             toast({ variant: "destructive", title: "Invalid Files", description: "Please drop a .zip file or all three model component files." });
-        }
-    }
-  }, [addLog, toast, loadModelFromFiles]);
-
-  const handleDragOver = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDragging(true);
-  };
-
-  const handleDragLeave = (event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.stopPropagation();
-    setIsDragging(false);
-  };
-
-  const handleFileSelect = async (event: ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files || files.length === 0) return;
-
-    if (files.length === 1 && files[0].name.endsWith('.zip')) {
-      const file = files[0];
-      addLog(`Zip file selected: ${file.name}. Unpacking...`);
-      try {
-        const zip = await JSZip.loadAsync(file);
-        const modelJsonFile = zip.file("model.json");
-        const weightsBinFile = zip.file("weights.bin");
-        const metadataJsonFile = zip.file("metadata.json");
-
-        if (!modelJsonFile || !metadataJsonFile || !weightsBinFile) {
-          throw new Error("model.json, weights.bin, or metadata.json not found in the zip file.");
-        }
-
-        const modelBlob = await modelJsonFile.async("blob");
-        const weightsBlob = await weightsBinFile.async("blob");
-        const metadataBlob = await metadataJsonFile.async("blob");
-
-        const modelFile = new File([modelBlob], "model.json", { type: "application/json" });
-        const weightsFile = new File([weightsBlob], "weights.bin", { type: "application/octet-stream" });
-        const metadataFile = new File([metadataBlob], "metadata.json", { type: "application/json" });
-        
-        await loadModelFromFiles(modelFile, metadataFile, weightsFile);
-      } catch (error: any) {
-        console.error("Zip file processing error:", error);
-        addLog(`Error processing zip file: ${error.message}`);
-        toast({ variant: "destructive", title: "Zip File Error", description: "Could not process the zip file." });
-      }
-    } else {
-       let selectedModelFile: File | null = null;
-       let selectedMetadataFile: File | null = null;
-       let selectedWeightsFile: File | null = null;
-
-       Array.from(files).forEach(file => {
-         if (file.name === 'model.json') {
-           selectedModelFile = file;
-         } else if (file.name === 'metadata.json') {
-           selectedMetadataFile = file;
-         } else if (file.name === 'weights.bin') {
-            selectedWeightsFile = file;
-         }
-       });
-
-       if (selectedModelFile && selectedMetadataFile && selectedWeightsFile) {
-         addLog('All model components selected. Loading model.');
-         await loadModelFromFiles(selectedModelFile, selectedMetadataFile, selectedWeightsFile);
-       } else {
-         addLog("Invalid file selection. Please select a .zip file, or model.json, metadata.json and weights.bin.");
-         toast({ variant: "destructive", title: "Invalid Files", description: "Select a .zip or all three model component files." });
-       }
-    }
-    // Reset file input so the same file can be selected again
-    event.target.value = '';
-  };
-
 
   useEffect(() => {
     loadAiLibraries();
   }, [loadAiLibraries]);
-
-  const refreshModelsFromDb = useCallback(async () => {
-    addLog("Refreshing model list from local DB...");
-    const models = await getModelsFromDb();
-    setSavedModels(models);
-    addLog(`Found ${models.length} saved models.`);
-  }, [addLog]);
-
-  useEffect(() => {
-    refreshModelsFromDb();
-  }, [refreshModelsFromDb]);
-  
-  const handleSaveModel = async () => {
-    if (!modelFiles || !newModelName) {
-      toast({ variant: "destructive", title: "Cannot Save", description: "No model is loaded or name is empty." });
-      return;
-    }
-    try {
-      addLog(`Saving model "${newModelName}" to local library...`);
-      await saveModelToDb(newModelName, modelFiles.model, modelFiles.metadata, modelFiles.weights);
-      toast({ title: "Model Saved", description: `"${newModelName}" has been saved to your library.` });
-      setNewModelName("");
-      setModelFiles(null);
-      await refreshModelsFromDb();
-    } catch (error: any) {
-      console.error("Failed to save model:", error);
-      addLog(`Error saving model: ${error.message}`);
-      toast({ variant: "destructive", title: "Save Error", description: "Could not save the model to the local library." });
-    }
-  };
-
-  const handleLoadFromLibrary = async (name: string) => {
-    try {
-      addLog(`Loading model "${name}" from library...`);
-      const modelData = await getModelFromDb(name);
-      if (modelData) {
-        await loadModelFromFiles(modelData.model, modelData.metadata, modelData.weights);
-      } else {
-        throw new Error("Model not found in the database.");
-      }
-    } catch (error: any) {
-      console.error("Failed to load model from library:", error);
-      addLog(`Error loading model: ${error.message}`);
-      toast({ variant: "destructive", title: "Load Error", description: `Could not load "${name}" from the library.` });
-    }
-  };
-
-  const handleDeleteFromLibrary = async (name: string) => {
-    try {
-      addLog(`Deleting model "${name}" from library...`);
-      await deleteModelFromDb(name);
-      toast({ title: "Model Deleted", description: `"${name}" has been removed from your library.` });
-      await refreshModelsFromDb();
-    } catch (error: any) {
-      console.error("Failed to delete model from library:", error);
-      addLog(`Error deleting model: ${error.message}`);
-      toast({ variant: "destructive", title: "Delete Error", description: `Could not delete "${name}" from the library.` });
-    }
-  };
-
-  const handleWakeLockToggle = (checked: boolean) => {
-    setWakeLockEnabled(checked);
-    if (checked) {
-      requestWakeLock();
-      toast({ title: 'Screen lock enabled', description: 'Your screen will try to stay awake.' });
-    } else {
-      releaseWakeLock();
-      toast({ title: 'Screen lock disabled', description: 'Your screen will now turn off normally.' });
-    }
-  };
 
   const toggleCamera = () => {
     if (isCameraOn) {
@@ -723,7 +379,7 @@ export default function SortVisionClient() {
     countdownIntervalRef.current = setInterval(() => {
         setCountdown(prev => {
             if (prev <= 1) {
-                clearInterval(countdownIntervalRef.current);
+                clearInterval(countdownIntervalRef.current!);
                 return 0;
             }
             return prev - 1;
@@ -1068,139 +724,6 @@ export default function SortVisionClient() {
 
   return (
     <>
-      <Sidebar>
-        <SidebarHeader>
-            <div className="flex items-center justify-between p-2">
-              <h2 className="text-lg font-semibold">Settings</h2>
-              <SidebarClose />
-            </div>
-        </SidebarHeader>
-        <SidebarContent className="p-0">
-          <SidebarGroup>
-            <SidebarGroupLabel>Teachable Machine Model</SidebarGroupLabel>
-            <div 
-              onDrop={handleFileDrop}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              className={cn(
-                "m-4 mt-0 p-4 border-2 border-dashed rounded-lg text-center transition-colors duration-200",
-                isDragging ? "border-primary bg-primary/10" : "border-border",
-                isModelLoading && "pointer-events-none opacity-50"
-              )}
-            >
-              <FileUp className="mx-auto h-10 w-10 text-muted-foreground" />
-              <p className="mt-2 text-sm text-muted-foreground">
-                {isModelLoading 
-                  ? "Loading model..." 
-                  : isDragging 
-                  ? "Release to upload" 
-                  : "Drag & drop a .zip or model files"}
-              </p>
-              <p className="text-xs text-muted-foreground/80">or</p>
-              <Button 
-                variant="link" 
-                className="p-0 h-auto text-sm"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={isModelLoading}
-              >
-                click to browse
-              </Button>
-              <input 
-                type="file" 
-                ref={fileInputRef} 
-                className="hidden" 
-                accept=".zip,model.json,metadata.json,application/octet-stream"
-                multiple
-                onChange={handleFileSelect}
-                disabled={isModelLoading}
-              />
-            </div>
-             {modelFiles && (
-              <div className="mx-4 mb-4 p-4 border rounded-lg bg-muted/30 space-y-3">
-                  <Label htmlFor="model-name">Save to Library</Label>
-                  <div className="flex gap-2">
-                      <Input 
-                          id="model-name"
-                          value={newModelName}
-                          onChange={(e) => setNewModelName(e.target.value)}
-                          placeholder="Enter model name..."
-                      />
-                      <Button onClick={handleSaveModel} size="icon">
-                          <Save />
-                      </Button>
-                  </div>
-              </div>
-            )}
-          </SidebarGroup>
-          <SidebarGroup>
-            <SidebarGroupLabel>Model Library</SidebarGroupLabel>
-            <div className="p-4 pt-0">
-              {savedModels.length > 0 ? (
-                <div className="space-y-2">
-                  {savedModels.map(m => (
-                    <div key={m.id} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
-                      <p className="text-sm font-medium truncate">{m.name}</p>
-                      <div className="flex gap-1">
-                        <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading}>
-                          {isModelLoading ? <Loader2 className="animate-spin"/> : <BrainCircuit />}
-                        </Button>
-                         <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
-                          <Trash2 />
-                        </Button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-muted-foreground text-center p-4">No models saved locally.</p>
-              )}
-            </div>
-          </SidebarGroup>
-           <SidebarGroup>
-            <SidebarGroupLabel>Network Settings</SidebarGroupLabel>
-            <div className="space-y-2 p-4">
-              <Label htmlFor="esp32-ip">ESP32 IP Address</Label>
-              <Input
-                id="esp32-ip"
-                value={esp32Ip}
-                onChange={(e) => setEsp32Ip(e.target.value)}
-                placeholder="e.g., http://192.168.4.1"
-                disabled={isTestMode}
-              />
-            </div>
-          </SidebarGroup>
-          <SidebarGroup>
-            <SidebarGroupLabel>Device Settings</SidebarGroupLabel>
-            <div className="space-y-4 p-4">
-              <div className="flex items-center justify-between">
-                <Label htmlFor="keep-awake" className="flex items-center gap-2">
-                  <Smartphone className="h-4 w-4" />
-                  Keep Screen Awake
-                </Label>
-                <Switch
-                  id="keep-awake"
-                  checked={wakeLockEnabled}
-                  onCheckedChange={handleWakeLockToggle}
-                />
-              </div>
-              <div className="flex items-center justify-between">
-                <Label htmlFor="test-mode" className="flex items-center gap-2">
-                  <TestTube className="h-4 w-4" />
-                  Test Mode
-                </Label>
-                <Switch
-                  id="test-mode"
-                  checked={isTestMode}
-                  onCheckedChange={setIsTestMode}
-                />
-              </div>
-            </div>
-          </SidebarGroup>
-        </SidebarContent>
-        <SidebarFooter>
-          <ThemeToggle />
-        </SidebarFooter>
-      </Sidebar>
       <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20 relative">
         <div className="absolute top-4 left-4 z-10">
           <SidebarTrigger />
@@ -1283,3 +806,4 @@ export default function SortVisionClient() {
     </>
   );
 }
+    
