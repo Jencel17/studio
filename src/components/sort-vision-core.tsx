@@ -66,7 +66,7 @@ export default function SortVisionCore({
   const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
   const [isTestMode, setIsTestMode] = useState(false);
   const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
-  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
+  const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
   const [cameraRestartDelay, setCameraRestartDelay] = useState(3);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -538,5 +538,3 @@ export default function SortVisionCore({
     </>
   );
 }
-
-    
