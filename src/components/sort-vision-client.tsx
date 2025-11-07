@@ -22,12 +22,11 @@ import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
-import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription, SheetFooter } from "@/components/ui/sheet";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { AppStatus } from "@/app/page";
+import { AppStatus } from "@/lib/types";
 import { LogEntry } from "@/lib/types";
 
 
@@ -465,7 +464,7 @@ const startCamera = useCallback(async () => {
       }
     }
 
-    if (autoCaptureEnabled && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING' && newAppStatus === "CONFIDENCE_TOO_LOW") {
+    if (autoCaptureEnabled && !isCollectingImages && newAppStatus === "CONFIDENCE_TOO_LOW" && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
       if (!ambiguousDetectionTimer.current) {
         addLog(`Uncertain detection. Triggering training image capture in ${AUTO_CAPTURE_TRIGGER_TIME / 1000}s.`);
         ambiguousDetectionTimer.current = setTimeout(() => {
@@ -503,28 +502,30 @@ const startCamera = useCallback(async () => {
   useEffect(() => {
     let timer: NodeJS.Timeout | undefined = undefined;
     if (countdown > 0) {
-      timer = setTimeout(() => setCountdown(countdown - 1), 1000);
+        timer = setTimeout(() => setCountdown(countdown - 1), 1000);
     } else if (isCollectingImages && countdown === 0) {
+        let captureCount = 0;
         const captureInterval = setInterval(() => {
-            setCollectedImages(prev => {
-                if (prev.length >= IMAGE_CAPTURE_COUNT) {
-                    clearInterval(captureInterval);
-                    return prev;
-                }
-                if (!videoRef.current) return prev;
+            if (!videoRef.current) {
+                clearInterval(captureInterval);
+                return;
+            }
 
-                const canvas = document.createElement('canvas');
-                canvas.width = videoRef.current.videoWidth;
-                canvas.height = videoRef.current.videoHeight;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-                    const dataUri = canvas.toDataURL('image/jpeg');
-                    addLog(`Captured image ${prev.length + 1}/${IMAGE_CAPTURE_COUNT}`);
-                    return [...prev, dataUri];
-                }
-                return prev;
-            });
+            const canvas = document.createElement('canvas');
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                const dataUri = canvas.toDataURL('image/jpeg');
+                setCollectedImages(prev => [...prev, dataUri]);
+                addLog(`Captured image ${captureCount + 1}/${IMAGE_CAPTURE_COUNT}`);
+                captureCount++;
+            }
+
+            if (captureCount >= IMAGE_CAPTURE_COUNT) {
+                clearInterval(captureInterval);
+            }
         }, IMAGE_CAPTURE_INTERVAL);
 
         return () => clearInterval(captureInterval);
@@ -673,7 +674,6 @@ const startCamera = useCallback(async () => {
         switch (appStatus) {
             case "AWAITING_MODEL": return "Awaiting Model";
             case "LOADING_LIBS": return "Loading AI libs...";
-            case "LIBS_LOADED": return "AI libs loaded";
             case "MODEL_LOADING": return "Loading Model...";
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
@@ -693,7 +693,6 @@ const startCamera = useCallback(async () => {
             case "AWAITING_MODEL": return "secondary";
             case "COOLDOWN":
             case "LOADING_LIBS":
-            case "LIBS_LOADED":
             case "MODEL_LOADING":
             case "CAMERA_CYCLING": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
@@ -951,3 +950,5 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
+
+    
