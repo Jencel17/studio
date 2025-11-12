@@ -856,7 +856,7 @@ const toggleFocus = useCallback(async () => {
             );
         }
 
-        if (appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || !model) {
+        if (appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || (!model && appStatus !== "AWAITING_OBJECT")) {
            return (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
                   <Upload className="h-16 w-16 text-muted-foreground animate-pulse" />
@@ -976,6 +976,8 @@ const toggleFocus = useCallback(async () => {
     );
   };
 
+  const isCameraControlDisabled = isCollectingImages || appStatus === 'CAMERA_CYCLING';
+
   return (
       <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20 flex flex-col">
         <CardHeader className="flex-col sm:flex-row items-start justify-between gap-4">
@@ -1028,17 +1030,17 @@ const toggleFocus = useCallback(async () => {
               <p className="text-xs text-muted-foreground ml-2">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle.</p>
             </div>
             <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
-              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={!model || isCollectingImages}>
+              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={isCollectingImages || appStatus === 'CAMERA_CYCLING'}>
                 {isCameraOn ? <CameraOff /> : <Camera />}
                 {isCameraOn ? "Stop" : "Start"}
               </Button>
-               <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
+               <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled}>
                 {isFlashOn ? <FlashlightOff /> : <Flashlight />}
               </Button>
-              <Button onClick={toggleFocus} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
+              <Button onClick={toggleFocus} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled}>
                 {isFocusLocked ? <Unlock /> : <Lock />}
               </Button>
-              <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
+              <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || !model || isCollectingImages}>
                 <Download />
               </Button>
             </div>
@@ -1046,3 +1048,5 @@ const toggleFocus = useCallback(async () => {
       </Card>
   );
 }
+
+    
