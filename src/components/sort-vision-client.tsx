@@ -213,7 +213,40 @@ export default function SortVisionClient({
 
   }, [isCameraOn, hasCameraPermission, isCollectingImages, addLog, setAppStatus, sendLightCommand]);
 
-  const stopCamera = useCallback(() => {
+  const applyCameraSettings = useCallback(async (stream: MediaStream, { flash, focus }: { flash: boolean; focus: boolean; }) => {
+      if (!stream) return;
+      const videoTrack = stream.getVideoTracks()[0];
+      if (!videoTrack) return;
+  
+      const capabilities = videoTrack.getCapabilities();
+  
+      // Apply Flash
+      if (capabilities.torch) {
+          try {
+              await videoTrack.applyConstraints({ advanced: [{ torch: flash }] });
+              setIsFlashOn(flash);
+              addLog(`Restored flash state to: ${flash ? 'ON' : 'OFF'}`);
+          } catch (error: any) {
+              addLog(`Could not restore flash state: ${error.message}`);
+          }
+      }
+  
+      // Apply Focus Lock
+      // @ts-ignore
+      if (capabilities.focusMode) {
+          try {
+              const focusMode = focus ? 'manual' : 'continuous';
+              // @ts-ignore
+              await videoTrack.applyConstraints({ advanced: [{ focusMode }] });
+              // No need to setIsFocusLocked here, as it's managed separately
+              addLog(`Restored focus mode to: ${focusMode}`);
+          } catch (error: any) {
+              addLog(`Could not restore focus mode: ${error.message}`);
+          }
+      }
+  }, [addLog]);
+
+  const stopCamera = useCallback((preserveSettings = false) => {
     addLog("Stopping camera.");
     if (streamRef.current) {
       streamRef.current.getTracks().forEach((track) => track.stop());
@@ -231,14 +264,17 @@ export default function SortVisionClient({
     }
     streamRef.current = null;
     setIsCameraOn(false);
-    setIsFocusLocked(false);
+    if (!preserveSettings) {
+      setIsFocusLocked(false);
+      setIsFlashOn(false);
+    }
     setPrimaryPrediction(null);
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
     releaseWakeLock();
   }, [releaseWakeLock, addLog]);
 
-const startCamera = useCallback(async () => {
+const startCamera = useCallback(async (options: { restoreFlash?: boolean, restoreFocus?: boolean } = {}) => {
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         addLog("Camera API not available in this browser.");
         toast({ variant: "destructive", title: "Unsupported Browser", description: "Camera access is not available." });
@@ -247,7 +283,7 @@ const startCamera = useCallback(async () => {
     }
     
     if (streamRef.current) {
-        stopCamera();
+        stopCamera(true); // Preserve settings during quick restart
         await new Promise(resolve => setTimeout(resolve, 100));
     }
 
@@ -261,17 +297,22 @@ const startCamera = useCallback(async () => {
         if (video) {
             video.srcObject = stream;
             video.onloadedmetadata = () => {
-                video.play().then(() => {
+                video.play().then(async () => {
                     setIsCameraOn(true);
                     setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
                     addLog("Camera started successfully.");
+
+                    await applyCameraSettings(stream, {
+                        flash: options.restoreFlash ?? isFlashOn,
+                        focus: options.restoreFocus ?? isFocusLocked,
+                    });
+
                     if (wakeLockEnabled) {
                         requestWakeLock();
                     }
                 }).catch((error) => {
                     console.error("Video play failed:", error);
                     addLog(`Video play error: ${error.message}`);
-                    // Specific error for play interruption
                     if (error.name === 'AbortError') {
                         addLog('Video play was aborted, likely by a component re-render. This is often safe to ignore.');
                     } else if (error.name === 'NotAllowedError') {
@@ -292,7 +333,7 @@ const startCamera = useCallback(async () => {
         });
         stopCamera();
     }
-}, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock]);
+}, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isFlashOn, isFocusLocked, applyCameraSettings]);
 
 
   const toggleFlash = useCallback(async () => {
@@ -354,22 +395,16 @@ const toggleFocus = useCallback(async () => {
     const newFocusState = !isFocusLocked;
     try {
       if (newFocusState) {
-        // To lock focus, we set it to 'manual'
         addLog("Locking camera focus.");
-        await videoTrack.applyConstraints({
-          // @ts-ignore
-          advanced: [{ focusMode: 'manual' }],
-        });
+        // @ts-ignore
+        await videoTrack.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
         setIsFocusLocked(true);
         addLog("Focus locked.");
         toast({ title: 'Focus Locked' });
       } else {
-        // To unlock, we set it back to 'continuous' (autofocus)
         addLog("Unlocking camera focus (enabling autofocus).");
-        await videoTrack.applyConstraints({
-          // @ts-ignore
-          advanced: [{ focusMode: 'continuous' }],
-        });
+        // @ts-ignore
+        await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
         setIsFocusLocked(false);
         addLog("Focus unlocked.");
         toast({ title: 'Focus Unlocked (Autofocus Enabled)' });
@@ -427,7 +462,10 @@ const toggleFocus = useCallback(async () => {
   }, [addLog, toast, esp32Ip, isTestMode]);
 
  const handleSortAndRestart = useCallback(async (classification: string) => {
-    stopCamera();
+    const flashState = isFlashOn;
+    const focusState = isFocusLocked;
+
+    stopCamera(true); // Preserve UI state
     
     setAppStatus("CAMERA_CYCLING");
     addLog(`Command sent for ${classification}. Restarting camera in ${cameraRestartDelay} seconds...`);
@@ -441,10 +479,10 @@ const toggleFocus = useCallback(async () => {
     const delayInMs = cameraRestartDelay * 1000;
     setTimeout(() => {
         addLog("Restarting camera now.");
-        startCamera();
+        startCamera({ restoreFlash: flashState, restoreFocus: focusState });
     }, delayInMs);
 
-}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, cameraRestartDelay, sendLightCommand]);
+}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, cameraRestartDelay, sendLightCommand, isFlashOn, isFocusLocked]);
 
  const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
@@ -1008,5 +1046,3 @@ const toggleFocus = useCallback(async () => {
       </Card>
   );
 }
-
-    
