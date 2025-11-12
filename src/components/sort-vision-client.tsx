@@ -535,7 +535,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isCameraOn, model, addLog, autoCaptureEnabled, isCollectingImages, appStatus, startImageCollection, setAppStatus, handleSortAndRestart, sendLightCommand]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand]);
 
   useEffect(() => {
     return () => {
@@ -1008,3 +1008,5 @@ const toggleFocus = useCallback(async () => {
       </Card>
   );
 }
+
+    
