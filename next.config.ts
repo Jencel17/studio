@@ -3,10 +3,10 @@ import type {NextConfig} from 'next';
 import withPWA from 'next-pwa';
 
 const pwaConfig = {
-  dest: process.env.NODE_ENV === 'development' ? '.next/static/pwa' : 'public',
+  dest: 'public',
   register: true,
   skipWaiting: true,
-  disable: process.env.NODE_ENV === 'development',
+  disable: process.env.NODE_ENV === 'development' && false,
 };
 
 const nextConfig: NextConfig = {
