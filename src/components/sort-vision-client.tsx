@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles } from "lucide-react";
+import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles, Lock, Unlock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/ai";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -149,6 +149,7 @@ export default function SortVisionClient({
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [isFlashOn, setIsFlashOn] = useState(false);
+  const [isFocusLocked, setIsFocusLocked] = useState(false);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
   const [isConsoleFullscreen, setIsConsoleFullscreen] = useState(false);
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
@@ -230,6 +231,7 @@ export default function SortVisionClient({
     }
     streamRef.current = null;
     setIsCameraOn(false);
+    setIsFocusLocked(false);
     setPrimaryPrediction(null);
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
@@ -329,6 +331,59 @@ const startCamera = useCallback(async () => {
         });
     }
 }, [isCameraOn, isFlashOn, addLog, toast]);
+
+const toggleFocus = useCallback(async () => {
+    if (!isCameraOn || !streamRef.current) {
+      addLog("Cannot change focus: Camera is off.");
+      return;
+    }
+
+    const videoTrack = streamRef.current.getVideoTracks()[0];
+    const capabilities = videoTrack.getCapabilities();
+    // @ts-ignore - focusMode is a valid capability but not in all TS libs.
+    if (!capabilities.focusMode) {
+      addLog("Focus control not supported on this device.");
+      toast({
+        variant: "destructive",
+        title: "Focus Not Supported",
+        description: "This device's camera does not support focus control.",
+      });
+      return;
+    }
+
+    const newFocusState = !isFocusLocked;
+    try {
+      if (newFocusState) {
+        // To lock focus, we set it to 'manual'
+        addLog("Locking camera focus.");
+        await videoTrack.applyConstraints({
+          // @ts-ignore
+          advanced: [{ focusMode: 'manual' }],
+        });
+        setIsFocusLocked(true);
+        addLog("Focus locked.");
+        toast({ title: 'Focus Locked' });
+      } else {
+        // To unlock, we set it back to 'continuous' (autofocus)
+        addLog("Unlocking camera focus (enabling autofocus).");
+        await videoTrack.applyConstraints({
+          // @ts-ignore
+          advanced: [{ focusMode: 'continuous' }],
+        });
+        setIsFocusLocked(false);
+        addLog("Focus unlocked.");
+        toast({ title: 'Focus Unlocked (Autofocus Enabled)' });
+      }
+    } catch (error: any) {
+      console.error("Failed to toggle focus:", error);
+      addLog(`Focus Error: ${error.message}`);
+      toast({
+        variant: "destructive",
+        title: "Focus Control Failed",
+        description: "Could not change the focus setting.",
+      });
+    }
+  }, [isCameraOn, isFocusLocked, addLog, toast]);
 
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
     if (isTestMode) {
@@ -504,30 +559,30 @@ const startCamera = useCallback(async () => {
     if (countdown > 0) {
         timer = setTimeout(() => setCountdown(countdown - 1), 1000);
     } else if (isCollectingImages && countdown === 0) {
-        let captureCount = 0;
         const captureInterval = setInterval(() => {
-            if (!videoRef.current) {
-                clearInterval(captureInterval);
-                return;
-            }
+            setCollectedImages(prev => {
+                if (prev.length >= IMAGE_CAPTURE_COUNT) {
+                    clearInterval(captureInterval);
+                    return prev;
+                }
+                if (!videoRef.current) {
+                    clearInterval(captureInterval);
+                    return prev;
+                }
 
-            const canvas = document.createElement('canvas');
-            canvas.width = videoRef.current.videoWidth;
-            canvas.height = videoRef.current.videoHeight;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-                ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-                const dataUri = canvas.toDataURL('image/jpeg');
-                setCollectedImages(prev => [...prev, dataUri]);
-                addLog(`Captured image ${captureCount + 1}/${IMAGE_CAPTURE_COUNT}`);
-                captureCount++;
-            }
-
-            if (captureCount >= IMAGE_CAPTURE_COUNT) {
-                clearInterval(captureInterval);
-            }
+                const canvas = document.createElement('canvas');
+                canvas.width = videoRef.current.videoWidth;
+                canvas.height = videoRef.current.videoHeight;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                    const dataUri = canvas.toDataURL('image/jpeg');
+                    addLog(`Captured image ${prev.length + 1}/${IMAGE_CAPTURE_COUNT}`);
+                    return [...prev, dataUri];
+                }
+                return prev;
+            });
         }, IMAGE_CAPTURE_INTERVAL);
-
         return () => clearInterval(captureInterval);
     }
     return () => clearTimeout(timer);
@@ -942,6 +997,9 @@ const startCamera = useCallback(async () => {
                <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
                 {isFlashOn ? <FlashlightOff /> : <Flashlight />}
               </Button>
+              <Button onClick={toggleFocus} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
+                {isFocusLocked ? <Unlock /> : <Lock />}
+              </Button>
               <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || isCollectingImages}>
                 <Download />
               </Button>
@@ -950,5 +1008,3 @@ const startCamera = useCallback(async () => {
       </Card>
   );
 }
-
-    

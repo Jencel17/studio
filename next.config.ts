@@ -1,13 +1,42 @@
 import type {NextConfig} from 'next';
 import withPWA from 'next-pwa';
-import runtimeCaching from 'next-pwa/cache';
 
 const pwaConfig = {
   dest: 'public',
   register: true,
   skipWaiting: true,
-  disable: false, // Enabled for development testing
-  runtimeCaching,
+  disable: process.env.NODE_ENV === 'development' ? false : true, // Enable for dev, disable for prod build to avoid issues
+  runtimeCaching: [
+    {
+      urlPattern: ({ request }: { request: Request }) => request.mode === 'navigate',
+      handler: 'CacheFirst' as const,
+      options: {
+        cacheName: 'pages',
+        expiration: {
+          maxEntries: 60,
+          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 Days
+        },
+      },
+    },
+    {
+      urlPattern: /\.(?:png|jpg|jpeg|svg|gif|ico)$/,
+      handler: 'CacheFirst' as const,
+      options: {
+        cacheName: 'images',
+        expiration: {
+          maxEntries: 60,
+          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 Days
+        },
+      },
+    },
+    {
+      urlPattern: /\.(?:js|css)$/,
+      handler: 'StaleWhileRevalidate' as const,
+      options: {
+        cacheName: 'static-resources',
+      },
+    },
+  ],
 };
 
 const nextConfig: NextConfig = {
