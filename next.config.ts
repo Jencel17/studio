@@ -5,7 +5,7 @@ const pwaConfig = {
   dest: 'public',
   register: true,
   skipWaiting: true,
-  disable: process.env.NODE_ENV === 'development' ? false : true, // Enable for dev, disable for prod build to avoid issues
+  disable: process.env.NODE_ENV === 'development',
   runtimeCaching: [
     {
       urlPattern: ({ request }: { request: Request }) => request.mode === 'navigate',
