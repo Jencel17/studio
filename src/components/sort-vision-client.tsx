@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useRef, useEffect, useCallback, ChangeEvent, MutableRefObject } from "react";
+import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import type * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
@@ -25,14 +25,8 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { AppStatus } from "@/lib/types";
-import { LogEntry } from "@/lib/types";
+import { AppStatus, LogEntry, Prediction } from "@/lib/types";
 
-
-type Prediction = {
-  className: string;
-  probability: number;
-};
 
 type CommandStatus = {
   status: "IDLE" | "SUCCESS" | "ERROR";
@@ -43,20 +37,15 @@ type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "A
 
 interface SortVisionClientProps {
     model: tmImage.CustomMobileNet | null;
-    setModel: (model: tmImage.CustomMobileNet | null) => void;
-    modelLabels: string[];
     appStatus: AppStatus;
     setAppStatus: (status: AppStatus) => void;
     esp32Ip: string;
     isTestMode: boolean;
     wakeLockEnabled: boolean;
-    requestWakeLock: () => Promise<void>;
-    releaseWakeLock: () => Promise<void>;
     autoCaptureEnabled: boolean;
     addLog: (message: string) => void;
     logs: LogEntry[];
     setLogs: (logs: LogEntry[]) => void;
-    libsLoaded: boolean;
     cameraRestartDelay: number;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
     tfRef: MutableRefObject<typeof tf | null>;
@@ -127,20 +116,15 @@ const interpretDetectionsLocal = (
 
 export default function SortVisionClient({
     model,
-    setModel,
-    modelLabels,
     appStatus,
     setAppStatus,
     esp32Ip,
     isTestMode,
     wakeLockEnabled,
-    requestWakeLock,
-    releaseWakeLock,
     autoCaptureEnabled,
     addLog,
     logs,
     setLogs,
-    libsLoaded,
     cameraRestartDelay,
     tmImageRef,
     tfRef
@@ -158,6 +142,7 @@ export default function SortVisionClient({
   const [collectedImages, setCollectedImages] = useState<string[]>([]);
   const [countdown, setCountdown] = useState(0);
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
+  const [wakeLockRef, setWakeLockRef] = useState<WakeLockSentinel | null>(null);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -212,6 +197,35 @@ export default function SortVisionClient({
 
   }, [isCameraOn, hasCameraPermission, isCollectingImages, addLog, setAppStatus, sendLightCommand]);
 
+    const releaseWakeLock = useCallback(async () => {
+    if (wakeLockRef) {
+      try {
+        await wakeLockRef.release();
+        setWakeLockRef(null);
+      } catch (error: any) {
+        console.error("Could not release wake lock:", error);
+      }
+    }
+  }, [wakeLockRef]);
+
+    const requestWakeLock = useCallback(async () => {
+    if ('wakeLock' in navigator && wakeLockEnabled && !wakeLockRef) {
+      try {
+        addLog("Requesting screen wake lock.");
+        const lock = await navigator.wakeLock.request('screen');
+        setWakeLockRef(lock);
+        addLog("Screen wake lock acquired.");
+        lock.addEventListener('release', () => {
+          addLog("Screen wake lock released by browser.");
+          setWakeLockRef(null);
+        });
+      } catch (err: any) {
+        addLog(`Wake Lock Error: ${err.message}`);
+        console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+      }
+    }
+  }, [wakeLockEnabled, wakeLockRef, addLog]);
+
   const applyCameraSettings = useCallback(async (stream: MediaStream, { flash, focus }: { flash: boolean; focus: boolean; }) => {
       if (!stream) return;
       const videoTrack = stream.getVideoTracks()[0];
@@ -219,7 +233,6 @@ export default function SortVisionClient({
   
       const capabilities = videoTrack.getCapabilities();
   
-      // Apply Flash
       if (capabilities.torch) {
           try {
               await videoTrack.applyConstraints({ advanced: [{ torch: flash }] });
@@ -230,7 +243,6 @@ export default function SortVisionClient({
           }
       }
   
-      // Apply Focus Lock
       // @ts-ignore
       if (capabilities.focusMode) {
           try {
@@ -379,7 +391,9 @@ const toggleFocus = useCallback(async () => {
     }
 
     const videoTrack = streamRef.current.getVideoTracks()[0];
+    // @ts-ignore
     const capabilities = videoTrack.getCapabilities();
+    
     // @ts-ignore - focusMode is a valid capability but not in all TS libs.
     if (!capabilities.focusMode) {
       addLog("Focus control not supported on this device.");
@@ -927,6 +941,7 @@ const toggleFocus = useCallback(async () => {
         const prediction = currentPredictions.find(p => p.className === label);
         return prediction ? prediction.probability : 0;
     };
+    const modelLabels = model?.getClassLabels() ?? [];
 
     return (
         <div className="flex flex-col justify-center h-full w-full p-4 space-y-3">
@@ -1022,7 +1037,7 @@ const toggleFocus = useCallback(async () => {
               <p className="text-xs text-muted-foreground ml-2">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle.</p>
             </div>
             <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
-              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={isCollectingImages || appStatus === 'CAMERA_CYCLING'}>
+              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={appStatus === 'LOADING_LIBS' || isCollectingImages || appStatus === 'CAMERA_CYCLING'}>
                 {isCameraOn ? <CameraOff /> : <Camera />}
                 {isCameraOn ? "Stop" : "Start"}
               </Button>
