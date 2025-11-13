@@ -23,7 +23,6 @@ import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Separator } from "@/components/ui/separator";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AppStatus } from "@/lib/types";
@@ -238,7 +237,7 @@ export default function SortVisionClient({
               const focusMode = focus ? 'manual' : 'continuous';
               // @ts-ignore
               await videoTrack.applyConstraints({ advanced: [{ focusMode }] });
-              // No need to setIsFocusLocked here, as it's managed separately
+              setIsFocusLocked(focus)
               addLog(`Restored focus mode to: ${focusMode}`);
           } catch (error: any) {
               addLog(`Could not restore focus mode: ${error.message}`);
@@ -394,21 +393,14 @@ const toggleFocus = useCallback(async () => {
 
     const newFocusState = !isFocusLocked;
     try {
-      if (newFocusState) {
-        addLog("Locking camera focus.");
+        const focusMode = newFocusState ? 'manual' : 'continuous';
+        addLog(`Setting focus mode to: ${focusMode}.`);
         // @ts-ignore
-        await videoTrack.applyConstraints({ advanced: [{ focusMode: 'manual' }] });
-        setIsFocusLocked(true);
-        addLog("Focus locked.");
-        toast({ title: 'Focus Locked' });
-      } else {
-        addLog("Unlocking camera focus (enabling autofocus).");
-        // @ts-ignore
-        await videoTrack.applyConstraints({ advanced: [{ focusMode: 'continuous' }] });
-        setIsFocusLocked(false);
-        addLog("Focus unlocked.");
-        toast({ title: 'Focus Unlocked (Autofocus Enabled)' });
-      }
+        await videoTrack.applyConstraints({ advanced: [{ focusMode }] });
+        setIsFocusLocked(newFocusState);
+        addLog(`Focus mode is now ${focusMode}.`);
+        toast({ title: newFocusState ? 'Focus Locked' : 'Focus Unlocked (Autofocus)' });
+      
     } catch (error: any) {
       console.error("Failed to toggle focus:", error);
       addLog(`Focus Error: ${error.message}`);
@@ -1048,5 +1040,3 @@ const toggleFocus = useCallback(async () => {
       </Card>
   );
 }
-
-    
