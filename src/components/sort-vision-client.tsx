@@ -152,32 +152,44 @@ export default function SortVisionClient({
 
   const { toast } = useToast();
 
+    const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort', params: Record<string, string>) => {
+    addLog(`Sending ${command} command to proxy...`);
+    try {
+      const response = await fetch('/api/esp32', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          ip: esp32Ip,
+          command,
+          params,
+        }),
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        addLog(`Proxy success: ${result.message}`);
+        return true;
+      } else {
+        addLog(`Proxy Error: ${result.error}`);
+        return false;
+      }
+    } catch (error: any) {
+      addLog(`Failed to send command to proxy: ${error.message}`);
+      return false;
+    }
+  }, [esp32Ip, addLog]);
+
     const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
         if (isTestMode) {
           addLog(`TEST MODE: Simulating light ${state} command.`);
           return true;
         }
-        if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
-            addLog("SecurityError: Cannot send insecure 'http' light command from secure 'https' page.");
-            return false;
-        }
+        return await sendCommandViaProxy('light', { state });
+    }, [isTestMode, sendCommandViaProxy, addLog]);
 
-        const url = `${esp32Ip}/light?state=${state}`;
-        addLog(`Sending light command to ESP32: ${url}`);
-        try {
-            const response = await fetch(url, { method: 'GET' });
-            if (response.ok) {
-                addLog(`Successfully sent light ${state} command.`);
-                return true;
-            } else {
-                addLog(`Error: ESP32 responded with ${response.status} for light command.`);
-                return false;
-            }
-        } catch (error: any) {
-            addLog(`Error sending light command: ${error.message}`);
-            return false;
-        }
-    }, [esp32Ip, isTestMode, addLog]);
   
   const startImageCollection = useCallback(async () => {
     if (!isCameraOn || !hasCameraPermission || isCollectingImages) return;
@@ -433,39 +445,18 @@ const toggleFocus = useCallback(async () => {
       toast({ title: "Command Sent (Test Mode)", description: `Simulated sort for: ${classificationLabel}` });
       return;
     }
-
-    if (window.location.protocol === 'https:' && esp32Ip.startsWith('http://')) {
-        const errorMsg = "SecurityError: Cannot fetch from an insecure 'http' endpoint from a secure 'https' page. This is a browser security feature to prevent mixed content.";
-        addLog(errorMsg);
-        setCommandStatus({ status: "ERROR", message: "Mixed content error. See console." });
-        toast({ variant: "destructive", title: "Network Error", description: "Cannot send command due to browser security (mixed content)." });
-        return;
-    }
-
-    const url = `${esp32Ip}/sort?class=${classificationLabel.toUpperCase()}`;
-    addLog(`Sending command to ESP32: ${url}`);
     
-    try {
-      const response = await fetch(url, { method: 'GET' });
-      
-      if (response.ok) {
-        setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
-        addLog(`Successfully sent command for ${classificationLabel}`);
-        toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
-      } else {
-        const errorText = `Error: ESP32 responded with ${response.status}`;
-        setCommandStatus({ status: "ERROR", message: errorText });
-        addLog(errorText);
-        toast({ variant: "destructive", title: "ESP32 Error", description: `Received status ${response.status}` });
-      }
-    } catch (error: any) {
-      console.error("Failed to send command to ESP32:", error);
-      const errorMessage = `Error: Cannot reach ESP32. ${error.message}`;
-      setCommandStatus({ status: "ERROR", message: errorMessage });
-      addLog(`${errorMessage}`);
-      toast({ variant: "destructive", title: "ESP32 Error", description: "Could not send command." });
+    const success = await sendCommandViaProxy('sort', { class: classificationLabel.toUpperCase() });
+    
+    if (success) {
+      setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
+      toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
+    } else {
+      const errorText = `Error: Failed to send sort command for ${classificationLabel}`;
+      setCommandStatus({ status: "ERROR", message: errorText });
+      toast({ variant: "destructive", title: "ESP32 Error", description: `Could not send command.` });
     }
-  }, [addLog, toast, esp32Ip, isTestMode]);
+  }, [addLog, toast, isTestMode, sendCommandViaProxy]);
 
  const handleSortAndRestart = useCallback(async (classification: string) => {
     const flashState = isFlashOn;
@@ -652,7 +643,7 @@ const toggleFocus = useCallback(async () => {
             a.href = url;
             a.download = `unidentified-images-${timestamp}.zip`;
             document.body.appendChild(a);
-            a.click();
+a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
 
