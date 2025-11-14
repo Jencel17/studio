@@ -155,7 +155,7 @@ export default function SortVisionClient({
         timestamp: new Date().toLocaleTimeString(),
         message,
     };
-    setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, 100));
+    setLogs((prevLogs) => [...prevLogs, newLog].slice(-100));
   }, []);
 
     const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort', params: Record<string, string>) => {
@@ -977,24 +977,26 @@ a.click();
 
   const LogViewer = ({ fullscreen }: {fullscreen: boolean}) => {
     const scrollRef = useRef<HTMLDivElement>(null);
+    const viewportRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
-        if (isAutoScrollOn && scrollRef.current) {
-            const { scrollHeight, clientHeight } = scrollRef.current;
-            scrollRef.current.scrollTop = scrollHeight - clientHeight;
+        if (isAutoScrollOn && viewportRef.current) {
+            viewportRef.current.scrollTop = viewportRef.current.scrollHeight;
         }
     }, [logs, isAutoScrollOn]);
 
 
     return (
-      <ScrollArea className={cn("w-full my-4", fullscreen ? "flex-1" : "h-[150px]")} viewportRef={scrollRef}>
-        <div className="p-4 font-mono text-xs">
-          {logs.slice().reverse().map((log, index) => (
-            <p key={index}>
-              <span className="text-muted-foreground/50">{log.timestamp}</span>
-              <span className="ml-2 text-foreground">{log.message}</span>
-            </p>
-          ))}
+      <ScrollArea className={cn("w-full my-4 bg-muted/20 rounded-md border", fullscreen ? "flex-1" : "h-[150px]")} viewportRef={viewportRef}>
+        <div className="p-4 font-mono text-xs flex flex-col-reverse">
+          <div>
+            {logs.map((log, index) => (
+              <p key={index}>
+                <span className="text-muted-foreground/50">{log.timestamp}</span>
+                <span className="ml-2 text-foreground">{log.message}</span>
+              </p>
+            ))}
+          </div>
         </div>
       </ScrollArea>
     );
@@ -1033,7 +1035,7 @@ a.click();
                 <DetectionRates />
               </div>
           </div>
-          <Accordion type="single" collapsible className="w-full">
+          <Accordion type="single" collapsible>
             <AccordionItem value="console" className="border-b-0">
                 <AccordionTrigger className="text-sm font-semibold hover:no-underline">Console</AccordionTrigger>
                 <AccordionContent className="flex flex-col">
@@ -1076,3 +1078,5 @@ a.click();
       </Card>
   );
 }
+
+    
