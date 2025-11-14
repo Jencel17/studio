@@ -26,6 +26,8 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AppStatus, LogEntry, Prediction } from "@/lib/types";
+import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 
 type CommandStatus = {
@@ -135,6 +137,7 @@ export default function SortVisionClient({
   const [isFocusLocked, setIsFocusLocked] = useState(false);
   const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
   const [isConsoleFullscreen, setIsConsoleFullscreen] = useState(false);
+  const [isAutoScrollOn, setIsAutoScrollOn] = useState(true);
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
   const [currentPredictions, setCurrentPredictions] = useState<Prediction[]>([]);
@@ -970,10 +973,20 @@ a.click();
   };
 
   const LogViewer = ({ fullscreen }: {fullscreen: boolean}) => {
+    const scrollRef = useRef<HTMLDivElement>(null);
+
+    useEffect(() => {
+        if (isAutoScrollOn && scrollRef.current) {
+            const { scrollHeight, clientHeight } = scrollRef.current;
+            scrollRef.current.scrollTop = scrollHeight - clientHeight;
+        }
+    }, [logs, isAutoScrollOn]);
+
+
     return (
-      <ScrollArea className={cn("w-full my-4", fullscreen ? "flex-1" : "h-[150px]")}>
+      <ScrollArea className={cn("w-full my-4", fullscreen ? "flex-1" : "h-[150px]")} viewportRef={scrollRef}>
         <div className="p-4 font-mono text-xs">
-          {logs.map((log, index) => (
+          {logs.slice().reverse().map((log, index) => (
             <p key={index}>
               <span className="text-muted-foreground/50">{log.timestamp}</span>
               <span className="ml-2 text-foreground">{log.message}</span>
@@ -1022,11 +1035,15 @@ a.click();
                 <AccordionTrigger className="text-sm font-semibold hover:no-underline">Console</AccordionTrigger>
                 <AccordionContent className="flex flex-col">
                     <LogViewer fullscreen={isConsoleFullscreen}/>
-                     <div className="flex justify-end gap-2">
-                      <Button variant="outline" onClick={() => setIsConsoleFullscreen(!isConsoleFullscreen)} size="icon">
-                        {isConsoleFullscreen ? <Minimize /> : <Expand />}
-                      </Button>
-                      <Button variant="outline" onClick={() => setLogs([])}>Clear Logs</Button>
+                     <div className="flex items-center justify-end gap-4">
+                        <div className="flex items-center gap-2">
+                           <Switch id="auto-scroll" checked={isAutoScrollOn} onCheckedChange={setIsAutoScrollOn} />
+                           <Label htmlFor="auto-scroll" className="text-xs">Auto-scroll</Label>
+                        </div>
+                        <Button variant="outline" onClick={() => setIsConsoleFullscreen(!isConsoleFullscreen)} size="icon">
+                            {isConsoleFullscreen ? <Minimize /> : <Expand />}
+                        </Button>
+                        <Button variant="outline" onClick={() => setLogs([])}>Clear Logs</Button>
                     </div>
                 </AccordionContent>
             </AccordionItem>
