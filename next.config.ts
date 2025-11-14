@@ -9,6 +9,9 @@ const pwaConfig = {
   fallbacks: {
     document: '/offline',
   },
+  // Point to our custom service worker
+  sw: 'sw.js',
+  // Disable the PWA in development
   disable: process.env.NODE_ENV === 'development',
 };
 
