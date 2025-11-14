@@ -1,3 +1,4 @@
+
 import type {NextConfig} from 'next';
 import withPWA from 'next-pwa';
 
@@ -7,17 +8,6 @@ const pwaConfig = {
   skipWaiting: true,
   disable: process.env.NODE_ENV === 'development',
   runtimeCaching: [
-    {
-      urlPattern: ({ request }: { request: Request }) => request.mode === 'navigate',
-      handler: 'CacheFirst' as const,
-      options: {
-        cacheName: 'pages',
-        expiration: {
-          maxEntries: 60,
-          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 Days
-        },
-      },
-    },
     {
       urlPattern: /\.(?:png|jpg|jpeg|svg|gif|ico)$/,
       handler: 'CacheFirst' as const,
