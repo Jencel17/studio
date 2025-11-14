@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
@@ -1016,7 +1017,7 @@ a.click();
                 <DetectionRates />
               </div>
           </div>
-          <Accordion type="single" collapsible className="w-full" defaultValue="console">
+          <Accordion type="single" collapsible className="w-full">
             <AccordionItem value="console" className="border-b-0">
                 <AccordionTrigger className="text-sm font-semibold hover:no-underline">Console</AccordionTrigger>
                 <AccordionContent className="flex flex-col">
@@ -1055,3 +1056,5 @@ a.click();
       </Card>
   );
 }
+
+    
