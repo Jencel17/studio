@@ -7,26 +7,6 @@ const pwaConfig = {
   register: true,
   skipWaiting: true,
   disable: process.env.NODE_ENV === 'development',
-  runtimeCaching: [
-    {
-      urlPattern: /\.(?:png|jpg|jpeg|svg|gif|ico)$/,
-      handler: 'CacheFirst' as const,
-      options: {
-        cacheName: 'images',
-        expiration: {
-          maxEntries: 60,
-          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 Days
-        },
-      },
-    },
-    {
-      urlPattern: /\.(?:js|css)$/,
-      handler: 'StaleWhileRevalidate' as const,
-      options: {
-        cacheName: 'static-resources',
-      },
-    },
-  ],
 };
 
 const nextConfig: NextConfig = {
