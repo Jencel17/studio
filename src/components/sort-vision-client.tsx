@@ -18,7 +18,7 @@ import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles, Lock, Unlock } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck } from "@/app/actions/ai";
+import { handleModelSwapCheck } from "@/app/actions/model-analysis";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
