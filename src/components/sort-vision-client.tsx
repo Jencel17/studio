@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
@@ -174,13 +173,23 @@ export default function SortVisionClient({
         return true;
       } else {
         addLog(`Proxy Error: ${result.error}`);
+        toast({
+            variant: "destructive",
+            title: "ESP32 Command Failed",
+            description: result.error || "The server proxy could not reach the ESP32.",
+        });
         return false;
       }
     } catch (error: any) {
       addLog(`Failed to send command to proxy: ${error.message}`);
+       toast({
+            variant: "destructive",
+            title: "Proxy Error",
+            description: "Could not send command to the server. Check console.",
+        });
       return false;
     }
-  }, [esp32Ip, addLog]);
+  }, [esp32Ip, addLog, toast]);
 
     const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
         if (isTestMode) {
@@ -974,7 +983,7 @@ a.click();
     );
   };
 
-  const isCameraControlDisabled = isCollectingImages || appStatus === 'CAMERA_CYCLING';
+  const isCameraControlDisabled = isCollectingImages;
 
   return (
       <Card className="w-full max-w-4xl shadow-2xl bg-card/80 backdrop-blur-sm border-border/20 flex flex-col">
@@ -1028,7 +1037,7 @@ a.click();
               <p className="text-xs text-muted-foreground ml-2">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle.</p>
             </div>
             <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
-              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={appStatus === 'LOADING_LIBS' || isCollectingImages || appStatus === 'CAMERA_CYCLING'}>
+              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={appStatus === 'LOADING_LIBS' || isCollectingImages}>
                 {isCameraOn ? <CameraOff /> : <Camera />}
                 {isCameraOn ? "Stop" : "Start"}
               </Button>
