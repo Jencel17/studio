@@ -13,6 +13,8 @@ export async function POST(req: NextRequest) {
     const queryParams = new URLSearchParams(params).toString();
     const targetUrl = `${ip}/${command}?${queryParams}`;
 
+    console.log(`[ESP32 PROXY] Sending command to: ${targetUrl}`);
+
     // IMPORTANT: This fetch happens on the server, so it's not a mixed-content violation.
     const response = await fetch(targetUrl, {
       method: 'GET',
