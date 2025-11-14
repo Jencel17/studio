@@ -21,7 +21,6 @@ import { AppStatus } from "@/lib/types";
 interface SortVisionSettingsProps {
     setModel: (model: tmImage.CustomMobileNet | null) => void;
     setAppStatus: (status: AppStatus) => void;
-    addLog: (message: string) => void;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
     tfRef: MutableRefObject<typeof tf | null>;
     esp32Ip: string;
@@ -39,7 +38,6 @@ interface SortVisionSettingsProps {
 export default function SortVisionSettings({
     setModel,
     setAppStatus,
-    addLog,
     tmImageRef,
     tfRef,
     esp32Ip,
@@ -62,6 +60,12 @@ export default function SortVisionSettings({
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
+
+    // A dummy addLog function to satisfy prop requirements without causing errors.
+    // In a real app, you might connect this to a centralized logging service.
+    const addLog = (message: string) => {
+        console.log(`[SETTINGS LOG]: ${message}`);
+    };
 
     const loadAiLibraries = useCallback(async () => {
         if (tmImageRef.current && tfRef.current) {
@@ -491,8 +495,7 @@ export default function SortVisionSettings({
                   <Label htmlFor="test-mode" className="flex items-center gap-2">
                     <TestTube className="h-4 w-4" />
                     Test Mode
-                  </Label>
-                  <Switch
+                  </Label>                  <Switch
                     id="test-mode"
                     checked={isTestMode}
                     onCheckedChange={setIsTestMode}
@@ -522,5 +525,3 @@ export default function SortVisionSettings({
       </Sidebar>
     );
 }
-
-    

@@ -45,9 +45,6 @@ interface SortVisionClientProps {
     isTestMode: boolean;
     wakeLockEnabled: boolean;
     autoCaptureEnabled: boolean;
-    addLog: (message: string) => void;
-    logs: LogEntry[];
-    setLogs: (logs: LogEntry[]) => void;
     cameraRestartDelay: number;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
     tfRef: MutableRefObject<typeof tf | null>;
@@ -124,13 +121,11 @@ export default function SortVisionClient({
     isTestMode,
     wakeLockEnabled,
     autoCaptureEnabled,
-    addLog,
-    logs,
-    setLogs,
     cameraRestartDelay,
     tmImageRef,
     tfRef
 }: SortVisionClientProps) {
+  const [logs, setLogs] = useState<LogEntry[]>([]);
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [isFlashOn, setIsFlashOn] = useState(false);
@@ -154,6 +149,14 @@ export default function SortVisionClient({
   
 
   const { toast } = useToast();
+
+  const addLog = useCallback((message: string) => {
+    const newLog: LogEntry = {
+        timestamp: new Date().toLocaleTimeString(),
+        message,
+    };
+    setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, 100));
+  }, []);
 
     const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort', params: Record<string, string>) => {
     addLog(`Sending ${command} command to proxy...`);
@@ -1073,5 +1076,3 @@ a.click();
       </Card>
   );
 }
-
-    
