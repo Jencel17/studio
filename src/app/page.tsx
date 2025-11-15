@@ -17,7 +17,7 @@ export default function SortVision() {
     const [isTestMode, setIsTestMode] = useState(false);
     const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
     const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
-    const [autoFlashEnabled, setAutoFlashEnabled] = useState(true);
+    const [autoFlashEnabled, setAutoFlashEnabled] = useState(false);
     const [cameraRestartDelay, setCameraRestartDelay] = useState(3);
     
     const tmImageRef = useRef<typeof tmImage | null>(null);
