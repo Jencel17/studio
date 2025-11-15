@@ -482,7 +482,9 @@ const toggleFocus = useCallback(async () => {
     setAppStatus("CAMERA_CYCLING");
     addLog(`Command sent for ${classification}. Restarting camera in ${cameraRestartDelay} seconds...`);
     
-    await sendLightCommand('OFF');
+    if (flashState) {
+        await sendLightCommand('OFF');
+    }
 
     if (classification !== "RESTART_NO_SORT") {
         await sendSortCommand(classification);
@@ -545,7 +547,9 @@ const toggleFocus = useCallback(async () => {
           
           setTimeout(async () => {
             if (!videoRef.current) { 
-                await sendLightCommand('OFF');
+                if (isFlashOn) {
+                    await sendLightCommand('OFF');
+                }
                 return;
             }
             addLog("Re-classifying with light on...");
@@ -591,7 +595,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn]);
 
   useEffect(() => {
     return () => {
@@ -1083,5 +1087,7 @@ a.click();
       </Card>
   );
 }
+
+    
 
     
