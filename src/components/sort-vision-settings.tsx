@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer, Flashlight } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
 
@@ -31,6 +31,8 @@ interface SortVisionSettingsProps {
     setWakeLockEnabled: (isEnabled: boolean) => void;
     autoCaptureEnabled: boolean;
     setAutoCaptureEnabled: (isEnabled: boolean) => void;
+    autoFlashEnabled: boolean;
+    setAutoFlashEnabled: (isEnabled: boolean) => void;
     cameraRestartDelay: number;
     setCameraRestartDelay: (delay: number) => void;
 }
@@ -48,6 +50,8 @@ export default function SortVisionSettings({
     setWakeLockEnabled,
     autoCaptureEnabled,
     setAutoCaptureEnabled,
+    autoFlashEnabled,
+    setAutoFlashEnabled,
     cameraRestartDelay,
     setCameraRestartDelay,
 }: SortVisionSettingsProps) {
@@ -478,6 +482,17 @@ export default function SortVisionSettings({
                     id="keep-awake"
                     checked={wakeLockEnabled}
                     onCheckedChange={handleWakeLockToggle}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="auto-flash" className="flex items-center gap-2">
+                    <Flashlight className="h-4 w-4" />
+                    Auto Flash on Detect
+                  </Label>
+                  <Switch
+                    id="auto-flash"
+                    checked={autoFlashEnabled}
+                    onCheckedChange={setAutoFlashEnabled}
                   />
                 </div>
                  <div className="flex items-center justify-between">

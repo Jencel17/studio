@@ -45,6 +45,7 @@ interface SortVisionClientProps {
     isTestMode: boolean;
     wakeLockEnabled: boolean;
     autoCaptureEnabled: boolean;
+    autoFlashEnabled: boolean;
     cameraRestartDelay: number;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
     tfRef: MutableRefObject<typeof tf | null>;
@@ -121,6 +122,7 @@ export default function SortVisionClient({
     isTestMode,
     wakeLockEnabled,
     autoCaptureEnabled,
+    autoFlashEnabled,
     cameraRestartDelay,
     tmImageRef,
     tfRef
@@ -535,6 +537,12 @@ const toggleFocus = useCallback(async () => {
             predictionIntervalRef.current = undefined;
           }
 
+          if (!autoFlashEnabled) {
+              addLog(`Auto-flash disabled. Sorting directly: ${foundPrediction.className}.`);
+              handleSortAndRestart(foundPrediction.className);
+              return;
+          }
+
           addLog(`Initial detection: ${foundPrediction.className}. Turning on light for final check.`);
           await sendLightCommand('ON');
           
@@ -586,7 +594,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled]);
 
   useEffect(() => {
     return () => {
