@@ -9,22 +9,30 @@ export async function POST(req: NextRequest) {
     if (!ip || !command) {
       return NextResponse.json({ error: 'Missing ip or command' }, { status: 400 });
     }
+    
+    // The ESP32's WebServer library expects POST data in the body, not query params.
+    // We'll create a URL-encoded string for the body.
+    const formBody = new URLSearchParams(params).toString();
+    const targetUrl = `${ip}/${command}`;
 
-    const queryParams = new URLSearchParams(params).toString();
-    const targetUrl = `${ip}/${command}?${queryParams}`;
-
-    console.log(`[ESP32 PROXY] Sending command to: ${targetUrl}`);
+    console.log(`[ESP32 PROXY] Sending POST command to: ${targetUrl} with body: ${formBody}`);
 
     // IMPORTANT: This fetch happens on the server, so it's not a mixed-content violation.
     const response = await fetch(targetUrl, {
-      method: 'GET',
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8'
+      },
+      body: formBody,
     });
 
     if (response.ok) {
       const responseText = await response.text();
       return NextResponse.json({ message: `Successfully sent command to ESP32. Response: ${responseText}` });
     } else {
-      return NextResponse.json({ error: `ESP32 responded with status ${response.status}` }, { status: response.status });
+      const errorText = await response.text();
+      console.error(`[ESP32 PROXY] ESP32 Error Response: ${errorText}`);
+      return NextResponse.json({ error: `ESP32 responded with status ${response.status}: ${errorText}` }, { status: response.status });
     }
   } catch (error: any) {
     console.error('ESP32 proxy error:', error);
