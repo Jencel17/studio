@@ -18,7 +18,7 @@
 // Required Libraries for WiFi and Async Web Server
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
-#include <Servo.h>
+#include <ESP32Servo.h>
 
 // --- Configuration ---
 
