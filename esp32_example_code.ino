@@ -1,172 +1,178 @@
 /*
-  SortVision ESP32 Controller Code
-
+  SortVision - ESP32 Sorting Mechanism Controller
+  
   This sketch creates a Wi-Fi Access Point that the SortVision app can connect to.
-  It listens for commands from the app to control the sorting mechanism and a light.
-
-  - Wi-Fi Network Name (SSID): SortVision-Controller
-  - Wi-Fi Password: password123
-  - ESP32 IP Address: 192.168.4.1 (Static)
+  It listens for commands to control a light and a servo motor for sorting.
+  
+  - Wi-Fi Network (AP): SortVision-ESP32
+  - Password: a_secure_password
+  - ESP32 IP Address: 192.168.4.1 (by default)
 
   Endpoints:
-  - http://192.168.4.1/sort?class=[MATERIAL]
-    - [MATERIAL] can be PLASTIC, METAL, or PAPER
-    - Controls the servo motor to sort the item.
-    - Prints the received material to the Serial Monitor.
-
-  - http://192.168.4.1/light?state=[STATE]
-    - [STATE] can be ON or OFF
-    - Controls a light connected to a pin.
+  - GET /sort?class=[MATERIAL] : Moves the servo to a specific position.
+    - MATERIAL can be "PLASTIC", "METAL", or "PAPER".
+  - GET /light?state=[STATE] : Turns the LED light on or off.
+    - STATE can be "ON" or "OFF".
 */
 
-// --- Core Libraries ---
+// Required Libraries for WiFi and Async Web Server
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
+#include <Servo.h>
 
-// --- Pin Definitions ---
-// Define the GPIO pins for your LEDs or sorting mechanism actuators
-const int PLASTIC_PIN = 13; // Example pin for Plastic
-const int METAL_PIN = 12;   // Example pin for Metal
-const int PAPER_PIN = 14;   // Example pin for Paper
-const int LIGHT_PIN = 27;   // Example pin for the control light
+// --- Configuration ---
 
-// --- Network Configuration ---
-const char* ssid = "SortVision-Controller";
-const char* password = "password123"; // 8+ character password for WPA2
+// WiFi Access Point credentials
+const char* WIFI_SSID = "SortVision-ESP32";
+const char* WIFI_PASSWORD = "a_secure_password";
 
-// --- Web Server Initialization ---
-AsyncWebServer server(80); // Create AsyncWebServer object on port 80
+// Pin definitions
+const int SERVO_PIN = 13; // The pin the servo is connected to
+const int LED_PIN = 12;   // The pin the control transistor for the light is connected to
 
-// --- Function Declarations ---
-void handleSortRequest(AsyncWebServerRequest *request);
-void handleLightRequest(AsyncWebServerRequest *request);
-void handleNotFound(AsyncWebServerRequest *request);
-void setupWiFi();
+// Servo positions for each material type
+const int SERVO_HOME_POS = 90;
+const int SERVO_PLASTIC_POS = 45;
+const int SERVO_METAL_POS = 135;
+const int SERVO_PAPER_POS = 0;
+const int SERVO_UNKNOWN_POS = 90; // Default position for unknowns
 
-// =================================================================
-// SETUP: Runs once on boot.
-// =================================================================
-void setup() {
-  // Start serial communication for debugging
-  Serial.begin(115200);
-  Serial.println("\nESP32 Starting...");
+// --- Global Objects ---
 
-  // Set pin modes for LEDs/actuators
-  pinMode(PLASTIC_PIN, OUTPUT);
-  pinMode(METAL_PIN, OUTPUT);
-  pinMode(PAPER_PIN, OUTPUT);
-  pinMode(LIGHT_PIN, OUTPUT);
+// Create an instance of the Servo library
+Servo sorterServo;
 
-  // Set initial state to OFF
-  digitalWrite(PLASTIC_PIN, LOW);
-  digitalWrite(METAL_PIN, LOW);
-  digitalWrite(PAPER_PIN, LOW);
-  digitalWrite(LIGHT_PIN, LOW);
+// Create an instance of the Asynchronous Web Server on port 80
+AsyncWebServer server(80);
 
-  // Configure and start the WiFi Access Point
-  setupWiFi();
-
-  // Define server routes
-  server.on("/sort", HTTP_GET, handleSortRequest);
-  server.on("/light", HTTP_GET, handleLightRequest);
-  server.onNotFound(handleNotFound);
-
-  // Start the server
-  server.begin();
-  Serial.println("HTTP server started.");
-}
-
-// =================================================================
-// LOOP: Runs continuously.
-// =================================================================
-void loop() {
-  // The loop is intentionally empty.
-  // The ESPAsyncWebServer library handles requests in the background.
-}
-
-// =================================================================
-// Wi-Fi Setup Function
-// =================================================================
-void setupWiFi() {
-  Serial.println("Setting up Access Point...");
-  // Start the Access Point with the specified SSID and password
-  WiFi.softAP(ssid, password);
-  
-  Serial.print("AP IP address: ");
-  Serial.println(WiFi.softAPIP());
-}
-
-// =================================================================
-// Web Server Request Handlers
-// =================================================================
+// --- Request Handlers ---
 
 /**
- * @brief Handles incoming requests to the /sort endpoint.
- * Expects a query parameter 'class' (e.g., /sort?class=PLASTIC).
+ * @brief Handles incoming requests to /sort
+ * Moves the servo motor to the correct position based on the 'class' query parameter.
  */
 void handleSortRequest(AsyncWebServerRequest *request) {
-  String material = "UNKNOWN";
-  
+  String material = "UNKNOWN"; // Default to UNKNOWN
+
+  // Check if the 'class' parameter exists in the request
   if (request->hasParam("class")) {
     material = request->getParam("class")->value();
-    material.toUpperCase();
+    material.toUpperCase(); // Ensure the string is uppercase for reliable comparison
 
-    // Print the received command to the Serial Monitor for debugging
     Serial.print("Received sort command for: ");
     Serial.println(material);
 
-    // --- Sorting Logic ---
-    // Add your code here to control servos or actuators based on the material
+    int targetPosition = SERVO_UNKNOWN_POS;
+
     if (material == "PLASTIC") {
-      digitalWrite(PLASTIC_PIN, HIGH);
-      delay(1000); // Keep actuator on for 1 second
-      digitalWrite(PLASTIC_PIN, LOW);
+      targetPosition = SERVO_PLASTIC_POS;
     } else if (material == "METAL") {
-      digitalWrite(METAL_PIN, HIGH);
-      delay(1000);
-      digitalWrite(METAL_PIN, LOW);
+      targetPosition = SERVO_METAL_POS;
     } else if (material == "PAPER") {
-      digitalWrite(PAPER_PIN, HIGH);
-      delay(1000);
-      digitalWrite(PAPER_PIN, LOW);
+      targetPosition = SERVO_PAPER_POS;
+    } else {
+      Serial.println("Warning: Received unknown material type. Moving to default position.");
     }
     
-    String responseMessage = "Command Received: Sort " + material;
-    request->send(200, "text/plain", responseMessage);
+    // Move the servo to the target position
+    sorterServo.write(targetPosition);
+    
+    // Send a success response back to the client
+    request->send(200, "text/plain", "OK: Sorted " + material);
+
+    // After a short delay, return the servo to the home position
+    delay(1000); 
+    sorterServo.write(SERVO_HOME_POS);
+
   } else {
+    // If the 'class' parameter is missing, send an error response
+    Serial.println("Error: /sort request received without 'class' parameter.");
     request->send(400, "text/plain", "Bad Request: Missing 'class' parameter.");
   }
 }
 
 /**
- * @brief Handles incoming requests to the /light endpoint.
- * Expects a query parameter 'state' (e.g., /light?state=ON).
- */-
+ * @brief Handles incoming requests to /light
+ * Turns the LED light ON or OFF based on the 'state' query parameter.
+ */
 void handleLightRequest(AsyncWebServerRequest *request) {
+  // Check if the 'state' parameter exists in the request
   if (request->hasParam("state")) {
     String state = request->getParam("state")->value();
-    state.toUpperCase();
-    
-    Serial.print("Received light command: ");
-    Serial.println(state);
+    state.toUpperCase(); // Ensure uppercase for comparison
 
     if (state == "ON") {
-      digitalWrite(LIGHT_PIN, HIGH);
-      request->send(200, "text/plain", "Light turned ON");
+      digitalWrite(LED_PIN, HIGH);
+      Serial.println("Light turned ON");
+      request->send(200, "text/plain", "OK: Light ON");
     } else if (state == "OFF") {
-      digitalWrite(LIGHT_PIN, LOW);
-      request->send(200, "text/plain", "Light turned OFF");
+      digitalWrite(LED_PIN, LOW);
+      Serial.println("Light turned OFF");
+      request->send(200, "text/plain", "OK: Light OFF");
     } else {
-      request->send(400, "text/plain", "Bad Request: 'state' must be ON or OFF.");
+      // If the 'state' parameter has an invalid value
+      request->send(400, "text/plain", "Bad Request: Invalid 'state'. Use ON or OFF.");
     }
   } else {
+    // If the 'state' parameter is missing
     request->send(400, "text/plain", "Bad Request: Missing 'state' parameter.");
   }
 }
 
+// --- Main Setup and Loop ---
+
 /**
- * @brief Handles any requests to undefined endpoints.
+ * @brief Sets up the Wi-Fi Access Point.
  */
-void handleNotFound(AsyncWebServerRequest *request) {
-  request->send(404, "text/plain", "Not Found");
+void setupWiFi() {
+  Serial.println("Setting up Access Point...");
+  
+  // Start the Access Point with the defined SSID and password
+  WiFi.softAP(WIFI_SSID, WIFI_PASSWORD);
+  
+  // Print the IP address of the Access Point to the Serial Monitor
+  Serial.print("AP IP address: ");
+  Serial.println(WiFi.softAPIP());
+}
+
+/**
+ * @brief Main setup function, runs once on boot.
+ */
+void setup() {
+  // Start serial communication for debugging
+  Serial.begin(115200);
+  Serial.println("\nESP32 Starting...");
+
+  // Set up the GPIO pins for the servo and LED
+  pinMode(LED_PIN, OUTPUT);
+  digitalWrite(LED_PIN, LOW); // Ensure light is off initially
+
+  // Attach the servo to its pin and move to the home position
+  sorterServo.attach(SERVO_PIN);
+  sorterServo.write(SERVO_HOME_POS);
+  
+  // Set up the WiFi Access Point
+  setupWiFi();
+
+  // Define the server routes and their corresponding handler functions
+  server.on("/sort", HTTP_GET, handleSortRequest);
+  server.on("/light", HTTP_GET, handleLightRequest);
+}
+
+/**
+ * @brief Main loop, runs continuously.
+ * We add a flag to ensure server.begin() is only called once.
+ */
+void loop() {
+  // Flag to ensure server.begin() is only called once.
+  static bool server_setup_complete = false;
+
+  if (!server_setup_complete) {
+    server.begin();
+    server_setup_complete = true;
+    Serial.println("Web Server started.");
+  }
+  
+  // The ESPAsyncWebServer library handles client requests in the background.
+  // The main loop can be left empty or used for other non-blocking tasks.
 }
