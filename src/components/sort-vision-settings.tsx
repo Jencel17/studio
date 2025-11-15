@@ -36,6 +36,7 @@ interface SortVisionSettingsProps {
     setAutoFlashEnabled: (isEnabled: boolean) => void;
     cameraRestartDelay: number;
     setCameraRestartDelay: (delay: number) => void;
+    addLog: (message: string) => void;
 }
 
 export default function SortVisionSettings({
@@ -56,6 +57,7 @@ export default function SortVisionSettings({
     setAutoFlashEnabled,
     cameraRestartDelay,
     setCameraRestartDelay,
+    addLog,
 }: SortVisionSettingsProps) {
     const [libsLoaded, setLibsLoaded] = useState(false);
     const [isModelLoading, setIsModelLoading] = useState(false);
@@ -66,10 +68,6 @@ export default function SortVisionSettings({
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
-
-    const addLog = useCallback((message: string) => {
-        console.log(`[SETTINGS LOG]: ${message}`);
-    }, []);
 
     const loadAiLibraries = useCallback(async () => {
         if (tmImageRef.current && tfRef.current) {

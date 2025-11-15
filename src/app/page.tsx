@@ -19,9 +19,20 @@ export default function SortVision() {
     const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
     const [autoFlashEnabled, setAutoFlashEnabled] = useState(false);
     const [cameraRestartDelay, setCameraRestartDelay] = useState(3);
+    const [logs, setLogs] = useState<LogEntry[]>([]);
+
     
     const tmImageRef = useRef<typeof tmImage | null>(null);
     const tfRef = useRef<typeof tf | null>(null);
+
+    const addLog = useCallback((message: string) => {
+        const newLog: LogEntry = {
+            timestamp: new Date().toLocaleTimeString(),
+            message,
+        };
+        setLogs((prevLogs) => [...prevLogs, newLog].slice(-100));
+    }, []);
+
 
     return (
     <>
@@ -43,6 +54,7 @@ export default function SortVision() {
         setAutoFlashEnabled={setAutoFlashEnabled}
         cameraRestartDelay={cameraRestartDelay}
         setCameraRestartDelay={setCameraRestartDelay}
+        addLog={addLog}
       />
 
       <div className="grid min-h-screen flex-1 place-items-center p-4 sm:p-6">
@@ -58,6 +70,9 @@ export default function SortVision() {
           cameraRestartDelay={cameraRestartDelay}
           tmImageRef={tmImageRef}
           tfRef={tfRef}
+          logs={logs}
+          setLogs={setLogs}
+          addLog={addLog}
         />
       </div>
     </>
