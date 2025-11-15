@@ -67,11 +67,9 @@ export default function SortVisionSettings({
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
 
-    // A dummy addLog function to satisfy prop requirements without causing errors.
-    // In a real app, you might connect this to a centralized logging service.
-    const addLog = (message: string) => {
+    const addLog = useCallback((message: string) => {
         console.log(`[SETTINGS LOG]: ${message}`);
-    };
+    }, []);
 
     const loadAiLibraries = useCallback(async () => {
         if (tmImageRef.current && tfRef.current) {
@@ -566,5 +564,3 @@ export default function SortVisionSettings({
       </Sidebar>
     );
 }
-
-    
