@@ -26,6 +26,7 @@ export default function SortVision() {
     return (
     <>
       <SortVisionSettings 
+        model={model}
         setModel={setModel}
         setAppStatus={setAppStatus}
         tmImageRef={tmImageRef}
@@ -62,3 +63,5 @@ export default function SortVision() {
     </>
   );
 }
+
+    

@@ -14,11 +14,12 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer, Flashlight } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer, Flashlight, RefreshCw } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
 
 interface SortVisionSettingsProps {
+    model: tmImage.CustomMobileNet | null;
     setModel: (model: tmImage.CustomMobileNet | null) => void;
     setAppStatus: (status: AppStatus) => void;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
@@ -38,6 +39,7 @@ interface SortVisionSettingsProps {
 }
 
 export default function SortVisionSettings({
+    model,
     setModel,
     setAppStatus,
     tmImageRef,
@@ -294,14 +296,33 @@ export default function SortVisionSettings({
   };
   
     const refreshModelsFromDb = useCallback(async () => {
-    addLog("Refreshing model library from local DB.");
-    const models = await getModelsFromDb();
-    setSavedModels(models);
-  }, [addLog]);
+        addLog("Refreshing model library from local DB.");
+        const models = await getModelsFromDb();
+        setSavedModels(models);
+        toast({ title: "Model Library Refreshed" });
+    }, [addLog, toast]);
 
     useEffect(() => {
-    refreshModelsFromDb();
-  }, [refreshModelsFromDb]);
+        let checkCount = 0;
+        const maxChecks = 5;
+        const interval = 1000; // 1 second
+
+        const refreshInterval = setInterval(() => {
+            if (model || checkCount >= maxChecks) {
+                clearInterval(refreshInterval);
+                return;
+            }
+            
+            checkCount++;
+            addLog(`[Auto-Refresh] Checking for saved models, attempt ${checkCount}/${maxChecks}`);
+            getModelsFromDb().then(models => {
+                setSavedModels(models);
+            });
+
+        }, interval);
+
+        return () => clearInterval(refreshInterval);
+    }, [model, addLog]);
 
     const handleSaveModel = async () => {
     if (!modelFiles || !newModelName) {
@@ -434,7 +455,12 @@ export default function SortVisionSettings({
               )}
             </SidebarGroup>
             <SidebarGroup>
-              <SidebarGroupLabel>Model Library</SidebarGroupLabel>
+              <SidebarGroupLabel className="flex items-center justify-between">
+                Model Library
+                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refreshModelsFromDb}>
+                    <RefreshCw className="h-4 w-4"/>
+                </Button>
+              </SidebarGroupLabel>
               <div className="p-4 pt-0">
                 {savedModels.length > 0 ? (
                   <div className="space-y-2">
@@ -540,3 +566,5 @@ export default function SortVisionSettings({
       </Sidebar>
     );
 }
+
+    
