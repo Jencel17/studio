@@ -1,125 +1,176 @@
+/*
+  ESP32 Example Code for SortVision
+
+  This sketch creates a Wi-Fi Access Point and a web server to control LEDs
+  based on commands received from the SortVision application.
+
+  - It creates a Wi-Fi network with the SSID "SortVision-ESP32".
+  - It starts a web server on IP address 192.168.4.1.
+  - The server listens for two commands on port 80:
+    1. /sort?class=[MATERIAL] - Controls LEDs for sorting.
+    2. /light?state=[ON/OFF]  - Controls a white light for illumination.
+
+  To use this code:
+  1. Open it in the Arduino IDE.
+  2. Select your ESP32 board from the Tools > Board menu.
+  3. Select the correct COM port from the Tools > Port menu.
+  4. Install the "ESPAsyncWebServer" and "AsyncTCP" libraries via the Library Manager.
+     - Go to Sketch > Include Library > Manage Libraries.
+     - Search for and install "ESPAsyncWebServer".
+     - Search for and install "AsyncTCP".
+  5. Upload the code to your ESP32.
+  6. In the SortVision app, go to Settings and set the "ESP32 IP Address" to "http://192.168.4.1".
+*/
 
 #include <WiFi.h>
 #include <ESPAsyncWebServer.h>
 
-// =======================================================================
-// IMPORTANT: PLEASE READ
-// =======================================================================
-// This Arduino sketch is the counterpart to the SortVision Next.js web application.
-// It is designed to run on an ESP32 microcontroller.
-//
-// HOW TO USE:
-// 1. HARDWARE SETUP:
-//    - Connect your LEDs to the GPIO pins defined below (PLASTIC_LED_PIN, etc.).
-//      If you don't have LEDs, you can watch the Serial Monitor for output.
-//    - Power your ESP32.
-//
-// 2. SOFTWARE SETUP:
-//    - Open this file in the Arduino IDE.
-//    - Go to "Tools" > "Board" and select your specific ESP32 board model.
-//    - Go to "Tools" > "Port" and select the COM port your ESP32 is connected to.
-//    - UPDATE WIFI CREDENTIALS: Change the `ssid` and `password` variables below
-//      to match your local WiFi network.
-//
-// 3. LIBRARIES:
-//    - Make sure you have the "ESPAsyncWebServer" library installed.
-//    - In the Arduino IDE, go to "Sketch" > "Include Library" > "Manage Libraries...".
-//    - Search for "ESPAsyncWebServer" and install it.
-//    - This library also requires the "AsyncTCP" library. Search for and install it as well.
-//
-// 4. UPLOAD & RUN:
-//    - Click the "Upload" button in the Arduino IDE.
-//    - After uploading, open the "Serial Monitor" (Tools > Serial Monitor) and
-//      set the baud rate to 115200.
-//    - The ESP32 will print its IP address once connected to your WiFi.
-//    - Enter this IP address into the SortVision app's settings panel.
-// =======================================================================
-
-
 // --- PIN DEFINITIONS ---
-// IMPORTANT: Change these pin numbers to match your ESP32's wiring.
-const int PLASTIC_LED_PIN = 13;
-const int METAL_LED_PIN   = 12;
-const int PAPER_LED_PIN   = 14;
-const int LIGHT_PIN       = 27; // General purpose light/flash
+// Define the GPIO pins connected to your LEDs.
+// Using common pin numbers, but change them to match your wiring.
+const int LIGHT_PIN = 2;       // General illumination light (e.g., a white LED)
+const int PLASTIC_PIN = 13;    // LED for Plastic
+const int METAL_PIN = 12;      // LED for Metal
+const int PAPER_PIN = 14;      // LED for Paper
 
-// --- WIFI CREDENTIALS ---
-// IMPORTANT: Replace with your WiFi network SSID and password.
-const char* ssid = "YOUR_WIFI_SSID";
-const char* password = "YOUR_WIFI_PASSWORD";
+// Define the duration the sorting LEDs will stay on (in milliseconds)
+const int ledOnDuration = 2000;
+
+// --- NETWORK CONFIGURATION ---
+// Set the name (SSID) of the Wi-Fi network the ESP32 will create.
+const char* ssid = "SortVision-ESP32";
+// Set the password for the Wi-Fi network. MUST be at least 8 characters.
+const char* password = "sortvision";
 
 // Create an instance of the Asynchronous Web Server on port 80
 AsyncWebServer server(80);
 
-void connectToWiFi() {
-  Serial.print("Connecting to ");
-  Serial.println(ssid);
-  WiFi.begin(ssid, password);
-  int attempts = 0;
-  while (WiFi.status() != WL_CONNECTED && attempts < 20) {
-    delay(500);
-    Serial.print(".");
-    attempts++;
-  }
-  if (WiFi.status() == WL_CONNECTED) {
-    Serial.println("\nWiFi connected!");
-    Serial.print("IP Address: ");
-    Serial.println(WiFi.localIP());
-  } else {
-    Serial.println("\nFailed to connect to WiFi. Please check credentials and restart.");
-  }
+// --- FUNCTION DECLARATIONS ---
+// The Arduino compiler needs to know about these functions before they are used in `setup()`.
+void handleSortRequest(AsyncWebServerRequest *request);
+void handleLightRequest(AsyncWebServerRequest *request);
+void handleNotFound(AsyncWebServerRequest *request);
+void blinkLed(int pin, int times, int delay_ms);
+
+
+void setup() {
+  // Start the serial communication at 115200 baud rate for debugging
+  Serial.begin(115200);
+  Serial.println("\nESP32 Starting...");
+
+  // Set the LED pins as outputs
+  pinMode(LIGHT_PIN, OUTPUT);
+  pinMode(PLASTIC_PIN, OUTPUT);
+  pinMode(METAL_PIN, OUTPUT);
+  pinMode(PAPER_PIN, OUTPUT);
+
+  // Ensure all LEDs are off at the start
+  digitalWrite(LIGHT_PIN, LOW);
+  digitalWrite(PLASTIC_PIN, LOW);
+  digitalWrite(METAL_PIN, LOW);
+  digitalWrite(PAPER_PIN, LOW);
+
+  // --- START WI-FI ACCESS POINT ---
+  Serial.print("Setting up Access Point...");
+  // The second argument enables the Access Point. 
+  // The 'password' argument creates a secure WPA2 network.
+  WiFi.softAP(ssid, password);
+
+  // The IP address of the ESP32 in Access Point mode is 192.168.4.1 by default
+  IPAddress apIP = WiFi.softAPIP();
+  Serial.print(" AP IP address: ");
+  Serial.println(apIP);
+
+  // --- DEFINE SERVER ROUTES ---
+  // Define what function to call when the server receives a request to a specific URL.
+
+  // Route for sorting command: /sort?class=...
+  server.on("/sort", HTTP_GET, handleSortRequest);
+
+  // Route for light command: /light?state=...
+  server.on("/light", HTTP_GET, handleLightRequest);
+
+  // Route for any other page (404 Not Found)
+  server.onNotFound(handleNotFound);
+
+  // Start the server
+  server.begin();
+  Serial.println("HTTP server started.");
+
+  // Blink the light pin twice to indicate that the setup is complete and the server is running.
+  blinkLed(LIGHT_PIN, 2, 200);
 }
 
-// Function to handle the /sort command
-void handleSortRequest(AsyncWebServerRequest *request) {
-  String material = "";
-  if (request->hasParam("class")) {
-    material = request->getParam("class")->value();
-    material.toUpperCase(); // Ensure consistency
+void loop() {
+  // The main loop is empty because the AsyncWebServer handles requests in the background.
+  // Using delay() in the loop can interfere with the server's performance.
+}
 
+/**
+ * @brief Handles incoming requests to the /sort endpoint.
+ * 
+ * It expects a query parameter 'class' which specifies the material to sort.
+ * Example: http://192.168.4.1/sort?class=PLASTIC
+ * 
+ * @param request The request object from the web server.
+ */
+void handleSortRequest(AsyncWebServerRequest *request) {
+  // Check if the 'class' parameter exists in the request
+  if (request->hasParam("class")) {
+    // Get the value of the 'class' parameter
+    String material = request->getParam("class")->value();
+    
+    // Convert the received material string to uppercase for consistent matching
+    material.toUpperCase();
+
+    // Print the received command to the Serial Monitor for debugging
     Serial.print("Received sort command for: ");
     Serial.println(material);
 
-    // Turn off all LEDs first
-    digitalWrite(PLASTIC_LED_PIN, LOW);
-    digitalWrite(METAL_LED_PIN, LOW);
-    digitalWrite(PAPER_LED_PIN, LOW);
+    int targetPin = -1; // Use -1 to indicate no pin was matched
 
-    // Turn on the correct LED
+    // Determine which LED pin to activate based on the material
     if (material == "PLASTIC") {
-      digitalWrite(PLASTIC_LED_PIN, HIGH);
-      Serial.println("Activating PLASTIC sorter mechanism.");
+      targetPin = PLASTIC_PIN;
     } else if (material == "METAL") {
-      digitalWrite(METAL_LED_PIN, HIGH);
-      Serial.println("Activating METAL sorter mechanism.");
+      targetPin = METAL_PIN;
     } else if (material == "PAPER") {
-      digitalWrite(PAPER_LED_PIN, HIGH);
-      Serial.println("Activating PAPER sorter mechanism.");
-    } else {
-      Serial.println("Unknown material received.");
-      request->send(400, "text/plain", "Unknown material");
-      return;
+      targetPin = PAPER_PIN;
     }
 
-    request->send(200, "text/plain", "OK: Sorted " + material);
-
-    // Optional: Turn the LED off after a delay
-    delay(1000);
-    digitalWrite(PLASTIC_LED_PIN, LOW);
-    digitalWrite(METAL_LED_PIN, LOW);
-    digitalWrite(PAPER_LED_PIN, LOW);
-    
+    // If a valid material was found, blink the corresponding LED
+    if (targetPin != -1) {
+      blinkLed(targetPin, 1, ledOnDuration);
+      // Send a success response back to the client (the phone app)
+      request->send(200, "text/plain", "OK: Sorting " + material);
+    } else {
+      // If the material is not recognized, send an error response
+      Serial.print("Unknown material: ");
+      Serial.println(material);
+      request->send(400, "text/plain", "Bad Request: Unknown class '" + material + "'");
+    }
   } else {
-    Serial.println("Sort command received without 'class' parameter.");
-    request->send(400, "text/plain", "Bad Request: Missing 'class' parameter");
+    // If the 'class' parameter is missing, send an error response
+    Serial.println("Bad Request: 'class' parameter missing.");
+    request->send(400, "text/plain", "Bad Request: Missing 'class' parameter.");
   }
 }
 
-// Function to handle the /light command
+/**
+ * @brief Handles incoming requests to the /light endpoint.
+ * 
+ * It expects a query parameter 'state' which can be 'ON' or 'OFF'.
+ * Example: http://192.168.4.1/light?state=ON
+ * 
+ * @param request The request object from the web server.
+ */
 void handleLightRequest(AsyncWebServerRequest *request) {
+  // Check if the 'state' parameter exists
   if (request->hasParam("state")) {
     String state = request->getParam("state")->value();
-    state.toUpperCase();
+    state.toUpperCase(); // Standardize to uppercase
+
+    // Turn the light ON or OFF based on the state
     if (state == "ON") {
       digitalWrite(LIGHT_PIN, HIGH);
       Serial.println("Light turned ON");
@@ -129,53 +180,45 @@ void handleLightRequest(AsyncWebServerRequest *request) {
       Serial.println("Light turned OFF");
       request->send(200, "text/plain", "OK: Light OFF");
     } else {
-      request->send(400, "text/plain", "Bad Request: Invalid state");
+      // If the state is not recognized, send an error
+      Serial.print("Unknown light state: ");
+      Serial.println(state);
+      request->send(400, "text/plain", "Bad Request: Unknown state '" + state + "'");
     }
   } else {
-    request->send(400, "text/plain", "Bad Request: Missing 'state' parameter");
+    // If the 'state' parameter is missing, send an error
+    Serial.println("Bad Request: 'state' parameter missing.");
+    request->send(400, "text/plain", "Bad Request: Missing 'state' parameter.");
   }
 }
 
+/**
+ * @brief Handles any requests to URLs that have not been defined.
+ * 
+ * This function sends a 404 Not Found error message back to the client.
+ * 
+ * @param request The request object from the web server.
+ */
 void handleNotFound(AsyncWebServerRequest *request) {
-  Serial.print("Client requested unknown URL: ");
+  Serial.print("URI Not Found: ");
   Serial.println(request->url());
-  request->send(404, "text/plain", "Not found");
+  request->send(404, "text/plain", "Not Found");
 }
 
-void setup() {
-  // Start the Serial Monitor
-  Serial.begin(115200);
-  Serial.println("\nSortVision ESP32 Initializing...");
-
-  // Set up the GPIO pins for the LEDs
-  pinMode(PLASTIC_LED_PIN, OUTPUT);
-  pinMode(METAL_LED_PIN, OUTPUT);
-  pinMode(PAPER_LED_PIN, OUTPUT);
-  pinMode(LIGHT_PIN, OUTPUT);
-
-  // Ensure all LEDs are off at startup
-  digitalWrite(PLASTIC_LED_PIN, LOW);
-  digitalWrite(METAL_LED_PIN, LOW);
-  digitalWrite(PAPER_LED_PIN, LOW);
-  digitalWrite(LIGHT_PIN, LOW);
-
-  // Connect to the WiFi network
-  connectToWiFi();
-
-  // Define the server routes
-  server.on("/sort", HTTP_GET, handleSortRequest);
-  server.on("/light", HTTP_get, handleLightRequest);
-
-  // Define a catch-all for 404 Not Found errors
-  server.onNotFound(handleNotFound);
-
-  // Start the server
-  server.begin();
-  Serial.println("HTTP server started. Awaiting commands from the app.");
-}
-
-void loop() {
-  // The loop is intentionally kept empty.
-  // The ESPAsyncWebServer library handles client requests in the background.
-  // Using delay() in the loop can cause the web server to become unresponsive.
+/**
+ * @brief Blinks a specified LED for a given duration.
+ * 
+ * @param pin The GPIO pin number of the LED to blink.
+ * @param times The number of times to blink the LED.
+ * @param delay_ms The total duration for each on/off cycle.
+ */
+void blinkLed(int pin, int times, int delay_ms) {
+  for (int i = 0; i < times; i++) {
+    digitalWrite(pin, HIGH);
+    delay(delay_ms);
+    digitalWrite(pin, LOW);
+    if (i < times - 1) {
+      delay(delay_ms / 2); // A short pause between blinks if blinking multiple times
+    }
+  }
 }
