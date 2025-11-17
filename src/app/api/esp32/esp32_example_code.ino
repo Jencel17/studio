@@ -6,18 +6,14 @@
 // -- WiFi Configuration --
 const char* ssid = "Research Test";        // The name of the WiFi network to create.
 const char* password = "reseachcapstone";  // The password for the WiFi network. (8 characters minimum)
-  
+
 // -- Web Server Configuration --
 WebServer server(80);  // Create a web server on port 80
 
-// -- Sorter Status --
-// This variable tracks the state of the sorter machine.
-// "READY" = The sorter is idle and can accept a new command.
-// "BUSY"  = The sorter is currently in the middle of a sort sequence.
-const char* sorterStatus = "READY";
-
 // -- LED Configuration --
 // const int ledPin = 2; // (Optional) The pin your status LED is connected to.
+
+const char* sorterStatus = "READY";
 
 // Servo -----------------------------------------------------------|
 Servo servoChute;
@@ -76,17 +72,15 @@ void handleRoot() {
 
 // -- Handler for Sorting Requests --
 void handleSortRequest() {
-  // Only process sort command if the sorter is READY
   if (strcmp(sorterStatus, "READY") != 0) {
-    server.send(503, "text/plain", "BUSY"); // 503 Service Unavailable
-    return;
+  server.send(503, "text/plain", "BUSY"); // 503 Service Unavailable
+  return;
   }
-  
   String material = "";
   
   if (server.hasArg("class")) {
-    sorterStatus = "BUSY"; // Set status to BUSY before starting sort
-    
+    sorterStatus = "BUSY";
+
     material = server.arg("class");
     material.toUpperCase();
     
@@ -112,24 +106,45 @@ void handleSortRequest() {
       server.send(400, "text/plain", "ERROR: Unknown material type");
     }
 
-    sorterStatus = "READY"; // Set status back to READY after sort is complete
+    sorterStatus = "READY";
     
   } else {
     Serial.println("Sort request received without 'class' parameter.");
     server.send(400, "text/plain", "ERROR: Missing 'class' parameter.");
   }
-}
+} 
 
-// -- Handler for Status Requests --
-// This allows the app to check if the ESP32 is busy or ready.
+// -- Handler for Light Control Requests --
+// void handleLightRequest() {
+//   String state = "";
+//   if (server.hasArg("state")) {
+//     state = server.arg("state");
+//     Serial.print("Received light command: ");
+//     Serial.println(state);
+
+//     // --- Add your light control logic here ---
+//     // Example:
+//     // if (state == "ON") {
+//     //   digitalWrite(ledPin, HIGH);
+//     //   serial.print("Light Turned ON")
+//     // } else {
+//     //   digitalWrite(ledPin, LOW);
+//     //   serial.print("Light Turned OFF")
+//     // }
+
+//     server.send(200, "text/plain", "OK: Light " + state);
+//   } else {
+//     Serial.println("Light request received without 'state' parameter.");
+//     server.send(400, "text/plain", "ERROR: Missing 'state' parameter.");
+//   }
+// }
+
 void handleStatusRequest() {
-  server.send(200, "text/plain", sorterStatus);
+server.send(200, "text/plain", sorterStatus);
 }
-
-// -- Handler for Ping Requests --
-// This allows the app to confirm it's connected to the ESP32.
+// Confirm it's connected to the ESP32.
 void handlePingRequest() {
-  server.send(200, "text/plain", "pong");
+server.send(200, "text/plain", "pong");
 }
 
 void handleNotFound() {
@@ -168,14 +183,15 @@ void setup() {
   // Define server routes
   server.on("/", HTTP_GET, handleRoot);
   server.on("/sort", HTTP_GET, handleSortRequest);
-  server.on("/status", HTTP_GET, handleStatusRequest); // New endpoint for status
-  server.on("/ping", HTTP_GET, handlePingRequest);     // New endpoint for ping
+  server.on("/status", HTTP_GET, handleStatusRequest);
+  server.on("/ping", HTTP_GET, handlePingRequest);
+  // server.on("/light", HTTP_GET, handleLightRequest);
   server.onNotFound(handleNotFound);
 
   // Start the server
   server.begin();
   Serial.println("Web Server started.");
-  sorterStatus = "READY"; // Ensure status is READY on startup
+  sorterStatus = "READY";
 }
 
 void loop() {
