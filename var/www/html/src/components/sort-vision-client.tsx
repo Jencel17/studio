@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles, Lock, Unlock } from "lucide-react";
+import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles, Lock, Unlock, WifiOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/model-analysis";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -61,6 +61,7 @@ const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
 const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
 const AUTO_CAPTURE_COOLDOWN_TIME = 0;
+const PING_INTERVAL = 3000;
 
 const interpretDetectionsLocal = (
   predictions: Prediction[],
@@ -148,6 +149,7 @@ export default function SortVisionClient({
   const [countdown, setCountdown] = useState(0);
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [wakeLockRef, setWakeLockRef] = useState<WakeLockSentinel | null>(null);
+  const [isEspConnected, setIsEspConnected] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -157,8 +159,10 @@ export default function SortVisionClient({
 
   const { toast } = useToast();
 
-    const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort', params: Record<string, string>) => {
-    addLog(`Sending ${command} command to proxy...`);
+    const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
+    if (!options.silent) {
+        addLog(`Sending ${command} command to proxy...`);
+    }
     try {
       const response = await fetch('/api/esp32', {
         method: 'POST',
@@ -175,25 +179,31 @@ export default function SortVisionClient({
       const result = await response.json();
 
       if (response.ok) {
-        addLog(`Proxy success: ${result.message}`);
-        return true;
+        if (!options.silent) {
+            addLog(`Proxy success: ${result.message}`);
+        }
+        return result.message; // Return the body of the response from ESP
       } else {
-        addLog(`Proxy Error: ${result.error}`);
-        toast({
-            variant: "destructive",
-            title: "ESP32 Command Failed",
-            description: result.error || "The server proxy could not reach the ESP32.",
-        });
-        return false;
+        if (!options.silent) {
+            addLog(`Proxy Error: ${result.error}`);
+            toast({
+                variant: "destructive",
+                title: "ESP32 Command Failed",
+                description: result.error || "The server proxy could not reach the ESP32.",
+            });
+        }
+        return null;
       }
     } catch (error: any) {
-      addLog(`Failed to send command to proxy: ${error.message}`);
-       toast({
-            variant: "destructive",
-            title: "Proxy Error",
-            description: "Could not send command to the server. Check console.",
-        });
-      return false;
+        if (!options.silent) {
+            addLog(`Failed to send command to proxy: ${error.message}`);
+            toast({
+                    variant: "destructive",
+                    title: "Proxy Error",
+                    description: "Could not send command to the server. Check console.",
+            });
+        }
+        return null;
     }
   }, [esp32Ip, addLog, toast]);
 
@@ -202,7 +212,8 @@ export default function SortVisionClient({
           addLog(`TEST MODE: Simulating light ${state} command.`);
           return true;
         }
-        return await sendCommandViaProxy('light', { state });
+        const result = await sendCommandViaProxy('light', { state });
+        return result !== null;
     }, [isTestMode, sendCommandViaProxy, addLog]);
 
   
@@ -458,12 +469,12 @@ const toggleFocus = useCallback(async () => {
       addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
       setCommandStatus({ status: "SUCCESS", message: `Test: Sorted ${classificationLabel}` });
       toast({ title: "Command Sent (Test Mode)", description: `Simulated sort for: ${classificationLabel}` });
-      return;
+      return "OK";
     }
     
-    const success = await sendCommandViaProxy('sort', { class: classificationLabel.toUpperCase() });
+    const result = await sendCommandViaProxy('sort', { class: classificationLabel.toUpperCase() });
     
-    if (success) {
+    if (result !== null) {
       setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
       toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
     } else {
@@ -471,6 +482,7 @@ const toggleFocus = useCallback(async () => {
       setCommandStatus({ status: "ERROR", message: errorText });
       toast({ variant: "destructive", title: "ESP32 Error", description: `Could not send command.` });
     }
+    return result;
   }, [addLog, toast, isTestMode, sendCommandViaProxy]);
 
  const handleSortAndRestart = useCallback(async (classification: string) => {
@@ -480,21 +492,39 @@ const toggleFocus = useCallback(async () => {
     stopCamera(true); // Preserve UI state
     
     setAppStatus("CAMERA_CYCLING");
-    addLog(`Command sent for ${classification}. Restarting camera in ${cameraRestartDelay} seconds...`);
     
-    await sendLightCommand('OFF');
-
-    if (classification !== "RESTART_NO_SORT") {
-        await sendSortCommand(classification);
+    if (flashState) {
+        await sendLightCommand('OFF');
     }
 
-    const delayInMs = cameraRestartDelay * 1000;
-    setTimeout(() => {
-        addLog("Restarting camera now.");
-        startCamera({ restoreFlash: flashState, restoreFocus: focusState });
-    }, delayInMs);
+    let sortSuccess = false;
+    if (classification !== "RESTART_NO_SORT") {
+        addLog(`Sending command for ${classification}...`);
+        const result = await sendSortCommand(classification);
+        sortSuccess = result !== null;
+    } else {
+        sortSuccess = true; // No sort needed, so we can proceed
+    }
 
-}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, cameraRestartDelay, sendLightCommand, isFlashOn, isFocusLocked]);
+    if (sortSuccess) {
+        addLog("Sort command acknowledged. Waiting for ESP32 to be ready...");
+        // Poll for ready status
+        const pollInterval = setInterval(async () => {
+            const statusResult = await sendCommandViaProxy('status', {}, { silent: true });
+            if (statusResult?.includes('READY')) {
+                clearInterval(pollInterval);
+                addLog("ESP32 is ready. Restarting camera.");
+                startCamera({ restoreFlash: flashState, restoreFocus: focusState });
+            } else {
+                addLog("Waiting for ESP32...");
+            }
+        }, 1000); // Check every second
+    } else {
+        addLog("Sort command failed. Restarting camera immediately.");
+        startCamera({ restoreFlash: flashState, restoreFocus: focusState });
+    }
+
+}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, sendCommandViaProxy]);
 
  const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
@@ -545,7 +575,9 @@ const toggleFocus = useCallback(async () => {
           
           setTimeout(async () => {
             if (!videoRef.current) { 
-                await sendLightCommand('OFF');
+                if (isFlashOn) {
+                    await sendLightCommand('OFF');
+                }
                 return;
             }
             addLog("Re-classifying with light on...");
@@ -591,7 +623,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn]);
 
   useEffect(() => {
     return () => {
@@ -599,7 +631,6 @@ const toggleFocus = useCallback(async () => {
         stopCamera();
       }
     };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleCamera = () => {
@@ -779,6 +810,22 @@ a.click();
 
     checkModelPerformance();
   }, [lastClassifications, toast, addLog, model]);
+
+  useEffect(() => {
+    const pingEsp = async () => {
+        if (isTestMode) {
+            setIsEspConnected(true);
+            return;
+        }
+        const result = await sendCommandViaProxy('ping', {}, { silent: true });
+        setIsEspConnected(result?.includes('pong') ?? false);
+    };
+
+    pingEsp(); // Initial ping
+    const interval = setInterval(pingEsp, PING_INTERVAL); // Periodic ping
+
+    return () => clearInterval(interval);
+  }, [sendCommandViaProxy, isTestMode]);
   
   const StatusDisplay = () => {
     const getStatusText = () => {
@@ -788,7 +835,7 @@ a.click();
             case "MODEL_LOADING": return "Loading Model...";
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
-            case "CAMERA_CYCLING": return "Camera Restarting...";
+            case "CAMERA_CYCLING": return "Waiting for Sorter...";
             case "COLLECTING_IMAGES": return "Collecting Images...";
             case "COOLDOWN": return "Auto-Capture Cooldown";
             case "READY_TO_SEND":
@@ -821,9 +868,9 @@ a.click();
                     {appStatus === 'ANALYZING_MATERIAL' && <Sparkles className="h-3 w-3 mr-1 animate-pulse" />}
                     {getStatusText()}
                 </Badge>
-                <Badge variant={isTestMode ? "default" : "outline"} className="gap-2 text-xs">
-                    {isTestMode ? <TestTube className="h-3 w-3" /> : <Wifi className="h-3 w-3"/>}
-                    {isTestMode ? "Test Mode" : esp32Ip}
+                <Badge variant={isTestMode ? "default" : isEspConnected ? "default" : "destructive"} className="gap-2 text-xs">
+                    {isTestMode ? <TestTube className="h-3 w-3" /> : isEspConnected ? <Wifi className="h-3 w-3"/> : <WifiOff className="h-3 w-3" />}
+                    {isTestMode ? "Test Mode" : isEspConnected ? "ESP32 Connected" : "ESP32 Disconnected"}
                 </Badge>
             </div>
              <div className="flex items-center gap-2 text-xs text-muted-foreground">
@@ -1083,5 +1130,7 @@ a.click();
       </Card>
   );
 }
+
+    
 
     
