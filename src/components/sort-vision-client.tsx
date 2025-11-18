@@ -45,6 +45,7 @@ interface SortVisionClientProps {
     isTestMode: boolean;
     wakeLockEnabled: boolean;
     autoCaptureEnabled: boolean;
+    autoSortEnabled: boolean;
     autoFlashEnabled: boolean;
     cameraRestartDelay: number;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
@@ -61,6 +62,7 @@ const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
 const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
 const AUTO_CAPTURE_COOLDOWN_TIME = 5000;
+const AUTO_SORT_COOLDOWN_TIME = 3000;
 const PING_INTERVAL = 3000;
 
 const interpretDetectionsLocal = (
@@ -142,6 +144,7 @@ export default function SortVisionClient({
     isTestMode,
     wakeLockEnabled,
     autoCaptureEnabled,
+    autoSortEnabled,
     autoFlashEnabled,
     cameraRestartDelay,
     tmImageRef,
@@ -580,6 +583,18 @@ const toggleFocus = useCallback(async () => {
             predictionIntervalRef.current = undefined;
           }
 
+          if(autoSortEnabled) {
+            addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sending command.`);
+            sendSortCommand(foundPrediction.className);
+            setAppStatus("COOLDOWN");
+            addLog(`Auto-Sort: Entering ${AUTO_SORT_COOLDOWN_TIME / 1000}s cooldown.`);
+            setTimeout(() => {
+                setAppStatus("AWAITING_OBJECT");
+                addLog("Cooldown finished. Resuming analysis.");
+            }, AUTO_SORT_COOLDOWN_TIME);
+            return;
+          }
+
           if (!autoFlashEnabled) {
               addLog(`Auto-flash disabled. Sorting directly: ${foundPrediction.className}.`);
               handleSortAndRestart(foundPrediction.className);
@@ -639,7 +654,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendSortCommand, sendLightCommand, autoFlashEnabled, isFlashOn]);
 
   useEffect(() => {
     return () => {
@@ -744,10 +759,10 @@ a.click();
 }, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled, setAppStatus, sendLightCommand]);
 
   useEffect(() => {
-    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING' && appStatus !== 'READY_TO_SEND') {
         addLog("Starting classification loop.");
         predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
-    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_CYCLING') && predictionIntervalRef.current) {
+    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_CYCLING' || appStatus === 'READY_TO_SEND') && predictionIntervalRef.current) {
         addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
@@ -853,7 +868,7 @@ a.click();
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
             case "CAMERA_CYCLING": return "Waiting for Sorter...";
             case "COLLECTING_IMAGES": return "Collecting Images...";
-            case "COOLDOWN": return "Auto-Capture Cooldown";
+            case "COOLDOWN": return "Cooldown";
             case "READY_TO_SEND":
                 return `Sending: ${primaryPrediction?.className || '...'}`;
             default: return "Analyzing...";

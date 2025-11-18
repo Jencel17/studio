@@ -14,7 +14,7 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer, Flashlight, RefreshCw } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer, Flashlight, RefreshCw, Zap } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
 
@@ -32,6 +32,8 @@ interface SortVisionSettingsProps {
     setWakeLockEnabled: (isEnabled: boolean) => void;
     autoCaptureEnabled: boolean;
     setAutoCaptureEnabled: (isEnabled: boolean) => void;
+    autoSortEnabled: boolean;
+    setAutoSortEnabled: (isEnabled: boolean) => void;
     autoFlashEnabled: boolean;
     setAutoFlashEnabled: (isEnabled: boolean) => void;
     cameraRestartDelay: number;
@@ -53,6 +55,8 @@ export default function SortVisionSettings({
     setWakeLockEnabled,
     autoCaptureEnabled,
     setAutoCaptureEnabled,
+    autoSortEnabled,
+    setAutoSortEnabled,
     autoFlashEnabled,
     setAutoFlashEnabled,
     cameraRestartDelay,
@@ -441,18 +445,33 @@ export default function SortVisionSettings({
               </div>
             </SidebarGroup>
             <SidebarGroup>
-              <SidebarGroupLabel>Network Settings</SidebarGroupLabel>
-              <div className="space-y-2 p-4">
-                <Label htmlFor="esp32-ip">ESP32 IP Address</Label>
-                <Input
-                  id="esp32-ip"
-                  value={esp32Ip}
-                  onChange={(e) => setEsp32Ip(e.target.value)}
-                  placeholder="e.g., http://192.168.4.1"
-                  disabled={isTestMode}
-                />
+              <SidebarGroupLabel>Automation Settings</SidebarGroupLabel>
+              <div className="space-y-4 p-4">
+                 <div className="flex items-center justify-between">
+                  <Label htmlFor="auto-sort" className="flex items-center gap-2">
+                    <Zap className="h-4 w-4" />
+                    Auto-Sort Mode
+                  </Label>
+                  <Switch
+                    id="auto-sort"
+                    checked={autoSortEnabled}
+                    onCheckedChange={setAutoSortEnabled}
+                  />
+                </div>
+                 <div className="flex items-center justify-between">
+                  <Label htmlFor="auto-capture" className="flex items-center gap-2">
+                    <Bot className="h-4 w-4" />
+                    Auto-Capture Unknowns
+                  </Label>
+                  <Switch
+                    id="auto-capture"
+                    checked={autoCaptureEnabled}
+                    onCheckedChange={setAutoCaptureEnabled}
+                  />
+                </div>
               </div>
             </SidebarGroup>
+
             <SidebarGroup>
               <SidebarGroupLabel>Device Settings</SidebarGroupLabel>
               <div className="space-y-4 p-4">
@@ -476,17 +495,7 @@ export default function SortVisionSettings({
                     id="auto-flash"
                     checked={autoFlashEnabled}
                     onCheckedChange={setAutoFlashEnabled}
-                  />
-                </div>
-                 <div className="flex items-center justify-between">
-                  <Label htmlFor="auto-capture" className="flex items-center gap-2">
-                    <Bot className="h-4 w-4" />
-                    Auto-Capture
-                  </Label>
-                  <Switch
-                    id="auto-capture"
-                    checked={autoCaptureEnabled}
-                    onCheckedChange={setAutoCaptureEnabled}
+                    disabled={autoSortEnabled}
                   />
                 </div>
                 <div className="flex items-center justify-between">
@@ -499,20 +508,20 @@ export default function SortVisionSettings({
                     onCheckedChange={setIsTestMode}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="restart-delay" className="flex items-center gap-2">
-                    <Timer className="h-4 w-4" />
-                    Camera Restart Delay (s)
-                  </Label>
-                  <Input
-                    id="restart-delay"
-                    type="number"
-                    value={cameraRestartDelay}
-                    onChange={(e) => setCameraRestartDelay(Math.max(0, Number(e.target.value)))}
-                    placeholder="e.g., 3"
-                    min="0"
-                  />
-                </div>
+              </div>
+            </SidebarGroup>
+
+            <SidebarGroup>
+              <SidebarGroupLabel>Network Settings</SidebarGroupLabel>
+              <div className="space-y-2 p-4">
+                <Label htmlFor="esp32-ip">ESP32 IP Address</Label>
+                <Input
+                  id="esp32-ip"
+                  value={esp32Ip}
+                  onChange={(e) => setEsp32Ip(e.target.value)}
+                  placeholder="e.g., http://192.168.4.1"
+                  disabled={isTestMode}
+                />
               </div>
             </SidebarGroup>
           </ScrollArea>

@@ -19,6 +19,7 @@ export default function SortVision() {
     const [isTestMode, setIsTestMode] = useState(false);
     const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
     const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
+    const [autoSortEnabled, setAutoSortEnabled] = useState(true);
     const [autoFlashEnabled, setAutoFlashEnabled] = useState(false);
     const [cameraRestartDelay, setCameraRestartDelay] = useState(3);
     const [logs, setLogs] = useState<LogEntry[]>([]);
@@ -89,6 +90,8 @@ export default function SortVision() {
         setWakeLockEnabled={setWakeLockEnabled}
         autoCaptureEnabled={autoCaptureEnabled}
         setAutoCaptureEnabled={setAutoCaptureEnabled}
+        autoSortEnabled={autoSortEnabled}
+        setAutoSortEnabled={setAutoSortEnabled}
         autoFlashEnabled={autoFlashEnabled}
         setAutoFlashEnabled={setAutoFlashEnabled}
         cameraRestartDelay={cameraRestartDelay}
@@ -105,6 +108,7 @@ export default function SortVision() {
           isTestMode={isTestMode}
           wakeLockEnabled={wakeLockEnabled}
           autoCaptureEnabled={autoCaptureEnabled}
+          autoSortEnabled={autoSortEnabled}
           autoFlashEnabled={autoFlashEnabled}
           cameraRestartDelay={cameraRestartDelay}
           tmImageRef={tmImageRef}
