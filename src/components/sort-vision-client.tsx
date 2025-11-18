@@ -67,54 +67,70 @@ const interpretDetectionsLocal = (
   predictions: Prediction[],
   confidenceThreshold: number
 ): InterpretDetectionsOutput => {
-  const significantPredictions = predictions.filter(
+  const sortedPredictions = [...predictions].sort(
+    (a, b) => b.probability - a.probability
+  );
+
+  if (!sortedPredictions.length || sortedPredictions[0].probability < 0.5) {
+    return {
+      detectionState: 'NO_DETECTION',
+      reason: 'No object detected with sufficient confidence.',
+    };
+  }
+
+  const topPrediction = sortedPredictions[0];
+  const secondPrediction = sortedPredictions.length > 1 ? sortedPredictions[1] : null;
+
+  const highConfidencePredictions = sortedPredictions.filter(
     (p) => p.probability >= confidenceThreshold
   );
 
-  if (significantPredictions.length === 0) {
-    if (predictions.some(p => p.probability > 0.5)) {
-      return {
-        detectionState: "AMBIGUOUS",
-        reason: `Highest confidence is below threshold.`
-      }
-    }
+  // Rule 1: Clear Single Object
+  // High confidence AND a large gap between the first and second prediction
+  if (
+    topPrediction.probability > 0.90 &&
+    (!secondPrediction || topPrediction.probability > secondPrediction.probability * 2)
+  ) {
     return {
-      detectionState: "NO_DETECTION",
-      reason: "No prediction meets the confidence threshold.",
+      detectionState: 'SINGLE_OBJECT',
+      primaryObject: topPrediction.className,
+      reason: `Very high confidence for ${topPrediction.className}.`,
     };
   }
 
-  const sortedPredictions = [...predictions].sort((a,b) => b.probability - a.probability);
-  const topPrediction = sortedPredictions[0];
-
-  if(topPrediction.probability < confidenceThreshold){
+  // Rule 2: Multiple Objects
+  // If two or more predictions are above the confidence threshold
+  if (highConfidencePredictions.length > 1) {
     return {
-      detectionState: "AMBIGUOUS",
-      reason: `Highest confidence (${topPrediction.probability.toFixed(2)}) is below threshold.`,
+      detectionState: 'MULTIPLE_OBJECTS',
+      detectedObjects: highConfidencePredictions.map((p) => p.className),
+      reason: 'Multiple objects detected above confidence threshold.',
     };
   }
-  
-  const secondPrediction = sortedPredictions.length > 1 ? sortedPredictions[1] : null;
-  if (secondPrediction) {
-    if (secondPrediction.probability >= confidenceThreshold) {
-      return {
-          detectionState: "MULTIPLE_OBJECTS",
-          detectedObjects: significantPredictions.map((p) => p.className),
-          reason: "Multiple objects detected above confidence threshold.",
-      };
-    }
-    if (topPrediction.probability < secondPrediction.probability * 2) {
-       return {
-        detectionState: "AMBIGUOUS",
-        reason: "Confidence scores are too close to make a clear decision.",
-      };
-    }
+
+  // Rule 3: Tentative Single Object (still counts as single, but less certain)
+  // If one prediction is above the threshold, but doesn't meet the "very high confidence" rule.
+  if (highConfidencePredictions.length === 1) {
+     return {
+      detectionState: 'SINGLE_OBJECT',
+      primaryObject: highConfidencePredictions[0].className,
+      reason: `One object found above threshold: ${highConfidencePredictions[0].className}.`,
+    };
   }
 
+  // Rule 4: Ambiguous Detection
+  // If the top prediction is above a minimum but below the main threshold, or if scores are too close.
+  if (topPrediction.probability >= 0.5 && topPrediction.probability < confidenceThreshold) {
+    return {
+      detectionState: 'AMBIGUOUS',
+      reason: `Highest confidence (${(topPrediction.probability * 100).toFixed(0)}%) is below the required ${confidenceThreshold * 100}% threshold.`,
+    };
+  }
+
+  // Fallback Rule
   return {
-    detectionState: "SINGLE_OBJECT",
-    primaryObject: topPrediction.className,
-    reason: `Single object detected with high confidence: ${topPrediction.className}.`,
+    detectionState: 'NO_DETECTION',
+    reason: 'Analysis complete, but no clear result based on rules.',
   };
 };
 
@@ -1130,5 +1146,7 @@ a.click();
       </Card>
   );
 }
+
+    
 
     
