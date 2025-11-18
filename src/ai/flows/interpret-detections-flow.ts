@@ -1,3 +1,4 @@
+
 'use server';
 
 /**
@@ -14,9 +15,14 @@ import {
 } from '@/app/actions/ai-schemas';
 
 export async function interpretDetections(input: InterpretDetectionsInput) {
-  return interpretDetectionsFlow(input);
+  // return interpretDetectionsFlow(input);
+  return {
+    detectionState: "NO_DETECTION",
+    reason: "AI detection is disabled."
+  }
 }
 
+/*
 const prompt = ai.definePrompt({
   name: 'interpretDetectionsPrompt',
   input: {schema: InterpretDetectionsInputSchema},
@@ -65,3 +71,6 @@ const interpretDetectionsFlow = ai.defineFlow(
     return output!;
   }
 );
+*/
+
+    
