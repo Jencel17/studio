@@ -1,64 +1,74 @@
 
-const CACHE_NAME = 'sortvision-cache-v1';
+// Choose a cache name
+const CACHE_NAME = 'sort-vision-cache-v1';
+// List of files to cache
 const urlsToCache = [
   '/',
-  '/offline',
   '/manifest.json',
   '/icon-192x192.png',
   '/icon-512x512.png',
+  '/offline',
 ];
 
-self.addEventListener('install', (event) => {
+// Install a service worker
+self.addEventListener('install', event => {
+  // Perform install steps
   event.waitUntil(
     caches.open(CACHE_NAME)
-      .then((cache) => {
+      .then(function(cache) {
         console.log('Opened cache');
         return cache.addAll(urlsToCache);
       })
   );
 });
 
-self.addEventListener('fetch', (event) => {
-  event.respondWith(
-    caches.match(event.request)
-      .then((response) => {
-        if (response) {
-          return response;
-        }
-
-        const fetchRequest = event.request.clone();
-
-        return fetch(fetchRequest).then(
-          (response) => {
-            if (!response || response.status !== 200 || response.type !== 'basic') {
-              return response;
+// Cache and return requests
+self.addEventListener('fetch', event => {
+    event.respondWith(
+        caches.match(event.request)
+        .then(function(response) {
+            // Cache hit - return response
+            if (response) {
+                return response;
             }
 
-            const responseToCache = response.clone();
+            return fetch(event.request).then(
+                function(response) {
+                    // Check if we received a valid response
+                    if(!response || response.status !== 200 || response.type !== 'basic') {
+                        return response;
+                    }
 
-            caches.open(CACHE_NAME)
-              .then((cache) => {
-                cache.put(event.request, responseToCache);
-              });
+                    // IMPORTANT: Clone the response. A response is a stream
+                    // and because we want the browser to consume the response
+                    // as well as the cache consuming the response, we need
+                    // to clone it so we have two streams.
+                    var responseToCache = response.clone();
 
-            return response;
-          }
-        );
-      })
-      .catch(() => {
-        if (event.request.mode === 'navigate') {
-          return caches.match('/offline');
-        }
-      })
-  );
+                    caches.open(CACHE_NAME)
+                        .then(function(cache) {
+                            cache.put(event.request, responseToCache);
+                        });
+
+                    return response;
+                }
+            );
+        }).catch(function() {
+            // If the fetch fails, and it's a navigation request, serve the offline page.
+            if (event.request.mode === 'navigate') {
+                return caches.match('/offline');
+            }
+        })
+    );
 });
 
-self.addEventListener('activate', (event) => {
-  const cacheWhitelist = [CACHE_NAME];
+// Update a service worker
+self.addEventListener('activate', event => {
+  var cacheWhitelist = [CACHE_NAME];
   event.waitUntil(
-    caches.keys().then((cacheNames) => {
+    caches.keys().then(cacheNames => {
       return Promise.all(
-        cacheNames.map((cacheName) => {
+        cacheNames.map(cacheName => {
           if (cacheWhitelist.indexOf(cacheName) === -1) {
             return caches.delete(cacheName);
           }
