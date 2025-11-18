@@ -10,7 +10,7 @@ export default function OfflinePage() {
         Please check your internet connection.
       </p>
       <p className="mt-2 text-sm text-muted-foreground">
-        The app will automatically reconnect when it detects a connection.
+        This app should work offline once all assets are cached.
       </p>
     </div>
   );
