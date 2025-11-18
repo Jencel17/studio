@@ -607,7 +607,7 @@ const toggleFocus = useCallback(async () => {
       }
     }
 
-    if (autoCaptureEnabled && !isCollectingImages && newAppStatus === "CONFIDENCE_TOO_LOW" && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+    if (autoCaptureEnabled && newAppStatus === "CONFIDENCE_TOO_LOW" && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
       if (!ambiguousDetectionTimer.current) {
         addLog(`Uncertain detection. Triggering training image capture in ${AUTO_CAPTURE_TRIGGER_TIME / 1000}s.`);
         ambiguousDetectionTimer.current = setTimeout(() => {
