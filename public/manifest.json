@@ -4,8 +4,8 @@
   "description": "AI-powered trash sorting assistant",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#24292e",
-  "theme_color": "#F5F5DC",
+  "background_color": "#27272a",
+  "theme_color": "#27272a",
   "icons": [
     {
       "src": "/icons/icon-192x192.png",

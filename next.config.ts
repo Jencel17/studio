@@ -16,7 +16,7 @@ const pwaConfig = {
 };
 
 const nextConfig: NextConfig = {
-  webpack: (config, { isServer }) => {
+  webpack: (config, { isServer, dev, buildId, config: { distDir } }) => {
     // Exclude the 'encoding' module from the client-side bundle
     if (!isServer) {
       config.resolve.fallback = {
@@ -24,6 +24,19 @@ const nextConfig: NextConfig = {
         encoding: false,
       };
     }
+    
+    if (!isServer && !dev) {
+        const {InjectManifest} = require('workbox-webpack-plugin');
+        config.plugins.push(
+            new InjectManifest({
+                swSrc: './public/sw.js',
+                swDest: 'sw.js',
+                // This is needed to prevent an error about "precache manifest" not being defined
+                injectionPoint: 'self.__WB_MANIFEST',
+            })
+        );
+    }
+    
     return config;
   },
   /* config options here */

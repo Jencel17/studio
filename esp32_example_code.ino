@@ -6,7 +6,7 @@
 // -- WiFi Configuration --
 const char* ssid = "Research Test";        // The name of the WiFi network to create.
 const char* password = "reseachcapstone";  // The password for the WiFi network. (8 characters minimum)
-  
+
 // -- Web Server Configuration --
 WebServer server(80);  // Create a web server on port 80
 

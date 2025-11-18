@@ -1,81 +1,74 @@
+// This is a basic service worker file that will be populated by workbox-webpack-plugin
 
-// A custom service worker can be used to customize the caching strategy.
-// This is a simple example of a service worker that caches the main page and some static assets.
-// It's a good starting point for a more complex offline experience.
+// Ensure workbox is loaded
+try {
+  importScripts('https://storage.googleapis.com/workbox-cdn/releases/6.5.4/workbox-sw.js');
+} catch (e) {
+  console.error("Workbox couldn't be loaded.", e);
+}
 
-const CACHE_NAME = 'sort-vision-cache-v1';
-const PRECACHE_URLS = [
-  '/',
-  '/offline',
-  '/manifest.json',
-  // Add other critical assets here.
-  // Be careful with what you add, as it will be downloaded on service worker installation.
-  // The browser will automatically cache JS/CSS chunks if they are versioned.
-];
 
-self.addEventListener('install', (event) => {
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then((cache) => {
-        console.log('[Service Worker] Pre-caching offline page');
-        return cache.addAll(PRECACHE_URLS);
-      })
-      .then(() => {
-        // Force the waiting service worker to become the active service worker.
-        return self.skipWaiting();
-      })
-  );
-});
+if (self.workbox) {
+  console.log(`Workbox is loaded`);
 
-self.addEventListener('activate', (event) => {
-  // Tell the active service worker to take control of the page immediately.
-  event.waitUntil(self.clients.claim());
+  // This is a placeholder for the precache manifest that will be injected by the webpack plugin.
+  // The `self.__WB_MANIFEST` will be replaced with an array of assets to be precached.
+  self.workbox.precaching.precacheAndRoute(self.__WB_MANIFEST || []);
 
-  // Clean up old caches
-  event.waitUntil(
-    caches.keys().then((cacheNames) => {
-      return Promise.all(
-        cacheNames.map((cacheName) => {
-          if (cacheName !== CACHE_NAME) {
-            console.log('[Service Worker] Deleting old cache:', cacheName);
-            return caches.delete(cacheName);
-          }
-        })
-      );
+  // -- Caching Strategies --
+
+  // Cache Pages
+  self.workbox.routing.registerRoute(
+    ({ request }) => request.mode === 'navigate',
+    new self.workbox.strategies.NetworkFirst({
+      cacheName: 'pages',
+      plugins: [
+        new self.workbox.cacheableResponse.CacheableResponsePlugin({
+          statuses: [200],
+        }),
+      ],
     })
   );
-});
 
-self.addEventListener('fetch', (event) => {
-  // We only want to handle navigation requests for this simple example.
-  if (event.request.mode !== 'navigate') {
-    return;
-  }
-
-  event.respondWith(
-    (async () => {
-      try {
-        // First, try to use the navigation preload response if it's supported.
-        const preloadResponse = await event.preloadResponse;
-        if (preloadResponse) {
-          return preloadResponse;
-        }
-
-        // Always try the network first for navigation requests.
-        const networkResponse = await fetch(event.request);
-        return networkResponse;
-      } catch (error) {
-        // catch is only triggered if an exception is thrown, which happens
-        // when there's a network error.
-        // If fetch() returns a valid HTTP response with a 4xx or 5xx status,
-        // the catch() will NOT be called.
-        console.log('[Service Worker] Fetch failed; returning offline page instead.', error);
-
-        const cache = await caches.open(CACHE_NAME);
-        // This will serve the /offline page cached during install.
-        const cachedResponse = await cache.match('/offline');
-        return cachedResponse;
-      }
-    })()
+  // Cache Google Fonts
+  self.workbox.routing.registerRoute(
+    ({ url }) => url.origin === 'https://fonts.googleapis.com' || url.origin === 'https://fonts.gstatic.com',
+    new self.workbox.strategies.StaleWhileRevalidate({
+      cacheName: 'google-fonts',
+      plugins: [
+        new self.workbox.expiration.ExpirationPlugin({ maxEntries: 20 }),
+      ],
+    })
   );
+
+  // Cache Other Assets (JS, CSS, etc.)
+  self.workbox.routing.registerRoute(
+    ({ request }) => ['script', 'style', 'worker'].includes(request.destination),
+    new self.workbox.strategies.StaleWhileRevalidate({
+      cacheName: 'assets',
+    })
+  );
+
+  // Cache Images
+  self.workbox.routing.registerRoute(
+    ({ request }) => request.destination === 'image',
+    new self.workbox.strategies.CacheFirst({
+      cacheName: 'images',
+      plugins: [
+        new self.workbox.expiration.ExpirationPlugin({
+          maxEntries: 60,
+          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 Days
+        }),
+      ],
+    })
+  );
+
+} else {
+  console.log(`Workbox didn't load`);
+}
+
+self.addEventListener('message', (event) => {
+  if (event.data && event.data.type === 'SKIP_WAITING') {
+    self.skipWaiting();
+  }
 });
