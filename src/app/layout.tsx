@@ -1,13 +1,17 @@
 
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { PT_Sans } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import Script from "next/script";
 
-const inter = Inter({ subsets: ["latin"], variable: "--font-inter" });
+const ptSans = PT_Sans({
+  subsets: ["latin"],
+  weight: ["400", "700"],
+  variable: "--font-pt-sans",
+});
 
 export const metadata: Metadata = {
   title: "SortVision",
@@ -17,8 +21,8 @@ export const metadata: Metadata = {
 
 export const viewport: Viewport = {
   themeColor: [
-    { media: "(prefers-color-scheme: light)", color: "white" },
-    { media: "(prefers-color-scheme: dark)", color: "black" },
+    { media: "(prefers-color-scheme: light)", color: "#F5F5DC" },
+    { media: "(prefers-color-scheme: dark)", color: "#0A0A0A" },
   ],
 };
 
@@ -33,10 +37,10 @@ export default function RootLayout({
         <link rel="manifest" href="/manifest.json" />
         <link rel="apple-touch-icon" href="/icon-192x192.png"></link>
       </head>
-      <body className={`${inter.variable} font-sans antialiased`}>
+      <body className={`${ptSans.variable} font-sans antialiased`}>
         <ThemeProvider
           attribute="class"
-          defaultTheme="dark"
+          defaultTheme="light"
           enableSystem
           disableTransitionOnChange
         >

@@ -7,6 +7,7 @@ import type * as tf from "@tensorflow/tfjs";
 
 import SortVisionClient from "@/components/sort-vision-client";
 import SortVisionSettings from "@/components/sort-vision-settings";
+import SplashScreen from "@/components/splash-screen";
 import { AppStatus, LogEntry } from "@/lib/types";
 
 export default function SortVision() {
@@ -33,6 +34,9 @@ export default function SortVision() {
         setLogs((prevLogs) => [...prevLogs, newLog].slice(-100));
     }, []);
 
+    if (appStatus === 'LOADING_LIBS') {
+        return <SplashScreen />;
+    }
 
     return (
     <>
