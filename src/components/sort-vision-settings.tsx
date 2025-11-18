@@ -59,7 +59,6 @@ export default function SortVisionSettings({
     setCameraRestartDelay,
     addLog,
 }: SortVisionSettingsProps) {
-    const [libsLoaded, setLibsLoaded] = useState(false);
     const [isModelLoading, setIsModelLoading] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [savedModels, setSavedModels] = useState<StoredModel[]>([]);
@@ -68,44 +67,6 @@ export default function SortVisionSettings({
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
-
-    const loadAiLibraries = useCallback(async () => {
-        if (tmImageRef.current && tfRef.current) {
-          addLog("AI libraries already loaded.");
-          setLibsLoaded(true);
-          return true;
-        }
-        addLog("Loading AI libraries...");
-        setAppStatus("LOADING_LIBS");
-        try {
-          const [tm, tf] = await Promise.all([
-            import("@teachablemachine/image"),
-            import("@tensorflow/tfjs"),
-          ]);
-          tmImageRef.current = tm;
-          tfRef.current = tf;
-          addLog("AI libraries loaded successfully.");
-          setAppStatus("AWAITING_MODEL");
-          setLibsLoaded(true);
-          return true;
-        } catch (error: any) {
-          console.error("Failed to load AI libraries:", error);
-          toast({
-            variant: "destructive",
-            title: "Library Load Error",
-            description: "Could not load core AI libraries. Please refresh the page.",
-          });
-          addLog("FATAL: Failed to load AI libraries.");
-          setLibsLoaded(false);
-          return false;
-        }
-      }, [toast, setAppStatus, addLog, tmImageRef, tfRef]);
-
-    useEffect(() => {
-        if(!libsLoaded) {
-            loadAiLibraries();
-        }
-    }, [libsLoaded, loadAiLibraries]);
     
     const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
         setIsModelLoading(true);
@@ -401,14 +362,14 @@ export default function SortVisionSettings({
                 className={cn(
                   "m-4 mt-0 p-4 border-2 border-dashed rounded-lg text-center transition-colors duration-200",
                   isDragging ? "border-primary bg-primary/10" : "border-border",
-                  (isModelLoading || !libsLoaded) && "pointer-events-none opacity-50"
+                  (isModelLoading || !tmImageRef.current) && "pointer-events-none opacity-50"
                 )}
               >
                 <FileUp className="mx-auto h-10 w-10 text-muted-foreground" />
                 <p className="mt-2 text-sm text-muted-foreground">
                   {isModelLoading 
                     ? "Loading model..." 
-                    : !libsLoaded
+                    : !tmImageRef.current
                     ? "Loading AI libs..."
                     : isDragging 
                     ? "Release to upload" 
@@ -419,7 +380,7 @@ export default function SortVisionSettings({
                   variant="link" 
                   className="p-0 h-auto text-sm"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={isModelLoading || !libsLoaded}
+                  disabled={isModelLoading || !tmImageRef.current}
                 >
                   click to browse
                 </Button>
@@ -430,7 +391,7 @@ export default function SortVisionSettings({
                   accept=".zip,model.json,metadata.json,application/octet-stream"
                   multiple
                   onChange={handleFileSelect}
-                  disabled={isModelLoading || !libsLoaded}
+                  disabled={isModelLoading || !tmImageRef.current}
                 />
               </div>
               {modelFiles && (
@@ -464,7 +425,7 @@ export default function SortVisionSettings({
                       <div key={m.name} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
                         <p className="text-sm font-medium truncate" title={m.name}>{m.name}</p>
                         <div className="flex gap-1">
-                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !libsLoaded}>
+                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !tmImageRef.current}>
                             {isModelLoading ? <Loader2 className="animate-spin"/> : <BrainCircuit />}
                           </Button>
                           <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>

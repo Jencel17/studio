@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import type * as tf from "@tensorflow/tfjs";
 
@@ -9,6 +9,7 @@ import SortVisionClient from "@/components/sort-vision-client";
 import SortVisionSettings from "@/components/sort-vision-settings";
 import SplashScreen from "@/components/splash-screen";
 import { AppStatus, LogEntry } from "@/lib/types";
+import { useToast } from "@/hooks/use-toast";
 
 export default function SortVision() {
     const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
@@ -25,6 +26,7 @@ export default function SortVision() {
     
     const tmImageRef = useRef<typeof tmImage | null>(null);
     const tfRef = useRef<typeof tf | null>(null);
+    const { toast } = useToast();
 
     const addLog = useCallback((message: string) => {
         const newLog: LogEntry = {
@@ -33,6 +35,39 @@ export default function SortVision() {
         };
         setLogs((prevLogs) => [...prevLogs, newLog].slice(-100));
     }, []);
+
+    useEffect(() => {
+        const loadAiLibraries = async () => {
+            if (tmImageRef.current && tfRef.current) {
+                addLog("AI libraries already loaded.");
+                setAppStatus("AWAITING_MODEL");
+                return;
+            }
+            addLog("Loading AI libraries...");
+            setAppStatus("LOADING_LIBS");
+            try {
+                const [tm, tfModule] = await Promise.all([
+                    import("@teachablemachine/image"),
+                    import("@tensorflow/tfjs"),
+                ]);
+                tmImageRef.current = tm;
+                tfRef.current = tfModule;
+                addLog("AI libraries loaded successfully.");
+                setAppStatus("AWAITING_MODEL");
+            } catch (error: any) {
+                console.error("Failed to load AI libraries:", error);
+                toast({
+                    variant: "destructive",
+                    title: "Library Load Error",
+                    description: "Could not load core AI libraries. Please refresh the page.",
+                });
+                addLog("FATAL: Failed to load AI libraries.");
+                // We don't change status here, so it remains on the splash screen with an error.
+            }
+        };
+
+        loadAiLibraries();
+    }, [addLog, toast]);
 
     if (appStatus === 'LOADING_LIBS') {
         return <SplashScreen />;
