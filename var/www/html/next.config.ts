@@ -9,10 +9,6 @@ const nextConfig: NextConfig = {
   eslint: {
     ignoreDuringBuilds: true,
   },
-  generateBuildId: async () => {
-    // This allows the service worker to identify the build
-    return 'sort-vision-build';
-  },
   images: {
     remotePatterns: [
       {
