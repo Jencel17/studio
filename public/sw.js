@@ -1,79 +1,94 @@
 
-// Choose a cache name
-const CACHE_NAME = 'sort-vision-cache-v1';
-// List of files to cache
+// This is a basic service worker that enables offline functionality.
+// It uses a "cache-first" strategy.
+
+const CACHE_NAME = `sortvision-cache-v1-${new Date().getTime()}`;
+const OFFLINE_URL = '/offline';
+
+// A list of assets to cache on install
 const urlsToCache = [
   '/',
+  OFFLINE_URL,
   '/manifest.json',
   '/icon-192x192.png',
   '/icon-512x512.png',
-  '/offline',
 ];
 
-// Install a service worker
-self.addEventListener('install', event => {
-  // Perform install steps
-  event.waitUntil(
-    caches.open(CACHE_NAME)
-      .then(function(cache) {
-        console.log('Opened cache');
-        return cache.addAll(urlsToCache);
+// This is where the build manifest will be injected by a script.
+// We'll leave it empty here. The build process should handle populating this.
+// For now, we will rely on caching discovered assets during the fetch event.
+
+self.addEventListener('install', (event) => {
+  console.log('[Service Worker] Install');
+  event.waitUntil((async () => {
+    try {
+      const cache = await caches.open(CACHE_NAME);
+      console.log('[Service Worker] Caching all: app shell and content');
+      await cache.addAll(urlsToCache);
+    } catch(error) {
+      console.error('[Service Worker] Pre-caching failed:', error);
+    }
+  })());
+});
+
+self.addEventListener('activate', (event) => {
+  console.log('[Service Worker] Activate');
+  event.waitUntil((async () => {
+    // Enable navigation preloading if it's supported.
+    // See https://developers.google.com/web/updates/2017/02/navigation-preload
+    if ('navigationPreload' in self.registration) {
+      await self.registration.navigationPreload.enable();
+    }
+    
+    // Clean up old caches
+    const cacheWhitelist = [CACHE_NAME];
+    const cacheNames = await caches.keys();
+    await Promise.all(
+      cacheNames.map((cacheName) => {
+        if (cacheWhitelist.indexOf(cacheName) === -1) {
+          console.log('[Service Worker] Deleting old cache:', cacheName);
+          return caches.delete(cacheName);
+        }
       })
-  );
-});
-
-// Cache and return requests
-self.addEventListener('fetch', event => {
-    event.respondWith(
-        caches.match(event.request)
-        .then(function(response) {
-            // Cache hit - return response
-            if (response) {
-                return response;
-            }
-
-            return fetch(event.request).then(
-                function(response) {
-                    // Check if we received a valid response
-                    if(!response || response.status !== 200 || response.type !== 'basic') {
-                        return response;
-                    }
-
-                    // IMPORTANT: Clone the response. A response is a stream
-                    // and because we want the browser to consume the response
-                    // as well as the cache consuming the response, we need
-                    // to clone it so we have two streams.
-                    var responseToCache = response.clone();
-
-                    caches.open(CACHE_NAME)
-                        .then(function(cache) {
-                            cache.put(event.request, responseToCache);
-                        });
-
-                    return response;
-                }
-            );
-        }).catch(function() {
-            // If the fetch fails, and it's a navigation request, serve the offline page.
-            if (event.request.mode === 'navigate') {
-                return caches.match('/offline');
-            }
-        })
     );
+  })());
 });
 
-// Update a service worker
-self.addEventListener('activate', event => {
-  var cacheWhitelist = [CACHE_NAME];
-  event.waitUntil(
-    caches.keys().then(cacheNames => {
-      return Promise.all(
-        cacheNames.map(cacheName => {
-          if (cacheWhitelist.indexOf(cacheName) === -1) {
-            return caches.delete(cacheName);
-          }
-        })
-      );
-    })
-  );
+self.addEventListener('fetch', (event) => {
+  // We only want to intercept navigation requests, and requests for our own assets.
+  if (event.request.mode !== 'navigate' && !event.request.url.startsWith(self.location.origin)) {
+    return;
+  }
+
+  event.respondWith((async () => {
+    try {
+      const cache = await caches.open(CACHE_NAME);
+      const cachedResponse = await cache.match(event.request);
+      
+      // If it's in the cache, serve it (Cache-First).
+      if (cachedResponse) {
+        // console.log('[Service Worker] Returning from cache:', event.request.url);
+        return cachedResponse;
+      }
+      
+      // If it's not in the cache, try the network.
+      // console.log('[Service Worker] Not in cache, fetching:', event.request.url);
+      const networkResponse = await fetch(event.request);
+
+      // If the network request is successful, cache it for next time.
+      if (networkResponse.ok) {
+        // console.log('[Service Worker] Caching new resource:', event.request.url);
+        await cache.put(event.request, networkResponse.clone());
+      }
+      
+      return networkResponse;
+    } catch (error) {
+      // The network failed.
+      console.error('[Service Worker] Fetch failed; returning offline page instead.', error);
+
+      const cache = await caches.open(CACHE_NAME);
+      const cachedResponse = await cache.match(OFFLINE_URL);
+      return cachedResponse;
+    }
+  })());
 });
