@@ -178,52 +178,53 @@ export default function SortVisionClient({
 
   const { toast } = useToast();
 
-    const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
-    if (!options.silent) {
-        addLog(`Sending ${command} command to SW proxy...`);
-    }
+  const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
+      if (!options.silent) {
+          addLog(`Sending ${command} command to API proxy...`);
+      }
+      try {
+          const response = await fetch('/api/esp32', {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+              },
+              body: JSON.stringify({
+                  ip: esp32Ip,
+                  command,
+                  params,
+              }),
+          });
 
-    const queryParams = new URLSearchParams(params).toString();
-    // Use a special path that the service worker will intercept.
-    const proxyUrl = `/api/esp32-proxy/${command}?${queryParams}`;
-    
-    try {
-        const response = await fetch(proxyUrl, {
-            headers: {
-                // Custom header to pass the target IP to the service worker.
-                'X-Target-IP': esp32Ip
-            }
-        });
+          const result = await response.json();
 
-        const resultText = await response.text();
-
-        if (response.ok) {
-            if (!options.silent) {
-                addLog(`SW Proxy success: ${resultText}`);
-            }
-            return resultText; // Return the body of the response from ESP
-        } else {
-            if (!options.silent) {
-                addLog(`SW Proxy Error: ${resultText}`);
-                toast({
-                    variant: "destructive",
-                    title: "ESP32 Command Failed",
-                    description: resultText || "The service worker proxy could not reach the ESP32.",
-                });
-            }
-            return null;
-        }
-    } catch (error: any) {
-        if (!options.silent) {
-            addLog(`Failed to send command to SW proxy: ${error.message}`);
-            toast({
-                variant: "destructive",
-                title: "Service Worker Error",
-                description: "Could not send command via Service Worker. Is it registered?",
-            });
-        }
-        return null;
-    }
+          if (response.ok) {
+              if (!options.silent) {
+                  addLog(`API Proxy success: ${result.message}`);
+              }
+              // The actual text response from the ESP32 might be in the message property
+              return result.message || 'OK';
+          } else {
+              if (!options.silent) {
+                  addLog(`API Proxy Error: ${result.error}`);
+                  toast({
+                      variant: "destructive",
+                      title: "ESP32 Command Failed",
+                      description: result.error || "The API proxy could not reach the ESP32.",
+                  });
+              }
+              return null;
+          }
+      } catch (error: any) {
+          if (!options.silent) {
+              addLog(`Failed to send command to API proxy: ${error.message}`);
+              toast({
+                  variant: "destructive",
+                  title: "API Proxy Error",
+                  description: "Could not send command. Check network and server logs.",
+              });
+          }
+          return null;
+      }
   }, [esp32Ip, addLog, toast]);
 
     const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
