@@ -636,23 +636,27 @@ const toggleFocus = useCallback(async () => {
         timer = setTimeout(() => setCountdown(countdown - 1), 1000);
     } else if (isCollectingImages && countdown === 0) {
         const captureInterval = setInterval(() => {
+            if (!videoRef.current) {
+                clearInterval(captureInterval);
+                return;
+            }
+
+            const canvas = document.createElement('canvas');
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+            const ctx = canvas.getContext('2d');
+            let dataUri: string | null = null;
+            if (ctx) {
+                ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                dataUri = canvas.toDataURL('image/jpeg');
+            }
+
             setCollectedImages(prev => {
                 if (prev.length >= IMAGE_CAPTURE_COUNT) {
                     clearInterval(captureInterval);
                     return prev;
                 }
-                if (!videoRef.current) {
-                    clearInterval(captureInterval);
-                    return prev;
-                }
-
-                const canvas = document.createElement('canvas');
-                canvas.width = videoRef.current.videoWidth;
-                canvas.height = videoRef.current.videoHeight;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-                    const dataUri = canvas.toDataURL('image/jpeg');
+                if (dataUri) {
                     addLog(`Captured image ${prev.length + 1}/${IMAGE_CAPTURE_COUNT}`);
                     return [...prev, dataUri];
                 }
@@ -1144,6 +1148,8 @@ a.click();
       </Card>
   );
 }
+
+    
 
     
 
