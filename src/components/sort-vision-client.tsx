@@ -51,7 +51,7 @@ interface SortVisionClientProps {
     tmImageRef: MutableRefObject<typeof tmImage | null>;
     tfRef: MutableRefObject<typeof tf | null>;
     logs: LogEntry[];
-    setLogs: (logs: LogEntry[]) => void;
+    setLogs: (logs: Prediction[]) => void;
     addLog: (message: string) => void;
 }
 
@@ -604,7 +604,7 @@ const toggleFocus = useCallback(async () => {
           ambiguousDetectionTimer.current = null;
         }, AUTO_CAPTURE_TRIGGER_TIME);
       }
-    } else {
+    } else if (newAppStatus !== 'CONFIDENCE_TOO_LOW') { // Check if not uncertain
       if (ambiguousDetectionTimer.current) {
         addLog("Detection became clear or changed state. Cancelling auto-capture trigger.");
         clearTimeout(ambiguousDetectionTimer.current);
@@ -1114,9 +1114,6 @@ a.click();
                            <Switch id="auto-scroll" checked={isAutoScrollOn} onCheckedChange={setIsAutoScrollOn} />
                            <Label htmlFor="auto-scroll" className="text-xs">Auto-scroll</Label>
                         </div>
-                        <Button variant="outline" onClick={() => setIsConsoleFullscreen(!isConsoleFullscreen)} size="icon">
-                            {isConsoleFullscreen ? <Minimize /> : <Expand />}
-                        </Button>
                         <Button variant="outline" onClick={() => setLogs([])}>Clear Logs</Button>
                     </div>
                 </AccordionContent>
@@ -1147,3 +1144,5 @@ a.click();
       </Card>
   );
 }
+
+    
