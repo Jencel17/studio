@@ -16,7 +16,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, Wifi, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles, Lock, Unlock, WifiOff } from "lucide-react";
+import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles, Lock, Unlock, Bluetooth, BluetoothConnected, BluetoothSearching, BluetoothOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { handleModelSwapCheck } from "@/app/actions/model-analysis";
 import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
@@ -28,6 +28,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { AppStatus, LogEntry, Prediction } from "@/lib/types";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
+import { commandCharacteristic, sendCommand as sendBluetoothCommand, subscribeToNotifications } from "@/lib/bluetooth";
 
 
 type CommandStatus = {
@@ -41,7 +42,6 @@ interface SortVisionClientProps {
     model: tmImage.CustomMobileNet | null;
     appStatus: AppStatus;
     setAppStatus: (status: AppStatus) => void;
-    esp32Ip: string;
     isTestMode: boolean;
     wakeLockEnabled: boolean;
     autoCaptureEnabled: boolean;
@@ -62,8 +62,6 @@ const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
 const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
 const AUTO_CAPTURE_COOLDOWN_TIME = 5000;
-const AUTO_SORT_COOLDOWN_TIME = 3000;
-const PING_INTERVAL = 3000;
 const CAMERA_WARMUP_DELAY = 3000;
 
 const interpretDetectionsLocal = (
@@ -141,7 +139,6 @@ export default function SortVisionClient({
     model,
     appStatus,
     setAppStatus,
-    esp32Ip,
     isTestMode,
     wakeLockEnabled,
     autoCaptureEnabled,
@@ -169,7 +166,7 @@ export default function SortVisionClient({
   const [countdown, setCountdown] = useState(0);
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [wakeLockRef, setWakeLockRef] = useState<WakeLockSentinel | null>(null);
-  const [isEspConnected, setIsEspConnected] = useState(false);
+  const [isBtConnected, setIsBtConnected] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -179,64 +176,25 @@ export default function SortVisionClient({
 
   const { toast } = useToast();
 
-  const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
-        if (!options.silent) {
-            addLog(`Sending ${command} command to SW proxy...`);
-        }
-        
-        const queryParams = new URLSearchParams(params).toString();
-        // This is a "fake" path that the service worker will intercept.
-        const proxyUrl = `/api/esp32-proxy/${command}?${queryParams}`;
-
-        try {
-            const response = await fetch(proxyUrl, {
-                headers: {
-                    // Pass the target IP to the service worker
-                    'X-Target-IP': esp32Ip
-                }
-            });
-
-            const resultText = await response.text();
-
-            if (response.ok) {
-                if (!options.silent) {
-                    addLog(`SW Proxy success: ${resultText}`);
-                }
-                return resultText; // Return the raw text response from the ESP32
-            } else {
-                 const errorMsg = `SW Proxy Error: ${resultText || `ESP32 responded with status ${response.status}`}`;
-                 if (!options.silent) {
-                    addLog(errorMsg);
-                    toast({
-                        variant: "destructive",
-                        title: "ESP32 Command Failed",
-                        description: resultText || "Proxy could not reach the ESP32.",
-                    });
-                }
-                return null;
-            }
-        } catch (error: any) {
-            const errorMsg = `SW proxy failed to fetch: ${error.message}`;
-            if (!options.silent) {
-                addLog(errorMsg);
-                toast({
-                    variant: "destructive",
-                    title: "Service Worker Error",
-                    description: "Failed to send command. Check connection and SW logs.",
-                });
-            }
-            return null;
-        }
-  }, [esp32Ip, addLog, toast]);
-
     const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
         if (isTestMode) {
           addLog(`TEST MODE: Simulating light ${state} command.`);
           return true;
         }
-        const result = await sendCommandViaProxy('light', { state });
-        return result !== null;
-    }, [isTestMode, sendCommandViaProxy, addLog]);
+        try {
+            await sendBluetoothCommand(`LIGHT_${state}`);
+            addLog(`Sent command: LIGHT_${state}`);
+            return true;
+        } catch (error: any) {
+            addLog(`Error sending light command: ${error.message}`);
+            toast({
+                variant: 'destructive',
+                title: 'Bluetooth Error',
+                description: 'Failed to send light command.'
+            });
+            return false;
+        }
+    }, [isTestMode, addLog, toast]);
 
   
   const startImageCollection = useCallback(async () => {
@@ -492,21 +450,27 @@ const toggleFocus = useCallback(async () => {
       addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
       setCommandStatus({ status: "SUCCESS", message: `Test: Sorted ${classificationLabel}` });
       toast({ title: "Command Sent (Test Mode)", description: `Simulated sort for: ${classificationLabel}` });
-      return "OK";
+      return true;
+    }
+
+    if (!isBtConnected) {
+        addLog("Cannot send sort command: Bluetooth not connected.");
+        toast({ variant: "destructive", title: "Bluetooth Error", description: "Sorter not connected." });
+        return false;
     }
     
-    const result = await sendCommandViaProxy('sort', { class: classificationLabel.toUpperCase() });
-    
-    if (result !== null) {
-      setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
-      toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
-    } else {
-      const errorText = `Error: Failed to send sort command for ${classificationLabel}`;
-      setCommandStatus({ status: "ERROR", message: errorText });
-      toast({ variant: "destructive", title: "ESP32 Error", description: `Could not send command.` });
+    try {
+        await sendBluetoothCommand(classificationLabel.toUpperCase());
+        setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
+        toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}`});
+        return true;
+    } catch (error: any) {
+        addLog(`Error sending sort command: ${error.message}`);
+        setCommandStatus({ status: "ERROR", message: `Error: ${error.message}` });
+        toast({ variant: "destructive", title: "Bluetooth Error", description: `Could not send command.` });
+        return false;
     }
-    return result;
-  }, [addLog, toast, isTestMode, sendCommandViaProxy]);
+  }, [addLog, toast, isTestMode, isBtConnected]);
 
  const handleSortAndRestart = useCallback(async (classification: string) => {
     const flashState = isFlashOn;
@@ -523,22 +487,20 @@ const toggleFocus = useCallback(async () => {
     let sortSuccess = false;
     if (classification !== "RESTART_NO_SORT") {
         addLog(`Sending command for ${classification}...`);
-        const result = await sendSortCommand(classification);
-        sortSuccess = result !== null;
+        sortSuccess = await sendSortCommand(classification);
     } else {
         sortSuccess = true; // No sort needed, so we can proceed
     }
     
     if (sortSuccess) {
       addLog("Sort command acknowledged. Restarting camera.");
-      setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
     } else {
-      addLog("Sort command failed. Restarting camera immediately.");
-      setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
+      addLog("Sort command failed. Restarting camera anyway.");
     }
+    setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
 
 
-}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, sendCommandViaProxy, cameraRestartDelay]);
+}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, cameraRestartDelay]);
 
  const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
@@ -844,20 +806,25 @@ a.click();
   }, [lastClassifications, toast, addLog, model]);
 
   useEffect(() => {
-    const pingEsp = async () => {
-        if (isTestMode) {
-            setIsEspConnected(true);
-            return;
-        }
-        const result = await sendCommandViaProxy('ping', {}, { silent: true });
-        setIsEspConnected(result?.includes('pong') ?? false);
+    const onConnected = () => {
+        addLog("Bluetooth device connected.");
+        setIsBtConnected(true);
+        // Subscribe to status updates from sorter
+        subscribeToNotifications(addLog);
     };
+    const onDisconnected = () => {
+        addLog("Bluetooth device disconnected.");
+        setIsBtConnected(false);
+    };
+    
+    window.addEventListener('bt-connected', onConnected);
+    window.addEventListener('bt-disconnected', onDisconnected);
 
-    pingEsp(); // Initial ping
-    const interval = setInterval(pingEsp, PING_INTERVAL); // Periodic ping
-
-    return () => clearInterval(interval);
-  }, [sendCommandViaProxy, isTestMode]);
+    return () => {
+        window.removeEventListener('bt-connected', onConnected);
+        window.removeEventListener('bt-disconnected', onDisconnected);
+    }
+  }, [addLog]);
   
   const StatusDisplay = () => {
     const getStatusText = () => {
@@ -902,9 +869,9 @@ a.click();
                     {appStatus === 'ANALYZING_MATERIAL' && <Sparkles className="h-3 w-3 mr-1 animate-pulse" />}
                     {getStatusText()}
                 </Badge>
-                <Badge variant={isTestMode ? "default" : isEspConnected ? "default" : "destructive"} className="gap-2 text-xs">
-                    {isTestMode ? <TestTube className="h-3 w-3" /> : isEspConnected ? <Wifi className="h-3 w-3"/> : <WifiOff className="h-3 w-3" />}
-                    {isTestMode ? "Test Mode" : isEspConnected ? "ESP32 Connected" : "ESP32 Disconnected"}
+                <Badge variant={isTestMode ? "default" : isBtConnected ? "default" : "destructive"} className="gap-2 text-xs">
+                    {isTestMode ? <TestTube className="h-3 w-3" /> : isBtConnected ? <BluetoothConnected className="h-3 w-3"/> : <BluetoothOff className="h-3 w-3" />}
+                    {isTestMode ? "Test Mode" : isBtConnected ? "Sorter Connected" : "Sorter Disconnected"}
                 </Badge>
             </div>
              <div className="flex items-center gap-2 text-xs text-muted-foreground">

@@ -14,9 +14,10 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer, Flashlight, RefreshCw, Zap } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, BluetoothSearching } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
+import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected } from "@/lib/bluetooth";
 
 interface SortVisionSettingsProps {
     model: tmImage.CustomMobileNet | null;
@@ -24,8 +25,6 @@ interface SortVisionSettingsProps {
     setAppStatus: (status: AppStatus) => void;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
     tfRef: MutableRefObject<typeof tf | null>;
-    esp32Ip: string;
-    setEsp32Ip: (ip: string) => void;
     isTestMode: boolean;
     setIsTestMode: (isTest: boolean) => void;
     wakeLockEnabled: boolean;
@@ -47,8 +46,6 @@ export default function SortVisionSettings({
     setAppStatus,
     tmImageRef,
     tfRef,
-    esp32Ip,
-    setEsp32Ip,
     isTestMode,
     setIsTestMode,
     wakeLockEnabled,
@@ -68,6 +65,8 @@ export default function SortVisionSettings({
     const [savedModels, setSavedModels] = useState<StoredModel[]>([]);
     const [newModelName, setNewModelName] = useState("");
     const [modelFiles, setModelFiles] = useState<{ model: File; metadata: File; weights: File } | null>(null);
+    const [isConnecting, setIsConnecting] = useState(false);
+    const [isBtConnected, setIsBtConnected] = useState(isConnected());
 
     const fileInputRef = useRef<HTMLInputElement>(null);
     const { toast } = useToast();
@@ -346,6 +345,48 @@ export default function SortVisionSettings({
         }
     };
 
+    const handleBluetoothConnect = async () => {
+        if (!navigator.bluetooth) {
+            addLog("Web Bluetooth API not available in this browser.");
+            toast({ variant: "destructive", title: "Unsupported Browser", description: "Web Bluetooth is not available." });
+            return;
+        }
+
+        setIsConnecting(true);
+        try {
+            await connectToBluetoothDevice();
+            addLog("Successfully connected to Bluetooth device.");
+            toast({ title: "Connected", description: "Sorter is now connected."});
+            setIsBtConnected(true);
+        } catch (error: any) {
+            addLog(`Bluetooth connection failed: ${error.message}`);
+            toast({ variant: "destructive", title: "Connection Failed", description: error.message });
+            setIsBtConnected(false);
+        } finally {
+            setIsConnecting(false);
+        }
+    };
+
+    const handleBluetoothDisconnect = () => {
+        disconnectFromBluetoothDevice();
+        addLog("Disconnected from Bluetooth device.");
+        toast({ title: "Disconnected", description: "Sorter is now disconnected."});
+        setIsBtConnected(false);
+    };
+
+    useEffect(() => {
+        const onConnected = () => setIsBtConnected(true);
+        const onDisconnected = () => setIsBtConnected(false);
+        
+        window.addEventListener('bt-connected', onConnected);
+        window.addEventListener('bt-disconnected', onDisconnected);
+
+        return () => {
+            window.removeEventListener('bt-connected', onConnected);
+            window.removeEventListener('bt-disconnected', onDisconnected);
+        }
+    }, []);
+
 
     return (
       <Sidebar>
@@ -357,6 +398,27 @@ export default function SortVisionSettings({
         </SidebarHeader>
         <SidebarContent className="p-0">
           <ScrollArea className="h-full">
+            <SidebarGroup>
+                <SidebarGroupLabel>Sorter Connection</SidebarGroupLabel>
+                <div className="p-4 space-y-4">
+                    {isBtConnected ? (
+                        <Button onClick={handleBluetoothDisconnect} className="w-full">
+                            <BluetoothConnected className="mr-2 h-4 w-4" />
+                            Disconnect Sorter
+                        </Button>
+                    ) : (
+                        <Button onClick={handleBluetoothConnect} className="w-full" disabled={isConnecting}>
+                            {isConnecting ? (
+                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                            ) : (
+                                <Bluetooth className="mr-2 h-4 w-4" />
+                            )}
+                            Connect to Sorter
+                        </Button>
+                    )}
+                </div>
+            </SidebarGroup>
+
             <SidebarGroup>
               <SidebarGroupLabel>Teachable Machine Model</SidebarGroupLabel>
               <div 
@@ -513,15 +575,8 @@ export default function SortVisionSettings({
 
             <SidebarGroup>
               <SidebarGroupLabel>Network Settings</SidebarGroupLabel>
-              <div className="space-y-2 p-4">
-                <Label htmlFor="esp32-ip">ESP32 IP Address</Label>
-                <Input
-                  id="esp32-ip"
-                  value={esp32Ip}
-                  onChange={(e) => setEsp32Ip(e.target.value)}
-                  placeholder="e.g., http://192.168.4.1"
-                  disabled={isTestMode}
-                />
+              <div className="space-y-2 p-4 text-xs text-muted-foreground">
+                <p>IP Address settings have been removed. The app now uses Bluetooth to connect to the sorter.</p>
               </div>
             </SidebarGroup>
           </ScrollArea>

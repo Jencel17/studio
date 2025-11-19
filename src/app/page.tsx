@@ -15,7 +15,6 @@ export default function SortVision() {
     const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
     
-    const [esp32Ip, setEsp32Ip] = useState("http://192.168.4.1");
     const [isTestMode, setIsTestMode] = useState(false);
     const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
     const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
@@ -82,8 +81,6 @@ export default function SortVision() {
         setAppStatus={setAppStatus}
         tmImageRef={tmImageRef}
         tfRef={tfRef}
-        esp32Ip={esp32Ip}
-        setEsp32Ip={setEsp32Ip}
         isTestMode={isTestMode}
         setIsTestMode={setIsTestMode}
         wakeLockEnabled={wakeLockEnabled}
@@ -104,7 +101,6 @@ export default function SortVision() {
           model={model}
           appStatus={appStatus}
           setAppStatus={setAppStatus}
-          esp32Ip={esp32Ip}
           isTestMode={isTestMode}
           wakeLockEnabled={wakeLockEnabled}
           autoCaptureEnabled={autoCaptureEnabled}
