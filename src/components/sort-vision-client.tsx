@@ -167,6 +167,7 @@ export default function SortVisionClient({
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [wakeLockRef, setWakeLockRef] = useState<WakeLockSentinel | null>(null);
   const [isBtConnected, setIsBtConnected] = useState(false);
+  const [isProcessingSort, setIsProcessingSort] = useState(false);
   
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
@@ -330,6 +331,9 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
                 video.play().then(async () => {
                     setIsCameraOn(true);
                     addLog("Camera started successfully. Warming up...");
+
+                    // After starting camera, release the processing lock.
+                    setIsProcessingSort(false);
 
                     await applyCameraSettings(stream, {
                         flash: options.restoreFlash ?? isFlashOn,
@@ -503,7 +507,7 @@ const toggleFocus = useCallback(async () => {
 }, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, cameraRestartDelay]);
 
  const runClassification = useCallback(async () => {
-    if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
+    if (isProcessingSort || !isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
       return;
     }
   
@@ -530,6 +534,7 @@ const toggleFocus = useCallback(async () => {
     if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
       const foundPrediction = filteredPredictions.find(p => p.className === localResult.primaryObject);
       if (foundPrediction) {
+          setIsProcessingSort(true); // Set the lock
           setPrimaryPrediction(foundPrediction);
           setLastClassifications(prev => [...prev, foundPrediction]);
           
@@ -606,7 +611,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn]);
+  }, [isProcessingSort, isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn]);
 
   useEffect(() => {
     return () => {
