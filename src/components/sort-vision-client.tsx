@@ -63,7 +63,7 @@ const CAPTURE_COUNTDOWN_SECONDS = 3;
 const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
 const AUTO_CAPTURE_COOLDOWN_TIME = 5000;
 const CAMERA_WARMUP_DELAY = 3000;
-const DETECTION_SETTLE_DELAY = 1500; // New: Delay to wait for a stable detection
+const DETECTION_SETTLE_DELAY = 1500;
 
 const interpretDetectionsLocal = (
   predictions: Prediction[],
@@ -168,7 +168,6 @@ export default function SortVisionClient({
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [wakeLockRef, setWakeLockRef] = useState<WakeLockSentinel | null>(null);
   const [isBtConnected, setIsBtConnected] = useState(false);
-  const [isProcessingSort, setIsProcessingSort] = useState(false);
   const [stablePrediction, setStablePrediction] = useState<Prediction | null>(null);
 
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -339,9 +338,6 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
                 video.play().then(async () => {
                     setIsCameraOn(true);
                     addLog("Camera started successfully. Warming up...");
-
-                    // After starting camera, release the processing lock.
-                    setIsProcessingSort(false);
 
                     await applyCameraSettings(stream, {
                         flash: options.restoreFlash ?? isFlashOn,
@@ -515,7 +511,7 @@ const toggleFocus = useCallback(async () => {
 }, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, cameraRestartDelay]);
 
  const runClassification = useCallback(async () => {
-    if (isProcessingSort || !isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
+    if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
       return;
     }
   
@@ -542,7 +538,6 @@ const toggleFocus = useCallback(async () => {
     if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
       const foundPrediction = filteredPredictions.find(p => p.className === localResult.primaryObject);
 
-      // New: Logic for stable detection
       if (foundPrediction) {
         if (!stablePrediction || stablePrediction.className !== foundPrediction.className) {
           // New prediction or different prediction, start the timer
@@ -553,8 +548,7 @@ const toggleFocus = useCallback(async () => {
             // Timer completed, this is a stable detection
             addLog(`Stable detection of ${foundPrediction.className}. Proceeding to sort.`);
             
-            // Lock processing and stop the detection loop
-            setIsProcessingSort(true); 
+            // This is the critical step: Stop the prediction loop immediately.
             if (predictionIntervalRef.current) {
               clearInterval(predictionIntervalRef.current);
               predictionIntervalRef.current = undefined;
@@ -601,8 +595,6 @@ const toggleFocus = useCallback(async () => {
           }, DETECTION_SETTLE_DELAY);
 
         }
-        // If prediction is the same, do nothing, just let the timer run.
-
       }
     } else {
       // Not a single object, so reset the stability timer and prediction
@@ -638,7 +630,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isProcessingSort, isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction]);
 
   useEffect(() => {
     return () => {
@@ -646,6 +638,7 @@ const toggleFocus = useCallback(async () => {
         stopCamera();
       }
     };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const toggleCamera = () => {
