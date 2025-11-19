@@ -1,4 +1,5 @@
 
+
 // UUIDs for the Bluetooth service and characteristic
 // These MUST match the UUIDs programmed into your ESP32 Arduino sketch
 const SORTER_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
@@ -34,10 +35,12 @@ async function processCommandQueue() {
             // Optionally, re-queue the command or handle the error
         }
     }
-
-    isProcessingQueue = false;
-    // Process the next command in the queue
-    process.nextTick(processCommandQueue);
+    
+    // Use a short delay before processing the next command to prevent overwhelming the device
+    setTimeout(() => {
+        isProcessingQueue = false;
+        processCommandQueue();
+    }, 100);
 }
 
 export function isConnected(): boolean {
@@ -126,8 +129,8 @@ export function disconnectFromBluetoothDevice() {
 
 // Function to send a command to the ESP32 by adding it to the queue
 export async function sendCommand(command: string) {
-    if (!commandCharacteristic) {
-        throw new Error("Not connected to a device or command characteristic not found.");
+    if (!isConnected()) {
+        throw new Error("Not connected to a device.");
     }
     commandQueue.push(command);
     processCommandQueue();
