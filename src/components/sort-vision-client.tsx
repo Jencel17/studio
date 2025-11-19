@@ -534,55 +534,58 @@ const toggleFocus = useCallback(async () => {
     if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
       const foundPrediction = filteredPredictions.find(p => p.className === localResult.primaryObject);
       if (foundPrediction) {
-          setIsProcessingSort(true); // Set the lock
+          setIsProcessingSort(true); // Set the lock immediately
+          
+          if (predictionIntervalRef.current) {
+            clearInterval(predictionIntervalRef.current);
+            predictionIntervalRef.current = undefined;
+            addLog("Detection loop stopped for sorting.");
+          }
+          
           setPrimaryPrediction(foundPrediction);
           setLastClassifications(prev => [...prev, foundPrediction]);
           
           if(autoSortEnabled) {
             addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sorting.`);
-            handleSortAndRestart(foundPrediction.className);
-            return;
-          }
-
-          newAppStatus = "READY_TO_SEND";
-          setAppStatus(newAppStatus);
-          
-          if (predictionIntervalRef.current) {
-            clearInterval(predictionIntervalRef.current);
-            predictionIntervalRef.current = undefined;
-          }
-
-          if (!autoFlashEnabled) {
-              addLog(`Auto-flash disabled. Sorting directly: ${foundPrediction.className}.`);
-              handleSortAndRestart(foundPrediction.className);
-              return;
-          }
-
-          addLog(`Initial detection: ${foundPrediction.className}. Turning on light for final check.`);
-          await sendLightCommand('ON');
-          
-          setTimeout(async () => {
-            if (!videoRef.current) { 
-                if (isFlashOn) {
-                    await sendLightCommand('OFF');
-                }
+            
+            if (!autoFlashEnabled) {
+                addLog(`Auto-flash disabled. Sorting directly: ${foundPrediction.className}.`);
+                handleSortAndRestart(foundPrediction.className);
                 return;
             }
-            addLog("Re-classifying with light on...");
-            const finalPredictions = await model.predict(video);
-            const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
-            const finalResult = interpretDetectionsLocal(finalFiltered, CONFIDENCE_THRESHOLD);
 
-            if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
-                addLog(`Final confirmation: ${finalResult.primaryObject}. Sorting.`);
-                handleSortAndRestart(finalResult.primaryObject);
-            } else {
-                addLog(`Final check failed. Result: ${finalResult.detectionState}. Restarting camera.`);
-                handleSortAndRestart("RESTART_NO_SORT");
-            }
-          }, 500);
+            addLog(`Initial detection: ${foundPrediction.className}. Turning on light for final check.`);
+            await sendLightCommand('ON');
+            
+            setTimeout(async () => {
+              if (!videoRef.current) { 
+                  if (isFlashOn) {
+                      await sendLightCommand('OFF');
+                  }
+                  handleSortAndRestart("RESTART_NO_SORT"); // Restart if video is lost
+                  return;
+              }
+              addLog("Re-classifying with light on...");
+              const finalPredictions = await model.predict(videoRef.current);
+              const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
+              const finalResult = interpretDetectionsLocal(finalFiltered, CONFIDENCE_THRESHOLD);
 
+              if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
+                  addLog(`Final confirmation: ${finalResult.primaryObject}. Sorting.`);
+                  handleSortAndRestart(finalResult.primaryObject);
+              } else {
+                  addLog(`Final check failed. Result: ${finalResult.detectionState}. Restarting camera.`);
+                  handleSortAndRestart("RESTART_NO_SORT");
+              }
+            }, 500); // Wait 500ms for light to turn on and camera to adjust
 
+          } else {
+            // Manual sort mode
+            setAppStatus("READY_TO_SEND");
+            addLog(`Manual Sort: Detected ${foundPrediction.className}. Ready to send command.`);
+            // In manual mode, we wait for user interaction, so we don't call handleSortAndRestart here.
+            // The lock will be released when the camera is restarted.
+          }
       } else {
         setPrimaryPrediction(null);
       }
@@ -604,7 +607,7 @@ const toggleFocus = useCallback(async () => {
           ambiguousDetectionTimer.current = null;
         }, AUTO_CAPTURE_TRIGGER_TIME);
       }
-    } else if (newAppStatus !== 'CONFIDENCE_TOO_LOW') { // Check if not uncertain
+    } else if (newAppStatus !== 'CONFIDENCE_TOO_LOW') {
       if (ambiguousDetectionTimer.current) {
         addLog("Detection became clear or changed state. Cancelling auto-capture trigger.");
         clearTimeout(ambiguousDetectionTimer.current);
@@ -636,27 +639,25 @@ const toggleFocus = useCallback(async () => {
         timer = setTimeout(() => setCountdown(countdown - 1), 1000);
     } else if (isCollectingImages && countdown === 0) {
         const captureInterval = setInterval(() => {
-            setCollectedImages(prev => {
-                if (prev.length >= IMAGE_CAPTURE_COUNT) {
-                    clearInterval(captureInterval);
-                    return prev;
-                }
-                if (!videoRef.current) {
-                    clearInterval(captureInterval);
-                    return prev;
-                }
-
-                const canvas = document.createElement('canvas');
-                canvas.width = videoRef.current.videoWidth;
-                canvas.height = videoRef.current.videoHeight;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-                    const dataUri = canvas.toDataURL('image/jpeg');
-                    return [...prev, dataUri];
-                }
-                return prev;
-            });
+            if (!videoRef.current) {
+                clearInterval(captureInterval);
+                return;
+            }
+            const canvas = document.createElement('canvas');
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
+                const dataUri = canvas.toDataURL('image/jpeg');
+                setCollectedImages(prev => {
+                    const newImages = [...prev, dataUri];
+                     if (newImages.length >= IMAGE_CAPTURE_COUNT) {
+                        clearInterval(captureInterval);
+                    }
+                    return newImages;
+                });
+            }
         }, IMAGE_CAPTURE_INTERVAL);
         return () => clearInterval(captureInterval);
     }
@@ -1150,6 +1151,8 @@ a.click();
       </Card>
   );
 }
+
+    
 
     
 
