@@ -180,46 +180,46 @@ export default function SortVisionClient({
 
     const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
     if (!options.silent) {
-        addLog(`Sending ${command} command to proxy...`);
+        addLog(`Sending ${command} command to SW proxy...`);
     }
+
+    const queryParams = new URLSearchParams(params).toString();
+    // Use a special path that the service worker will intercept.
+    const proxyUrl = `/api/esp32-proxy/${command}?${queryParams}`;
+    
     try {
-      const response = await fetch('/api/esp32', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ip: esp32Ip,
-          command,
-          params,
-        }),
-      });
+        const response = await fetch(proxyUrl, {
+            headers: {
+                // Custom header to pass the target IP to the service worker.
+                'X-Target-IP': esp32Ip
+            }
+        });
 
-      const result = await response.json();
+        const resultText = await response.text();
 
-      if (response.ok) {
-        if (!options.silent) {
-            addLog(`Proxy success: ${result.message}`);
+        if (response.ok) {
+            if (!options.silent) {
+                addLog(`SW Proxy success: ${resultText}`);
+            }
+            return resultText; // Return the body of the response from ESP
+        } else {
+            if (!options.silent) {
+                addLog(`SW Proxy Error: ${resultText}`);
+                toast({
+                    variant: "destructive",
+                    title: "ESP32 Command Failed",
+                    description: resultText || "The service worker proxy could not reach the ESP32.",
+                });
+            }
+            return null;
         }
-        return result.message; // Return the body of the response from ESP
-      } else {
-        if (!options.silent) {
-            addLog(`Proxy Error: ${result.error}`);
-            toast({
-                variant: "destructive",
-                title: "ESP32 Command Failed",
-                description: result.error || "The server proxy could not reach the ESP32.",
-            });
-        }
-        return null;
-      }
     } catch (error: any) {
         if (!options.silent) {
-            addLog(`Failed to send command to proxy: ${error.message}`);
+            addLog(`Failed to send command to SW proxy: ${error.message}`);
             toast({
-                    variant: "destructive",
-                    title: "Proxy Error",
-                    description: "Could not send command to the server. Check console.",
+                variant: "destructive",
+                title: "Service Worker Error",
+                description: "Could not send command via Service Worker. Is it registered?",
             });
         }
         return null;
@@ -1161,7 +1161,3 @@ a.click();
       </Card>
   );
 }
-
-    
-
-    
