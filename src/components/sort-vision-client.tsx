@@ -64,6 +64,7 @@ const AUTO_CAPTURE_TRIGGER_TIME = 2000;
 const AUTO_CAPTURE_COOLDOWN_TIME = 5000;
 const AUTO_SORT_COOLDOWN_TIME = 3000;
 const PING_INTERVAL = 3000;
+const CAMERA_WARMUP_DELAY = 3000;
 
 const interpretDetectionsLocal = (
   predictions: Prediction[],
@@ -178,53 +179,59 @@ export default function SortVisionClient({
 
   const { toast } = useToast();
 
-  const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
-      if (!options.silent) {
-          addLog(`Sending ${command} command to API proxy...`);
-      }
-      try {
-          const response = await fetch('/api/esp32', {
-              method: 'POST',
-              headers: {
-                  'Content-Type': 'application/json',
-              },
-              body: JSON.stringify({
-                  ip: esp32Ip,
-                  command,
-                  params,
-              }),
-          });
+    const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
+        if (!options.silent) {
+            addLog(`Sending ${command} command via SW Proxy...`);
+        }
+        
+        const queryParams = new URLSearchParams(params).toString();
+        // This is a "fake" path that the service worker will intercept.
+        const proxyUrl = `/api/esp32-proxy/${command}?${queryParams}`;
 
-          const result = await response.json();
+        try {
+            // Use AbortSignal for timeout
+            const controller = new AbortController();
+            const timeoutId = setTimeout(() => controller.abort(), 5000);
 
-          if (response.ok) {
-              if (!options.silent) {
-                  addLog(`API Proxy success: ${result.message}`);
-              }
-              // The actual text response from the ESP32 might be in the message property
-              return result.message || 'OK';
-          } else {
-              if (!options.silent) {
-                  addLog(`API Proxy Error: ${result.error}`);
-                  toast({
-                      variant: "destructive",
-                      title: "ESP32 Command Failed",
-                      description: result.error || "The API proxy could not reach the ESP32.",
-                  });
-              }
-              return null;
-          }
-      } catch (error: any) {
-          if (!options.silent) {
-              addLog(`Failed to send command to API proxy: ${error.message}`);
-              toast({
-                  variant: "destructive",
-                  title: "API Proxy Error",
-                  description: "Could not send command. Check network and server logs.",
-              });
-          }
-          return null;
-      }
+            const response = await fetch(proxyUrl, {
+                headers: {
+                    // Pass the target IP to the service worker
+                    'X-Target-IP': esp32Ip
+                },
+                signal: controller.signal
+            });
+
+            clearTimeout(timeoutId);
+
+            const resultText = await response.text();
+
+            if (response.ok) {
+                if (!options.silent) {
+                    addLog(`SW Proxy success: ${resultText}`);
+                }
+                return resultText; // Return the raw text response from the ESP32
+            } else {
+                if (!options.silent) {
+                    addLog(`SW Proxy Error: ${resultText}`);
+                    toast({
+                        variant: "destructive",
+                        title: "ESP32 Command Failed",
+                        description: resultText || "Proxy could not reach the ESP32.",
+                    });
+                }
+                return null;
+            }
+        } catch (error: any) {
+            if (!options.silent) {
+                addLog(`SW Proxy failed to fetch: ${error.message}`);
+                toast({
+                    variant: "destructive",
+                    title: "SW Proxy Error",
+                    description: "Failed to send command. Check connection to ESP32 Wi-Fi.",
+                });
+            }
+            return null;
+        }
   }, [esp32Ip, addLog, toast]);
 
     const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
@@ -357,6 +364,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
     }
 
     addLog("Requesting camera access...");
+    setAppStatus("CAMERA_WARMING_UP");
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
         streamRef.current = stream;
@@ -368,8 +376,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
             video.onloadedmetadata = () => {
                 video.play().then(async () => {
                     setIsCameraOn(true);
-                    setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
-                    addLog("Camera started successfully.");
+                    addLog("Camera started successfully. Warming up...");
 
                     await applyCameraSettings(stream, {
                         flash: options.restoreFlash ?? isFlashOn,
@@ -395,6 +402,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
         console.error("Error accessing camera:", error);
         addLog(`Camera Error: ${error.message}`);
         setHasCameraPermission(false);
+        setAppStatus("AWAITING_MODEL");
         toast({
             variant: "destructive",
             title: "Camera Access Denied",
@@ -402,7 +410,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
         });
         stopCamera();
     }
-}, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isFlashOn, isFocusLocked, applyCameraSettings]);
+}, [addLog, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isFlashOn, isFocusLocked, applyCameraSettings]);
 
 
   const toggleFlash = useCallback(async () => {
@@ -534,17 +542,17 @@ const toggleFocus = useCallback(async () => {
             if (statusResult?.includes('READY')) {
                 clearInterval(pollInterval);
                 addLog("ESP32 is ready. Restarting camera.");
-                startCamera({ restoreFlash: flashState, restoreFocus: focusState });
+                setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
             } else {
                 addLog("Waiting for ESP32...");
             }
         }, 1000); // Check every second
     } else {
         addLog("Sort command failed. Restarting camera immediately.");
-        startCamera({ restoreFlash: flashState, restoreFocus: focusState });
+        setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
     }
 
-}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, sendCommandViaProxy]);
+}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, sendCommandViaProxy, cameraRestartDelay]);
 
  const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
@@ -576,24 +584,19 @@ const toggleFocus = useCallback(async () => {
       if (foundPrediction) {
           setPrimaryPrediction(foundPrediction);
           setLastClassifications(prev => [...prev, foundPrediction]);
+          
+          if(autoSortEnabled) {
+            addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sorting.`);
+            handleSortAndRestart(foundPrediction.className);
+            return;
+          }
+
           newAppStatus = "READY_TO_SEND";
           setAppStatus(newAppStatus);
           
           if (predictionIntervalRef.current) {
             clearInterval(predictionIntervalRef.current);
             predictionIntervalRef.current = undefined;
-          }
-
-          if(autoSortEnabled) {
-            addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sending command.`);
-            sendSortCommand(foundPrediction.className);
-            setAppStatus("COOLDOWN");
-            addLog(`Auto-Sort: Entering ${AUTO_SORT_COOLDOWN_TIME / 1000}s cooldown.`);
-            setTimeout(() => {
-                setAppStatus("AWAITING_OBJECT");
-                addLog("Cooldown finished. Resuming analysis.");
-            }, AUTO_SORT_COOLDOWN_TIME);
-            return;
           }
 
           if (!autoFlashEnabled) {
@@ -655,7 +658,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendSortCommand, sendLightCommand, autoFlashEnabled, isFlashOn]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn]);
 
   useEffect(() => {
     return () => {
@@ -668,6 +671,7 @@ const toggleFocus = useCallback(async () => {
   const toggleCamera = () => {
     if (isCameraOn) {
       stopCamera();
+      setAppStatus("AWAITING_MODEL");
     } else {
       startCamera();
     }
@@ -759,11 +763,21 @@ a.click();
     }
 }, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled, setAppStatus, sendLightCommand]);
 
+    useEffect(() => {
+    if (appStatus === 'CAMERA_WARMING_UP') {
+      const timer = setTimeout(() => {
+        addLog("Camera warm-up complete. Starting detection.");
+        setAppStatus("AWAITING_OBJECT");
+      }, CAMERA_WARMUP_DELAY);
+      return () => clearTimeout(timer);
+    }
+  }, [appStatus, addLog, setAppStatus]);
+
   useEffect(() => {
-    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING' && appStatus !== 'READY_TO_SEND') {
+    if (isCameraOn && model && !predictionIntervalRef.current && appStatus === 'AWAITING_OBJECT' && !isCollectingImages) {
         addLog("Starting classification loop.");
         predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
-    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_CYCLING' || appStatus === 'READY_TO_SEND') && predictionIntervalRef.current) {
+    } else if ((!isCameraOn || !model || isCollectingImages || appStatus !== 'AWAITING_OBJECT') && predictionIntervalRef.current) {
         addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
@@ -865,6 +879,7 @@ a.click();
             case "AWAITING_MODEL": return "Awaiting Model";
             case "LOADING_LIBS": return "Loading AI libs...";
             case "MODEL_LOADING": return "Loading Model...";
+            case "CAMERA_WARMING_UP": return "Camera Warming Up...";
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
             case "CAMERA_CYCLING": return "Waiting for Sorter...";
@@ -884,13 +899,14 @@ a.click();
             case "COOLDOWN":
             case "LOADING_LIBS":
             case "MODEL_LOADING":
-            case "CAMERA_CYCLING": return "secondary";
+            case "CAMERA_CYCLING":
+            case "CAMERA_WARMING_UP": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
             default: return "outline";
         }
     };
 
-    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN';
+    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_WARMING_UP';
 
     return (
         <div className="flex flex-col items-end gap-2">
@@ -942,6 +958,17 @@ a.click();
 
         if (countdown > 0) {
             return <h3 className="text-6xl font-bold text-white drop-shadow-lg animate-ping">{countdown}</h3>;
+        }
+        
+        if (appStatus === 'CAMERA_WARMING_UP') {
+            return (
+                <div className="flex items-center gap-2">
+                    <Hourglass className="h-6 w-6 text-white animate-spin" />
+                    <h3 className="text-xl font-bold text-white drop-shadow-lg">
+                        Warming up...
+                    </h3>
+                </div>
+            );
         }
 
         if (isCollectingImages) {
@@ -1021,7 +1048,7 @@ a.click();
     };
     
     return (
-        <div className={cn("absolute inset-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex flex-col items-center", isCollectingImages || countdown > 0 ? "justify-center" : "justify-start")}>
+        <div className={cn("absolute inset-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex flex-col items-center", isCollectingImages || countdown > 0 || appStatus === 'CAMERA_WARMING_UP' ? "justify-center" : "justify-start")}>
              {renderContent()}
         </div>
     );
