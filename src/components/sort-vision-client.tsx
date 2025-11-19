@@ -665,10 +665,10 @@ const toggleFocus = useCallback(async () => {
 
 
   useEffect(() => {
-      if (isCollectingImages && collectedImages.length > 0 && collectedImages.length <= IMAGE_CAPTURE_COUNT) {
-          addLog(`Captured image ${collectedImages.length}/${IMAGE_CAPTURE_COUNT}`);
-      }
-  }, [collectedImages.length, isCollectingImages, addLog]);
+    if (isCollectingImages && collectedImages.length > 0 && collectedImages.length <= IMAGE_CAPTURE_COUNT) {
+        addLog(`Captured image ${collectedImages.length}/${IMAGE_CAPTURE_COUNT}`);
+    }
+  }, [collectedImages, isCollectingImages, addLog]);
 
 
   useEffect(() => {
@@ -1150,5 +1150,7 @@ a.click();
       </Card>
   );
 }
+
+    
 
     
