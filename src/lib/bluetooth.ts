@@ -10,6 +10,36 @@ let gattServer: BluetoothRemoteGATTServer | null = null;
 export let commandCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
 let statusCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
 
+// Command Queue
+const commandQueue: string[] = [];
+let isProcessingQueue = false;
+
+// Function to process the command queue
+async function processCommandQueue() {
+    if (isProcessingQueue || commandQueue.length === 0) {
+        return;
+    }
+
+    isProcessingQueue = true;
+    const command = commandQueue.shift();
+
+    if (command && commandCharacteristic) {
+        try {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(command);
+            await commandCharacteristic.writeValue(data);
+            console.log(`Sent command: ${command}`);
+        } catch (error) {
+            console.error(`Failed to send command "${command}":`, error);
+            // Optionally, re-queue the command or handle the error
+        }
+    }
+
+    isProcessingQueue = false;
+    // Process the next command in the queue
+    process.nextTick(processCommandQueue);
+}
+
 export function isConnected(): boolean {
     return !!(bluetoothDevice && bluetoothDevice.gatt && bluetoothDevice.gatt.connected);
 }
@@ -73,6 +103,8 @@ function onDisconnected() {
     gattServer = null;
     commandCharacteristic = null;
     statusCharacteristic = null;
+    commandQueue.length = 0; // Clear the queue on disconnect
+    isProcessingQueue = false;
     
     // Notify the UI
     window.dispatchEvent(new CustomEvent('bt-disconnected'));
@@ -92,20 +124,13 @@ export function disconnectFromBluetoothDevice() {
     }
 }
 
-// Function to send a command to the ESP32
+// Function to send a command to the ESP32 by adding it to the queue
 export async function sendCommand(command: string) {
     if (!commandCharacteristic) {
         throw new Error("Not connected to a device or command characteristic not found.");
     }
-    try {
-        const encoder = new TextEncoder();
-        const data = encoder.encode(command);
-        await commandCharacteristic.writeValue(data);
-        console.log(`Sent command: ${command}`);
-    } catch (error) {
-        console.error("Failed to send command:", error);
-        throw error;
-    }
+    commandQueue.push(command);
+    processCommandQueue();
 }
 
 // Function to subscribe to notifications from the ESP32
