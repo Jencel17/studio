@@ -179,9 +179,9 @@ export default function SortVisionClient({
 
   const { toast } = useToast();
 
-    const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
+  const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
         if (!options.silent) {
-            addLog(`Sending ${command} command via SW Proxy...`);
+            addLog(`Sending ${command} command to SW proxy...`);
         }
         
         const queryParams = new URLSearchParams(params).toString();
@@ -204,8 +204,9 @@ export default function SortVisionClient({
                 }
                 return resultText; // Return the raw text response from the ESP32
             } else {
-                if (!options.silent) {
-                    addLog(`SW Proxy Error: ${resultText}`);
+                 const errorMsg = `SW Proxy Error: ${resultText || `ESP32 responded with status ${response.status}`}`;
+                 if (!options.silent) {
+                    addLog(errorMsg);
                     toast({
                         variant: "destructive",
                         title: "ESP32 Command Failed",
@@ -215,12 +216,13 @@ export default function SortVisionClient({
                 return null;
             }
         } catch (error: any) {
+            const errorMsg = `SW proxy failed to fetch: ${error.message}`;
             if (!options.silent) {
-                addLog(`SW proxy failed to fetch: ${error.message}`);
+                addLog(errorMsg);
                 toast({
                     variant: "destructive",
-                    title: "SW Proxy Error",
-                    description: "Failed to send command. Check connection to ESP32 Wi-Fi.",
+                    title: "Service Worker Error",
+                    description: "Failed to send command. Check connection and SW logs.",
                 });
             }
             return null;
@@ -526,24 +528,15 @@ const toggleFocus = useCallback(async () => {
     } else {
         sortSuccess = true; // No sort needed, so we can proceed
     }
-
+    
     if (sortSuccess) {
-        addLog("Sort command acknowledged. Waiting for ESP32 to be ready...");
-        // Poll for ready status
-        const pollInterval = setInterval(async () => {
-            const statusResult = await sendCommandViaProxy('status', {}, { silent: true });
-            if (statusResult?.includes('READY')) {
-                clearInterval(pollInterval);
-                addLog("ESP32 is ready. Restarting camera.");
-                setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
-            } else {
-                addLog("Waiting for ESP32...");
-            }
-        }, 1000); // Check every second
+      addLog("Sort command acknowledged. Restarting camera.");
+      setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
     } else {
-        addLog("Sort command failed. Restarting camera immediately.");
-        setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
+      addLog("Sort command failed. Restarting camera immediately.");
+      setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
     }
+
 
 }, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, sendCommandViaProxy, cameraRestartDelay]);
 
