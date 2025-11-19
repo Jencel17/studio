@@ -838,8 +838,7 @@ a.click();
     const onConnected = () => {
         addLog("Bluetooth device connected.");
         setIsBtConnected(true);
-        // Subscribe to status updates from sorter
-        subscribeToNotifications(addLog);
+        // We no longer need to subscribe to notifications for READY status.
     };
     const onDisconnected = () => {
         addLog("Bluetooth device disconnected.");

@@ -4,12 +4,13 @@
 // These MUST match the UUIDs programmed into your ESP32 Arduino sketch
 const SORTER_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const COMMAND_CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
-const STATUS_CHARACTERISTIC_UUID = "f2ba755b-b92e-4638-9a39-42b477651a54";
+// The STATUS_CHARACTERISTIC_UUID is no longer needed as the app controls timing.
+// const STATUS_CHARACTERISTIC_UUID = "f2ba755b-b92e-4638-9a39-42b477651a54";
 
 let bluetoothDevice: BluetoothDevice | null = null;
 let gattServer: BluetoothRemoteGATTServer | null = null;
 export let commandCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
-let statusCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
+// let statusCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
 
 // Command Queue
 const commandQueue: string[] = [];
@@ -78,8 +79,9 @@ export async function connectToBluetoothDevice() {
         console.log("Getting Command Characteristic...");
         commandCharacteristic = await service.getCharacteristic(COMMAND_CHARACTERISTIC_UUID);
 
-        console.log("Getting Status Characteristic...");
-        statusCharacteristic = await service.getCharacteristic(STATUS_CHARACTERISTIC_UUID);
+        // Status characteristic is no longer needed.
+        // console.log("Getting Status Characteristic...");
+        // statusCharacteristic = await service.getCharacteristic(STATUS_CHARACTERISTIC_UUID);
         
         window.dispatchEvent(new CustomEvent('bt-connected'));
         console.log("Bluetooth device connected and ready.");
@@ -105,7 +107,7 @@ function onDisconnected() {
     bluetoothDevice = null;
     gattServer = null;
     commandCharacteristic = null;
-    statusCharacteristic = null;
+    // statusCharacteristic = null;
     commandQueue.length = 0; // Clear the queue on disconnect
     isProcessingQueue = false;
     
@@ -136,27 +138,7 @@ export async function sendCommand(command: string) {
     processCommandQueue();
 }
 
-// Function to subscribe to notifications from the ESP32
+// The app no longer needs to subscribe to status notifications.
 export async function subscribeToNotifications(logCallback: (message: string) => void) {
-    if (!statusCharacteristic) {
-        throw new Error("Status characteristic not found.");
-    }
-
-    await statusCharacteristic.startNotifications();
-    console.log("Subscribed to status notifications.");
-
-    statusCharacteristic.addEventListener('characteristicvaluechanged', (event) => {
-        const target = event.target as BluetoothRemoteGATTCharacteristic;
-        const value = target.value;
-        if (value) {
-            const decoder = new TextDecoder('utf-8');
-            const message = decoder.decode(value);
-            logCallback(`Sorter Status: ${message}`);
-            
-            // If the sorter becomes ready, we can potentially trigger a camera restart
-            if (message === 'READY') {
-                 window.dispatchEvent(new CustomEvent('sorter-ready'));
-            }
-        }
-    });
+    console.warn("subscribeToNotifications is deprecated and no longer has any effect.");
 }
