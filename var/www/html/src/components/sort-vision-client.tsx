@@ -45,6 +45,7 @@ interface SortVisionClientProps {
     isTestMode: boolean;
     wakeLockEnabled: boolean;
     autoCaptureEnabled: boolean;
+    autoSortEnabled: boolean;
     autoFlashEnabled: boolean;
     cameraRestartDelay: number;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
@@ -60,61 +61,79 @@ const IMAGE_CAPTURE_COUNT = 20;
 const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
 const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
-const AUTO_CAPTURE_COOLDOWN_TIME = 0;
+const AUTO_CAPTURE_COOLDOWN_TIME = 5000;
+const AUTO_SORT_COOLDOWN_TIME = 3000;
 const PING_INTERVAL = 3000;
+const CAMERA_WARMUP_DELAY = 3000;
 
 const interpretDetectionsLocal = (
   predictions: Prediction[],
   confidenceThreshold: number
 ): InterpretDetectionsOutput => {
-  const significantPredictions = predictions.filter(
+  const sortedPredictions = [...predictions].sort(
+    (a, b) => b.probability - a.probability
+  );
+
+  if (!sortedPredictions.length || sortedPredictions[0].probability < 0.5) {
+    return {
+      detectionState: 'NO_DETECTION',
+      reason: 'No object detected with sufficient confidence.',
+    };
+  }
+
+  const topPrediction = sortedPredictions[0];
+  const secondPrediction = sortedPredictions.length > 1 ? sortedPredictions[1] : null;
+
+  const highConfidencePredictions = sortedPredictions.filter(
     (p) => p.probability >= confidenceThreshold
   );
 
-  if (significantPredictions.length === 0) {
-    if (predictions.some(p => p.probability > 0.5)) {
-      return {
-        detectionState: "AMBIGUOUS",
-        reason: `Highest confidence is below threshold.`
-      }
-    }
+  // Rule 1: Clear Single Object
+  // High confidence AND a large gap between the first and second prediction
+  if (
+    topPrediction.probability > 0.90 &&
+    (!secondPrediction || topPrediction.probability > secondPrediction.probability * 2)
+  ) {
     return {
-      detectionState: "NO_DETECTION",
-      reason: "No prediction meets the confidence threshold.",
+      detectionState: 'SINGLE_OBJECT',
+      primaryObject: topPrediction.className,
+      reason: `Very high confidence for ${topPrediction.className}.`,
     };
   }
 
-  const sortedPredictions = [...predictions].sort((a,b) => b.probability - a.probability);
-  const topPrediction = sortedPredictions[0];
-
-  if(topPrediction.probability < confidenceThreshold){
+  // Rule 2: Multiple Objects
+  // If two or more predictions are above the confidence threshold
+  if (highConfidencePredictions.length > 1) {
     return {
-      detectionState: "AMBIGUOUS",
-      reason: `Highest confidence (${topPrediction.probability.toFixed(2)}) is below threshold.`,
+      detectionState: 'MULTIPLE_OBJECTS',
+      detectedObjects: highConfidencePredictions.map((p) => p.className),
+      reason: 'Multiple objects detected above confidence threshold.',
     };
   }
-  
-  const secondPrediction = sortedPredictions.length > 1 ? sortedPredictions[1] : null;
-  if (secondPrediction) {
-    if (secondPrediction.probability >= confidenceThreshold) {
-      return {
-          detectionState: "MULTIPLE_OBJECTS",
-          detectedObjects: significantPredictions.map((p) => p.className),
-          reason: "Multiple objects detected above confidence threshold.",
-      };
-    }
-    if (topPrediction.probability < secondPrediction.probability * 2) {
-       return {
-        detectionState: "AMBIGUOUS",
-        reason: "Confidence scores are too close to make a clear decision.",
-      };
-    }
+
+  // Rule 3: Tentative Single Object (still counts as single, but less certain)
+  // If one prediction is above the threshold, but doesn't meet the "very high confidence" rule.
+  if (highConfidencePredictions.length === 1) {
+     return {
+      detectionState: 'SINGLE_OBJECT',
+      primaryObject: highConfidencePredictions[0].className,
+      reason: `One object found above threshold: ${highConfidencePredictions[0].className}.`,
+    };
   }
 
+  // Rule 4: Ambiguous Detection
+  // If the top prediction is above a minimum but below the main threshold, or if scores are too close.
+  if (topPrediction.probability >= 0.5 && topPrediction.probability < confidenceThreshold) {
+    return {
+      detectionState: 'AMBIGUOUS',
+      reason: `Highest confidence (${(topPrediction.probability * 100).toFixed(0)}%) is below the required ${confidenceThreshold * 100}% threshold.`,
+    };
+  }
+
+  // Fallback Rule
   return {
-    detectionState: "SINGLE_OBJECT",
-    primaryObject: topPrediction.className,
-    reason: `Single object detected with high confidence: ${topPrediction.className}.`,
+    detectionState: 'NO_DETECTION',
+    reason: 'Analysis complete, but no clear result based on rules.',
   };
 };
 
@@ -126,6 +145,7 @@ export default function SortVisionClient({
     isTestMode,
     wakeLockEnabled,
     autoCaptureEnabled,
+    autoSortEnabled,
     autoFlashEnabled,
     cameraRestartDelay,
     tmImageRef,
@@ -161,46 +181,46 @@ export default function SortVisionClient({
 
     const sendCommandViaProxy = useCallback(async (command: 'light' | 'sort' | 'status' | 'ping', params: Record<string, string> = {}, options: { silent?: boolean } = {}) => {
     if (!options.silent) {
-        addLog(`Sending ${command} command to proxy...`);
+        addLog(`Sending ${command} command to SW proxy...`);
     }
+
+    const queryParams = new URLSearchParams(params).toString();
+    // Use a special path that the service worker will intercept.
+    const proxyUrl = `/api/esp32-proxy/${command}?${queryParams}`;
+    
     try {
-      const response = await fetch('/api/esp32', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          ip: esp32Ip,
-          command,
-          params,
-        }),
-      });
+        const response = await fetch(proxyUrl, {
+            headers: {
+                // Custom header to pass the target IP to the service worker.
+                'X-Target-IP': esp32Ip
+            }
+        });
 
-      const result = await response.json();
+        const resultText = await response.text();
 
-      if (response.ok) {
-        if (!options.silent) {
-            addLog(`Proxy success: ${result.message}`);
+        if (response.ok) {
+            if (!options.silent) {
+                addLog(`SW Proxy success: ${resultText}`);
+            }
+            return resultText; // Return the body of the response from ESP
+        } else {
+            if (!options.silent) {
+                addLog(`SW Proxy Error: ${resultText}`);
+                toast({
+                    variant: "destructive",
+                    title: "ESP32 Command Failed",
+                    description: resultText || "The service worker proxy could not reach the ESP32.",
+                });
+            }
+            return null;
         }
-        return result.message; // Return the body of the response from ESP
-      } else {
-        if (!options.silent) {
-            addLog(`Proxy Error: ${result.error}`);
-            toast({
-                variant: "destructive",
-                title: "ESP32 Command Failed",
-                description: result.error || "The server proxy could not reach the ESP32.",
-            });
-        }
-        return null;
-      }
     } catch (error: any) {
         if (!options.silent) {
-            addLog(`Failed to send command to proxy: ${error.message}`);
+            addLog(`Failed to send command to SW proxy: ${error.message}`);
             toast({
-                    variant: "destructive",
-                    title: "Proxy Error",
-                    description: "Could not send command to the server. Check console.",
+                variant: "destructive",
+                title: "Service Worker Error",
+                description: "Could not send command via Service Worker. Is it registered?",
             });
         }
         return null;
@@ -337,6 +357,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
     }
 
     addLog("Requesting camera access...");
+    setAppStatus("CAMERA_WARMING_UP");
     try {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
         streamRef.current = stream;
@@ -348,8 +369,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
             video.onloadedmetadata = () => {
                 video.play().then(async () => {
                     setIsCameraOn(true);
-                    setAppStatus(model ? "AWAITING_OBJECT" : "AWAITING_MODEL");
-                    addLog("Camera started successfully.");
+                    addLog("Camera started successfully. Warming up...");
 
                     await applyCameraSettings(stream, {
                         flash: options.restoreFlash ?? isFlashOn,
@@ -375,6 +395,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
         console.error("Error accessing camera:", error);
         addLog(`Camera Error: ${error.message}`);
         setHasCameraPermission(false);
+        setAppStatus("AWAITING_MODEL");
         toast({
             variant: "destructive",
             title: "Camera Access Denied",
@@ -382,7 +403,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
         });
         stopCamera();
     }
-}, [addLog, model, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isFlashOn, isFocusLocked, applyCameraSettings]);
+}, [addLog, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isFlashOn, isFocusLocked, applyCameraSettings]);
 
 
   const toggleFlash = useCallback(async () => {
@@ -514,17 +535,17 @@ const toggleFocus = useCallback(async () => {
             if (statusResult?.includes('READY')) {
                 clearInterval(pollInterval);
                 addLog("ESP32 is ready. Restarting camera.");
-                startCamera({ restoreFlash: flashState, restoreFocus: focusState });
+                setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
             } else {
                 addLog("Waiting for ESP32...");
             }
         }, 1000); // Check every second
     } else {
         addLog("Sort command failed. Restarting camera immediately.");
-        startCamera({ restoreFlash: flashState, restoreFocus: focusState });
+        setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
     }
 
-}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, sendCommandViaProxy]);
+}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, sendCommandViaProxy, cameraRestartDelay]);
 
  const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
@@ -556,6 +577,13 @@ const toggleFocus = useCallback(async () => {
       if (foundPrediction) {
           setPrimaryPrediction(foundPrediction);
           setLastClassifications(prev => [...prev, foundPrediction]);
+          
+          if(autoSortEnabled) {
+            addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sorting.`);
+            handleSortAndRestart(foundPrediction.className);
+            return;
+          }
+
           newAppStatus = "READY_TO_SEND";
           setAppStatus(newAppStatus);
           
@@ -607,7 +635,7 @@ const toggleFocus = useCallback(async () => {
       }
     }
 
-    if (autoCaptureEnabled && !isCollectingImages && newAppStatus === "CONFIDENCE_TOO_LOW" && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+    if (autoCaptureEnabled && newAppStatus === "CONFIDENCE_TOO_LOW" && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
       if (!ambiguousDetectionTimer.current) {
         addLog(`Uncertain detection. Triggering training image capture in ${AUTO_CAPTURE_TRIGGER_TIME / 1000}s.`);
         ambiguousDetectionTimer.current = setTimeout(() => {
@@ -623,7 +651,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn]);
 
   useEffect(() => {
     return () => {
@@ -636,6 +664,7 @@ const toggleFocus = useCallback(async () => {
   const toggleCamera = () => {
     if (isCameraOn) {
       stopCamera();
+      setAppStatus("AWAITING_MODEL");
     } else {
       startCamera();
     }
@@ -727,11 +756,21 @@ a.click();
     }
 }, [collectedImages, isCollectingImages, addLog, toast, autoCaptureEnabled, setAppStatus, sendLightCommand]);
 
+    useEffect(() => {
+    if (appStatus === 'CAMERA_WARMING_UP') {
+      const timer = setTimeout(() => {
+        addLog("Camera warm-up complete. Starting detection.");
+        setAppStatus("AWAITING_OBJECT");
+      }, CAMERA_WARMUP_DELAY);
+      return () => clearTimeout(timer);
+    }
+  }, [appStatus, addLog, setAppStatus]);
+
   useEffect(() => {
-    if (isCameraOn && model && !predictionIntervalRef.current && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+    if (isCameraOn && model && !predictionIntervalRef.current && appStatus === 'AWAITING_OBJECT' && !isCollectingImages) {
         addLog("Starting classification loop.");
         predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
-    } else if ((!isCameraOn || !model || isCollectingImages || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_CYCLING') && predictionIntervalRef.current) {
+    } else if ((!isCameraOn || !model || isCollectingImages || appStatus !== 'AWAITING_OBJECT') && predictionIntervalRef.current) {
         addLog("Stopping classification loop.");
         clearInterval(predictionIntervalRef.current);
         predictionIntervalRef.current = undefined;
@@ -833,11 +872,12 @@ a.click();
             case "AWAITING_MODEL": return "Awaiting Model";
             case "LOADING_LIBS": return "Loading AI libs...";
             case "MODEL_LOADING": return "Loading Model...";
+            case "CAMERA_WARMING_UP": return "Camera Warming Up...";
             case "AWAITING_OBJECT": return "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
             case "CAMERA_CYCLING": return "Waiting for Sorter...";
             case "COLLECTING_IMAGES": return "Collecting Images...";
-            case "COOLDOWN": return "Auto-Capture Cooldown";
+            case "COOLDOWN": return "Cooldown";
             case "READY_TO_SEND":
                 return `Sending: ${primaryPrediction?.className || '...'}`;
             default: return "Analyzing...";
@@ -852,13 +892,14 @@ a.click();
             case "COOLDOWN":
             case "LOADING_LIBS":
             case "MODEL_LOADING":
-            case "CAMERA_CYCLING": return "secondary";
+            case "CAMERA_CYCLING":
+            case "CAMERA_WARMING_UP": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
             default: return "outline";
         }
     };
 
-    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN';
+    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_WARMING_UP';
 
     return (
         <div className="flex flex-col items-end gap-2">
@@ -910,6 +951,17 @@ a.click();
 
         if (countdown > 0) {
             return <h3 className="text-6xl font-bold text-white drop-shadow-lg animate-ping">{countdown}</h3>;
+        }
+        
+        if (appStatus === 'CAMERA_WARMING_UP') {
+            return (
+                <div className="flex items-center gap-2">
+                    <Hourglass className="h-6 w-6 text-white animate-spin" />
+                    <h3 className="text-xl font-bold text-white drop-shadow-lg">
+                        Warming up...
+                    </h3>
+                </div>
+            );
         }
 
         if (isCollectingImages) {
@@ -989,7 +1041,7 @@ a.click();
     };
     
     return (
-        <div className={cn("absolute inset-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex flex-col items-center", isCollectingImages || countdown > 0 ? "justify-center" : "justify-start")}>
+        <div className={cn("absolute inset-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex flex-col items-center", isCollectingImages || countdown > 0 || appStatus === 'CAMERA_WARMING_UP' ? "justify-center" : "justify-start")}>
              {renderContent()}
         </div>
     );
@@ -1130,7 +1182,3 @@ a.click();
       </Card>
   );
 }
-
-    
-
-    
