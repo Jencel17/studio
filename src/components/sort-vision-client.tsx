@@ -63,6 +63,7 @@ const CAPTURE_COUNTDOWN_SECONDS = 3;
 const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
 const AUTO_CAPTURE_COOLDOWN_TIME = 5000;
 const CAMERA_WARMUP_DELAY = 3000;
+const DETECTION_SETTLE_DELAY = 750; // New: Delay to wait for a stable detection
 
 const interpretDetectionsLocal = (
   predictions: Prediction[],
@@ -168,11 +169,13 @@ export default function SortVisionClient({
   const [wakeLockRef, setWakeLockRef] = useState<WakeLockSentinel | null>(null);
   const [isBtConnected, setIsBtConnected] = useState(false);
   const [isProcessingSort, setIsProcessingSort] = useState(false);
-  
+  const [stablePrediction, setStablePrediction] = useState<Prediction | null>(null);
+
   const videoRef = useRef<HTMLVideoElement>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const predictionIntervalRef = useRef<NodeJS.Timeout>();
   const ambiguousDetectionTimer = useRef<NodeJS.Timeout | null>(null);
+  const detectionTimer = useRef<NodeJS.Timeout | null>(null);
   
 
   const { toast } = useToast();
@@ -292,6 +295,10 @@ export default function SortVisionClient({
       clearTimeout(ambiguousDetectionTimer.current);
       ambiguousDetectionTimer.current = null;
     }
+    if (detectionTimer.current) {
+        clearTimeout(detectionTimer.current);
+        detectionTimer.current = null;
+    }
     streamRef.current = null;
     setIsCameraOn(false);
     if (!preserveSettings) {
@@ -301,6 +308,7 @@ export default function SortVisionClient({
     setPrimaryPrediction(null);
     setCurrentPredictions([]);
     setDetectionState("NO_DETECTION");
+    setStablePrediction(null);
     releaseWakeLock();
   }, [releaseWakeLock, addLog]);
 
@@ -533,64 +541,80 @@ const toggleFocus = useCallback(async () => {
     
     if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
       const foundPrediction = filteredPredictions.find(p => p.className === localResult.primaryObject);
+
+      // New: Logic for stable detection
       if (foundPrediction) {
-          setIsProcessingSort(true); // Set the lock immediately
+        if (!stablePrediction || stablePrediction.className !== foundPrediction.className) {
+          // New prediction or different prediction, start the timer
+          setStablePrediction(foundPrediction);
+          if (detectionTimer.current) clearTimeout(detectionTimer.current);
           
-          if (predictionIntervalRef.current) {
-            clearInterval(predictionIntervalRef.current);
-            predictionIntervalRef.current = undefined;
-            addLog("Detection loop stopped for sorting.");
-          }
-          
-          setPrimaryPrediction(foundPrediction);
-          setLastClassifications(prev => [...prev, foundPrediction]);
-          
-          if(autoSortEnabled) {
-            addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sorting.`);
+          detectionTimer.current = setTimeout(() => {
+            // Timer completed, this is a stable detection
+            addLog(`Stable detection of ${foundPrediction.className}. Proceeding to sort.`);
             
-            if (!autoFlashEnabled) {
-                addLog(`Auto-flash disabled. Sorting directly: ${foundPrediction.className}.`);
-                handleSortAndRestart(foundPrediction.className);
-                return;
+            // Lock processing and stop the detection loop
+            setIsProcessingSort(true); 
+            if (predictionIntervalRef.current) {
+              clearInterval(predictionIntervalRef.current);
+              predictionIntervalRef.current = undefined;
+              addLog("Detection loop stopped for sorting.");
             }
 
-            addLog(`Initial detection: ${foundPrediction.className}. Turning on light for final check.`);
-            await sendLightCommand('ON');
-            
-            setTimeout(async () => {
-              if (!videoRef.current) { 
-                  if (isFlashOn) {
-                      await sendLightCommand('OFF');
-                  }
-                  handleSortAndRestart("RESTART_NO_SORT"); // Restart if video is lost
-                  return;
-              }
-              addLog("Re-classifying with light on...");
-              const finalPredictions = await model.predict(videoRef.current);
-              const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
-              const finalResult = interpretDetectionsLocal(finalFiltered, CONFIDENCE_THRESHOLD);
+            setPrimaryPrediction(foundPrediction);
+            setLastClassifications(prev => [...prev, foundPrediction]);
 
-              if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
-                  addLog(`Final confirmation: ${finalResult.primaryObject}. Sorting.`);
-                  handleSortAndRestart(finalResult.primaryObject);
+            if (autoSortEnabled) {
+              if (autoFlashEnabled) {
+                // Auto-flash logic
+                addLog(`Initial detection: ${foundPrediction.className}. Turning on light for final check.`);
+                sendLightCommand('ON').then(() => {
+                  setTimeout(async () => {
+                    if (!videoRef.current) {
+                      if (isFlashOn) await sendLightCommand('OFF');
+                      handleSortAndRestart("RESTART_NO_SORT");
+                      return;
+                    }
+                    addLog("Re-classifying with light on...");
+                    const finalPredictions = await model.predict(videoRef.current);
+                    const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
+                    const finalResult = interpretDetectionsLocal(finalFiltered, CONFIDENCE_THRESHOLD);
+                    if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
+                      addLog(`Final confirmation: ${finalResult.primaryObject}. Sorting.`);
+                      handleSortAndRestart(finalResult.primaryObject);
+                    } else {
+                      addLog(`Final check failed. Result: ${finalResult.detectionState}. Restarting camera.`);
+                      handleSortAndRestart("RESTART_NO_SORT");
+                    }
+                  }, 500);
+                });
               } else {
-                  addLog(`Final check failed. Result: ${finalResult.detectionState}. Restarting camera.`);
-                  handleSortAndRestart("RESTART_NO_SORT");
+                // No auto-flash, sort directly
+                addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sorting.`);
+                handleSortAndRestart(foundPrediction.className);
               }
-            }, 500); // Wait 500ms for light to turn on and camera to adjust
+            } else {
+              // Manual sort mode
+              setAppStatus("READY_TO_SEND");
+              addLog(`Manual Sort: Detected ${foundPrediction.className}. Ready to send command.`);
+            }
+          }, DETECTION_SETTLE_DELAY);
 
-          } else {
-            // Manual sort mode
-            setAppStatus("READY_TO_SEND");
-            addLog(`Manual Sort: Detected ${foundPrediction.className}. Ready to send command.`);
-            // In manual mode, we wait for user interaction, so we don't call handleSortAndRestart here.
-            // The lock will be released when the camera is restarted.
-          }
-      } else {
-        setPrimaryPrediction(null);
+        }
+        // If prediction is the same, do nothing, just let the timer run.
+
       }
     } else {
+      // Not a single object, so reset the stability timer and prediction
+      if (detectionTimer.current) {
+        clearTimeout(detectionTimer.current);
+        detectionTimer.current = null;
+      }
+      if (stablePrediction) {
+          setStablePrediction(null);
+      }
       setPrimaryPrediction(null);
+      
       const isUncertain = localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5));
       newAppStatus = isUncertain ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
       if (appStatus !== newAppStatus) {
@@ -614,7 +638,7 @@ const toggleFocus = useCallback(async () => {
         ambiguousDetectionTimer.current = null;
       }
     }
-  }, [isProcessingSort, isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn]);
+  }, [isProcessingSort, isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction]);
 
   useEffect(() => {
     return () => {
@@ -845,7 +869,8 @@ a.click();
             case "LOADING_LIBS": return "Loading AI libs...";
             case "MODEL_LOADING": return "Loading Model...";
             case "CAMERA_WARMING_UP": return "Camera Warming Up...";
-            case "AWAITING_OBJECT": return "Awaiting Object";
+            case "AWAITING_OBJECT":
+                return stablePrediction ? `Confirming ${stablePrediction.className}...` : "Awaiting Object";
             case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
             case "CAMERA_CYCLING": return "Waiting for Sorter...";
             case "COLLECTING_IMAGES": return "Collecting Images...";
@@ -867,11 +892,13 @@ a.click();
             case "CAMERA_CYCLING":
             case "CAMERA_WARMING_UP": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
+            case "AWAITING_OBJECT":
+                return stablePrediction ? "default" : "outline";
             default: return "outline";
         }
     };
 
-    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_WARMING_UP';
+    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_WARMING_UP' || (appStatus === 'AWAITING_OBJECT' && !!stablePrediction);
 
     return (
         <div className="flex flex-col items-end gap-2">
@@ -983,6 +1010,15 @@ a.click();
                                 </span>
                             </div>
                         </>
+                    );
+                } else if (stablePrediction) {
+                     return (
+                        <div className="flex items-center gap-2">
+                            <Hourglass className="h-6 w-6 text-white animate-spin" />
+                            <h3 className="text-xl font-bold text-white drop-shadow-lg">
+                                Confirming {stablePrediction.className}...
+                            </h3>
+                        </div>
                     );
                 }
                 return <p className="text-lg text-white/90 shadow-md">Analyzing...</p>;
