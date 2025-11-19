@@ -573,12 +573,6 @@ export default function SortVisionSettings({
               </div>
             </SidebarGroup>
 
-            <SidebarGroup>
-              <SidebarGroupLabel>Network Settings</SidebarGroupLabel>
-              <div className="space-y-2 p-4 text-xs text-muted-foreground">
-                <p>IP Address settings have been removed. The app now uses Bluetooth to connect to the sorter.</p>
-              </div>
-            </SidebarGroup>
           </ScrollArea>
         </SidebarContent>
         <SidebarFooter>
