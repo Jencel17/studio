@@ -189,19 +189,12 @@ export default function SortVisionClient({
         const proxyUrl = `/api/esp32-proxy/${command}?${queryParams}`;
 
         try {
-            // Use AbortSignal for timeout
-            const controller = new AbortController();
-            const timeoutId = setTimeout(() => controller.abort(), 5000);
-
             const response = await fetch(proxyUrl, {
                 headers: {
                     // Pass the target IP to the service worker
                     'X-Target-IP': esp32Ip
-                },
-                signal: controller.signal
+                }
             });
-
-            clearTimeout(timeoutId);
 
             const resultText = await response.text();
 
@@ -223,7 +216,7 @@ export default function SortVisionClient({
             }
         } catch (error: any) {
             if (!options.silent) {
-                addLog(`SW Proxy failed to fetch: ${error.message}`);
+                addLog(`SW proxy failed to fetch: ${error.message}`);
                 toast({
                     variant: "destructive",
                     title: "SW Proxy Error",
