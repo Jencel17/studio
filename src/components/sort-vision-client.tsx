@@ -63,7 +63,7 @@ const CAPTURE_COUNTDOWN_SECONDS = 3;
 const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
 const AUTO_CAPTURE_COOLDOWN_TIME = 5000;
 const CAMERA_WARMUP_DELAY = 3000;
-const DETECTION_SETTLE_DELAY = 750; // New: Delay to wait for a stable detection
+const DETECTION_SETTLE_DELAY = 1500; // New: Delay to wait for a stable detection
 
 const interpretDetectionsLocal = (
   predictions: Prediction[],
@@ -1187,6 +1187,8 @@ a.click();
       </Card>
   );
 }
+
+    
 
     
 
