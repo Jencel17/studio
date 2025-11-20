@@ -13,10 +13,12 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, Music } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
 import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected } from "@/lib/bluetooth";
+import { playConnectedSound, playDisconnectedSound } from "@/lib/audio";
+
 
 interface SortVisionSettingsProps {
     model: tmImage.CustomMobileNet | null;
@@ -545,6 +547,20 @@ export default function SortVisionSettings({
                     onCheckedChange={setIsTestMode}
                   />
                 </div>
+              </div>
+            </SidebarGroup>
+
+            <SidebarGroup>
+              <SidebarGroupLabel>Audio Tests</SidebarGroupLabel>
+              <div className="space-y-2 p-4">
+                <Button onClick={playConnectedSound} variant="outline" className="w-full">
+                  <Music className="mr-2 h-4 w-4" />
+                  Test Connect Sound
+                </Button>
+                <Button onClick={playDisconnectedSound} variant="outline" className="w-full">
+                  <Music className="mr-2 h-4 w-4" />
+                  Test Disconnect Sound
+                </Button>
               </div>
             </SidebarGroup>
 
