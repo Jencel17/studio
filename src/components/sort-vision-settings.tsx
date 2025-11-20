@@ -56,7 +56,7 @@ export default function SortVisionSettings({
     const [isModelLoading, setIsModelLoading] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [savedModels, setSavedModels] = useState<StoredModel[]>([]);
-    const [newModelName, setNewModelName] useState("");
+    const [newModelName, setNewModelName] = useState("");
     const [modelFiles, setModelFiles] = useState<{ model: File; metadata: File; weights: File } | null>(null);
     const [isConnecting, setIsConnecting] = useState(false);
     const [isBtConnected, setIsBtConnected] = useState(isConnected());
