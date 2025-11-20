@@ -1,3 +1,4 @@
+
 /** @type {import('next').NextConfig} */
 
 const withPWA = require('next-pwa')({
@@ -5,8 +6,27 @@ const withPWA = require('next-pwa')({
   register: true,
   skipWaiting: true,
   sw: 'sw.js',
-  disable: process.env.NODE_ENV === 'development'
-})
+  disable: process.env.NODE_ENV === 'development',
+  runtimeCaching: [
+    {
+      urlPattern: /^https?.*/,
+      handler: 'StaleWhileRevalidate',
+      options: {
+        cacheName: 'pages-cache',
+        expiration: {
+          maxEntries: 10,
+          maxAgeSeconds: 30 * 24 * 60 * 60, // 30 days
+        },
+        cacheableResponse: {
+          statuses: [0, 200],
+        },
+      },
+    },
+  ],
+  fallbacks: {
+    document: '/offline',
+  },
+});
 
 const nextConfig = {
   /* config options here */
