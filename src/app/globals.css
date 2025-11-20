@@ -19,8 +19,8 @@
     --secondary: 180 100% 25%; /* Teal */
     --secondary-foreground: 60 90% 98%;
 
-    --muted: 40 20% 85%;
-    --muted-foreground: 240 5% 45.1%;
+    --muted: 40 20% 88%;
+    --muted-foreground: 240 5% 35%; /* Increased contrast */
 
     --accent: 180 80% 35%; /* Lighter Teal for accents */
     --accent-foreground: 60 90% 98%;
@@ -28,15 +28,15 @@
     --destructive: 0 84.2% 60.2%;
     --destructive-foreground: 60 90% 98%;
 
-    --border: 122 20% 70%;
-    --input: 122 20% 80%;
+    --border: 122 20% 65%; /* Increased contrast */
+    --input: 122 20% 85%;
     --ring: 122 39% 49%;
 
     --radius: 0.5rem;
 
     --sidebar-background: 40 33% 88%;
     --sidebar-foreground: 240 10% 3.9%;
-    --sidebar-border: 122 20% 70%;
+    --sidebar-border: 122 20% 65%; /* Increased contrast */
     --sidebar-accent: 40 33% 82%;
     --sidebar-accent-foreground: 240 10% 3.9%;
     --sidebar-ring: 122 39% 49%;
@@ -67,13 +67,13 @@
     --destructive: 0 63% 31%;
     --destructive-foreground: 60 90% 98%;
 
-    --border: 240 4% 25%;
+    --border: 240 4% 30%; /* Increased contrast */
     --input: 240 4% 25%;
     --ring: 122 39% 49%;
     
     --sidebar-background: 240 10% 3.9%;
     --sidebar-foreground: 60 90% 98%;
-    --sidebar-border: 240 4% 25%;
+    --sidebar-border: 240 4% 30%; /* Increased contrast */
     --sidebar-accent: 240 5% 15%;
     --sidebar-accent-foreground: 60 90% 98%;
     --sidebar-ring: 122 39% 49%;
