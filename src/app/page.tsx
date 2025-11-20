@@ -10,16 +10,18 @@ import SortVisionSettings from "@/components/sort-vision-settings";
 import SplashScreen from "@/components/splash-screen";
 import { AppStatus, LogEntry } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
+import { usePersistentState } from "@/hooks/use-persistent-state";
 
 export default function SortVision() {
     const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
     
-    const [isTestMode, setIsTestMode] = useState(false);
-    const [wakeLockEnabled, setWakeLockEnabled] = useState(true);
-    const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
-    const [autoSortEnabled, setAutoSortEnabled] = useState(true);
-    const [autoFlashEnabled, setAutoFlashEnabled] = useState(false);
+    const [isTestMode, setIsTestMode] = usePersistentState('isTestMode', false);
+    const [wakeLockEnabled, setWakeLockEnabled] = usePersistentState('wakeLockEnabled', false);
+    const [autoCaptureEnabled, setAutoCaptureEnabled] = usePersistentState('autoCaptureEnabled', false);
+    const [autoSortEnabled, setAutoSortEnabled] = usePersistentState('autoSortEnabled', false);
+    const [autoFlashEnabled, setAutoFlashEnabled] = usePersistentState('autoFlashEnabled', false);
+
     const [logs, setLogs] = useState<LogEntry[]>([]);
     
     const tmImageRef = useRef<typeof tmImage | null>(null);
