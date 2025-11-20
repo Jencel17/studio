@@ -1,4 +1,6 @@
 
+import { playConnectedSound, playDisconnectedSound } from './audio';
+
 // UUIDs for the Bluetooth service and characteristic
 // These MUST match the UUIDs programmed into your ESP32 Arduino sketch
 const SORTER_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
@@ -14,6 +16,7 @@ export function isConnected(): boolean {
 // Function to handle disconnection events
 function onDisconnected() {
     console.log("Bluetooth device disconnected.");
+    playDisconnectedSound();
     
     // Clean up resources
     if (bluetoothDevice) {
@@ -59,6 +62,7 @@ export async function connectToBluetoothDevice() {
         const characteristic = await service.getCharacteristic(COMMAND_CHARACTERISTIC_UUID);
         commandCharacteristic = characteristic;
         
+        playConnectedSound();
         window.dispatchEvent(new CustomEvent('bt-connected'));
         console.log("Bluetooth device connected and ready.");
         
