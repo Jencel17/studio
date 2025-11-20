@@ -2,19 +2,35 @@
 let audioContext: AudioContext | null = null;
 const audioBufferCache: {[key: string]: AudioBuffer} = {};
 
-function getAudioContext() {
+// Initialize AudioContext on user interaction.
+// Browsers require a user gesture to start the audio context.
+const initializeAudioContext = () => {
   if (!audioContext) {
-    // Standard AudioContext
-    audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    try {
+      audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    } catch (e) {
+      console.error("Web Audio API is not supported in this browser");
+    }
   }
   return audioContext;
 }
 
+// Add a listener for the first user interaction
+if (typeof window !== 'undefined') {
+  document.addEventListener('click', initializeAudioContext, { once: true });
+  document.addEventListener('touchstart', initializeAudioContext, { once: true });
+}
+
+
 async function playSound(url: string) {
+  const context = initializeAudioContext();
+  if (!context) {
+    console.error("AudioContext is not available.");
+    return;
+  }
+  
   try {
-    const context = getAudioContext();
-    
-    // Resume context on user gesture if it's suspended
+    // Resume context on user gesture if it's suspended.
     if (context.state === 'suspended') {
       await context.resume();
     }
@@ -22,26 +38,21 @@ async function playSound(url: string) {
     let buffer: AudioBuffer;
 
     if (audioBufferCache[url]) {
-      // Use cached buffer
       buffer = audioBufferCache[url];
     } else {
-      // Fetch and decode the audio file
       const response = await fetch(url);
       if (!response.ok) {
         throw new Error(`Failed to fetch audio file: ${response.statusText}`);
       }
       const arrayBuffer = await response.arrayBuffer();
       buffer = await context.decodeAudioData(arrayBuffer);
-      // Cache the decoded audio data
       audioBufferCache[url] = buffer;
     }
 
-    // Create a source node
     const source = context.createBufferSource();
     source.buffer = buffer;
     source.connect(context.destination);
     
-    // Play the sound
     source.start(0);
 
   } catch (error) {
