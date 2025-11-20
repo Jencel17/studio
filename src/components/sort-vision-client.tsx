@@ -26,6 +26,7 @@ import { AppStatus, LogEntry, Prediction } from "@/lib/types";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { sendCommand as sendBluetoothCommand } from "@/lib/bluetooth";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 
 type CommandStatus = {
@@ -1085,22 +1086,47 @@ const toggleFocus = useCallback(async () => {
               <SidebarTrigger />
               <p className="text-xs text-muted-foreground ml-2">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle.</p>
             </div>
-            <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
-              <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={appStatus === 'LOADING_LIBS' || isCollectingImages}>
-                {isCameraOn ? <CameraOff /> : <Camera />}
-                {isCameraOn ? "Stop" : "Start"}
-              </Button>
-               <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled}>
-                {isFlashOn ? <FlashlightOff /> : <Flashlight />}
-              </Button>
-              <Button onClick={toggleFocus} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled}>
-                {isFocusLocked ? <Unlock /> : <Lock />}
-              </Button>
-              <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || !model || isCollectingImages}>
-                <Download />
-              </Button>
-            </div>
+            <TooltipProvider>
+              <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
+                <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={appStatus === 'LOADING_LIBS' || isCollectingImages}>
+                  {isCameraOn ? <CameraOff /> : <Camera />}
+                  {isCameraOn ? "Stop" : "Start"}
+                </Button>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled} aria-label="Toggle Flash">
+                            {isFlashOn ? <FlashlightOff /> : <Flashlight />}
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>Toggle Flash</p>
+                    </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button onClick={toggleFocus} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled} aria-label="Toggle Focus Lock">
+                            {isFocusLocked ? <Unlock /> : <Lock />}
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>{isFocusLocked ? 'Unlock Focus' : 'Lock Focus'}</p>
+                    </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || !model || isCollectingImages} aria-label="Download Training Images">
+                            <Download />
+                        </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                        <p>Capture training images</p>
+                    </TooltipContent>
+                </Tooltip>
+              </div>
+            </TooltipProvider>
         </CardFooter>
       </Card>
   );
 }
+
+    
