@@ -5,6 +5,7 @@ const audioBufferCache: {[key: string]: AudioBuffer} = {};
 // Initialize AudioContext on user interaction.
 // Browsers require a user gesture to start the audio context.
 const initializeAudioContext = () => {
+  if (typeof window === 'undefined') return null;
   if (!audioContext) {
     try {
       audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
@@ -12,13 +13,24 @@ const initializeAudioContext = () => {
       console.error("Web Audio API is not supported in this browser");
     }
   }
+  // If it's suspended, try to resume it on any user interaction.
+  if (audioContext?.state === 'suspended') {
+    audioContext.resume();
+  }
   return audioContext;
 }
 
 // Add a listener for the first user interaction
 if (typeof window !== 'undefined') {
-  document.addEventListener('click', initializeAudioContext, { once: true });
-  document.addEventListener('touchstart', initializeAudioContext, { once: true });
+    const initAudio = () => {
+        initializeAudioContext();
+        document.removeEventListener('click', initAudio);
+        document.removeEventListener('touchstart', initAudio);
+        document.removeEventListener('keydown', initAudio);
+    };
+    document.addEventListener('click', initAudio);
+    document.addEventListener('touchstart', initAudio);
+    document.addEventListener('keydown', initAudio);
 }
 
 
@@ -30,7 +42,7 @@ async function playSound(url: string) {
   }
   
   try {
-    // Resume context on user gesture if it's suspended.
+    // Always try to resume context on play, as it might get suspended.
     if (context.state === 'suspended') {
       await context.resume();
     }
@@ -62,9 +74,9 @@ async function playSound(url: string) {
 
 
 export function playConnectedSound() {
-  playSound('/sounds/connect.mp3');
+  playSound('/connect.mp3');
 }
 
 export function playDisconnectedSound() {
-  playSound('/sounds/disconnect.mp3');
+  playSound('/disconnect.mp3');
 }

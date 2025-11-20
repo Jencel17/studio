@@ -52,3 +52,15 @@ Deploying this application is straightforward using Vercel and GitHub.
 4.  **Deploy:** Click the "**Deploy**" button.
 
 Vercel will handle the rest! It will build your application and provide you with a live URL once it's done. Any future pushes to your `main` branch on GitHub will automatically trigger a new deployment.
+
+### Adding Sound Files
+
+For the connection and disconnection sounds to work, you need to add two MP3 files to your project:
+
+1. Find two sound files you like for "connect" and "disconnect" notifications.
+2. Place them in the `public/` directory.
+3. Name them exactly as follows:
+    - `public/connect.mp3`
+    - `public/disconnect.mp3`
+
+Once these files are in place and you push the changes to GitHub, the sounds will work in your deployed application.
