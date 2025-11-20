@@ -11,11 +11,9 @@ const withPWA = require('next-pwa')({
 
 const nextConfig = {
   /* config options here */
+  turbopack: false, // Disable Turbopack to be compatible with next-pwa
   typescript: {
     ignoreBuildErrors: true,
-  },
-  eslint: {
-    ignoreDuringBuilds: true,
   },
   images: {
     remotePatterns: [
@@ -32,7 +30,7 @@ const nextConfig = {
         pathname: '/**',
       },
       {
-        protocol: 'https' ,
+        protocol: 'https',
         hostname: 'picsum.photos',
         port: '',
         pathname: '/**',
