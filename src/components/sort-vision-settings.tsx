@@ -18,6 +18,7 @@ import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
 import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected } from "@/lib/bluetooth";
 import { playConnectedSound, playDisconnectedSound } from "@/lib/audio";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 
 interface SortVisionSettingsProps {
@@ -375,196 +376,234 @@ export default function SortVisionSettings({
             </div>
         </SidebarHeader>
         <SidebarContent className="p-0">
-          <ScrollArea className="h-full">
-            <SidebarGroup>
-                <SidebarGroupLabel>Sorter Connection</SidebarGroupLabel>
-                <div className="p-4 space-y-4">
-                    {isBtConnected ? (
-                        <Button onClick={handleBluetoothDisconnect} className="w-full">
-                            <BluetoothConnected className="mr-2 h-4 w-4" />
-                            Disconnect Sorter
-                        </Button>
-                    ) : (
-                        <Button onClick={handleBluetoothConnect} className="w-full" disabled={isConnecting}>
-                            {isConnecting ? (
-                                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                            ) : (
-                                <Bluetooth className="mr-2 h-4 w-4" />
-                            )}
-                            Connect to Sorter
-                        </Button>
-                    )}
-                </div>
-            </SidebarGroup>
-
-            <SidebarGroup>
-              <SidebarGroupLabel>Teachable Machine Model</SidebarGroupLabel>
-              <div 
-                onDrop={handleFileDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                className={cn(
-                  "m-4 mt-0 p-4 border-2 border-dashed rounded-lg text-center transition-colors duration-200",
-                  isDragging ? "border-primary bg-primary/10" : "border-border",
-                  (isModelLoading || !tmImageRef.current) && "pointer-events-none opacity-50"
-                )}
-              >
-                <FileUp className="mx-auto h-10 w-10 text-muted-foreground" />
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {isModelLoading 
-                    ? "Loading model..." 
-                    : !tmImageRef.current
-                    ? "Loading AI libs..."
-                    : isDragging 
-                    ? "Release to upload" 
-                    : "Drag & drop a .zip or model files"}
-                </p>
-                <p className="text-xs text-muted-foreground/80">or</p>
-                <Button 
-                  variant="link" 
-                  className="p-0 h-auto text-sm"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={isModelLoading || !tmImageRef.current}
-                >
-                  click to browse
-                </Button>
-                <input 
-                  type="file" 
-                  ref={fileInputRef} 
-                  className="hidden" 
-                  accept=".zip,application/json,.bin"
-                  multiple
-                  onChange={handleFileSelect}
-                  disabled={isModelLoading || !tmImageRef.current}
-                />
-              </div>
-              {modelFiles && (
-                <div className="mx-4 mb-4 p-4 border rounded-lg bg-muted/30 space-y-3">
-                    <Label htmlFor="model-name">Save to Library</Label>
-                    <div className="flex gap-2">
-                        <Input 
-                            id="model-name"
-                            value={newModelName}
-                            onChange={(e) => setNewModelName(e.target.value)}
-                            placeholder="Enter model name..."
-                        />
-                        <Button onClick={handleSaveModel} size="icon">
-                            <Save />
-                        </Button>
-                    </div>
-                </div>
-              )}
-            </SidebarGroup>
-            <SidebarGroup>
-              <SidebarGroupLabel className="flex items-center justify-between">
-                Model Library
-                 <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refreshModelsFromDb}>
-                    <RefreshCw className="h-4 w-4"/>
-                </Button>
-              </SidebarGroupLabel>
-              <div className="p-4 pt-0">
-                {savedModels.length > 0 ? (
-                  <div className="space-y-2">
-                    {savedModels.map(m => (
-                      <div key={m.name} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
-                        <p className="text-sm font-medium truncate" title={m.name}>{m.name}</p>
-                        <div className="flex gap-1">
-                          <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !tmImageRef.current}>
-                            {isModelLoading ? <Loader2 className="animate-spin"/> : <BrainCircuit />}
-                          </Button>                          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
-                            <Trash2 />
+          <TooltipProvider>
+            <ScrollArea className="h-full">
+              <SidebarGroup>
+                  <SidebarGroupLabel>Sorter Connection</SidebarGroupLabel>
+                  <div className="p-4 space-y-4">
+                      {isBtConnected ? (
+                          <Button onClick={handleBluetoothDisconnect} className="w-full">
+                              <BluetoothConnected className="mr-2 h-4 w-4" />
+                              Disconnect Sorter
                           </Button>
-                        </div>
-                      </div>
-                    ))}
+                      ) : (
+                          <Button onClick={handleBluetoothConnect} className="w-full" disabled={isConnecting}>
+                              {isConnecting ? (
+                                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              ) : (
+                                  <Bluetooth className="mr-2 h-4 w-4" />
+                              )}
+                              Connect to Sorter
+                          </Button>
+                      )}
                   </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground text-center p-4">No models saved locally.</p>
+              </SidebarGroup>
+
+              <SidebarGroup>
+                <SidebarGroupLabel>Teachable Machine Model</SidebarGroupLabel>
+                <div 
+                  onDrop={handleFileDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  className={cn(
+                    "m-4 mt-0 p-4 border-2 border-dashed rounded-lg text-center transition-colors duration-200",
+                    isDragging ? "border-primary bg-primary/10" : "border-border",
+                    (isModelLoading || !tmImageRef.current) && "pointer-events-none opacity-50"
+                  )}
+                >
+                  <FileUp className="mx-auto h-10 w-10 text-muted-foreground" />
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {isModelLoading 
+                      ? "Loading model..." 
+                      : !tmImageRef.current
+                      ? "Loading AI libs..."
+                      : isDragging 
+                      ? "Release to upload" 
+                      : "Drag & drop a .zip or model files"}
+                  </p>
+                  <p className="text-xs text-muted-foreground/80">or</p>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button 
+                        variant="link" 
+                        className="p-0 h-auto text-sm"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isModelLoading || !tmImageRef.current}
+                      >
+                        click to browse
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Select model.zip, or model.json, metadata.json and weights.bin</p>
+                    </TooltipContent>
+                  </Tooltip>
+                  <input 
+                    type="file" 
+                    ref={fileInputRef} 
+                    className="hidden" 
+                    accept=".zip,application/json,.bin"
+                    multiple
+                    onChange={handleFileSelect}
+                    disabled={isModelLoading || !tmImageRef.current}
+                  />
+                </div>
+                {modelFiles && (
+                  <div className="mx-4 mb-4 p-4 border rounded-lg bg-muted/30 space-y-3">
+                      <Label htmlFor="model-name">Save to Library</Label>
+                      <div className="flex gap-2">
+                          <Input 
+                              id="model-name"
+                              value={newModelName}
+                              onChange={(e) => setNewModelName(e.target.value)}
+                              placeholder="Enter model name..."
+                          />
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button onClick={handleSaveModel} size="icon">
+                                  <Save />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Save current model to library</p>
+                            </TooltipContent>
+                          </Tooltip>
+                      </div>
+                  </div>
                 )}
-              </div>
-            </SidebarGroup>
-            <SidebarGroup>
-              <SidebarGroupLabel>Automation Settings</SidebarGroupLabel>
-              <div className="space-y-4 p-4">
-                 <div className="flex items-center justify-between">
-                  <Label htmlFor="auto-sort" className="flex items-center gap-2">
-                    <Zap className="h-4 w-4" />
-                    Auto-Sort Mode
-                  </Label>
-                  <Switch
-                    id="auto-sort"
-                    checked={autoSortEnabled}
-                    onCheckedChange={setAutoSortEnabled}
-                  />
+              </SidebarGroup>
+              <SidebarGroup>
+                <SidebarGroupLabel className="flex items-center justify-between">
+                  Model Library
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refreshModelsFromDb}>
+                          <RefreshCw className="h-4 w-4"/>
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Refresh library</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </SidebarGroupLabel>
+                <div className="p-4 pt-0">
+                  {savedModels.length > 0 ? (
+                    <div className="space-y-2">
+                      {savedModels.map(m => (
+                        <div key={m.name} className="flex items-center justify-between p-2 bg-muted/30 rounded-md">
+                          <p className="text-sm font-medium truncate" title={m.name}>{m.name}</p>
+                          <div className="flex gap-1">
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !tmImageRef.current}>
+                                  {isModelLoading ? <Loader2 className="animate-spin"/> : <BrainCircuit />}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Load model</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
+                                  <Trash2 />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Delete model</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-muted-foreground text-center p-4">No models saved locally.</p>
+                  )}
                 </div>
-                 <div className="flex items-center justify-between">
-                  <Label htmlFor="auto-capture" className="flex items-center gap-2">
-                    <Bot className="h-4 w-4" />
-                    Auto-Capture Unknowns
-                  </Label>
-                  <Switch
-                    id="auto-capture"
-                    checked={autoCaptureEnabled}
-                    onCheckedChange={setAutoCaptureEnabled}
-                  />
+              </SidebarGroup>
+              <SidebarGroup>
+                <SidebarGroupLabel>Automation Settings</SidebarGroupLabel>
+                <div className="space-y-4 p-4">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="auto-sort" className="flex items-center gap-2">
+                      <Zap className="h-4 w-4" />
+                      Auto-Sort Mode
+                    </Label>
+                    <Switch
+                      id="auto-sort"
+                      checked={autoSortEnabled}
+                      onCheckedChange={setAutoSortEnabled}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="auto-capture" className="flex items-center gap-2">
+                      <Bot className="h-4 w-4" />
+                      Auto-Capture Unknowns
+                    </Label>
+                    <Switch
+                      id="auto-capture"
+                      checked={autoCaptureEnabled}
+                      onCheckedChange={setAutoCaptureEnabled}
+                    />
+                  </div>
                 </div>
-              </div>
-            </SidebarGroup>
+              </SidebarGroup>
 
-            <SidebarGroup>
-              <SidebarGroupLabel>Device Settings</SidebarGroupLabel>
-              <div className="space-y-4 p-4">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="keep-awake" className="flex items-center gap-2">
-                    <Smartphone className="h-4 w-4" />
-                    Keep Screen Awake
-                  </Label>
-                  <Switch
-                    id="keep-awake"
-                    checked={wakeLockEnabled}
-                    onCheckedChange={handleWakeLockToggle}
-                  />
+              <SidebarGroup>
+                <SidebarGroupLabel>Device Settings</SidebarGroupLabel>
+                <div className="space-y-4 p-4">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="keep-awake" className="flex items-center gap-2">
+                      <Smartphone className="h-4 w-4" />
+                      Keep Screen Awake
+                    </Label>
+                    <Switch
+                      id="keep-awake"
+                      checked={wakeLockEnabled}
+                      onCheckedChange={handleWakeLockToggle}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="auto-flash" className="flex items-center gap-2">
+                      <Flashlight className="h-4 w-4" />
+                      Auto Flash on Detect
+                    </Label>
+                    <Switch
+                      id="auto-flash"
+                      checked={autoFlashEnabled}
+                      onCheckedChange={setAutoFlashEnabled}
+                      disabled={!autoSortEnabled}
+                    />
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="test-mode" className="flex items-center gap-2">
+                      <TestTube className="h-4 w-4" />
+                      Test Mode
+                    </Label>                  <Switch
+                      id="test-mode"
+                      checked={isTestMode}
+                      onCheckedChange={setIsTestMode}
+                    />
+                  </div>
                 </div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="auto-flash" className="flex items-center gap-2">
-                    <Flashlight className="h-4 w-4" />
-                    Auto Flash on Detect
-                  </Label>
-                  <Switch
-                    id="auto-flash"
-                    checked={autoFlashEnabled}
-                    onCheckedChange={setAutoFlashEnabled}
-                    disabled={!autoSortEnabled}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="test-mode" className="flex items-center gap-2">
-                    <TestTube className="h-4 w-4" />
-                    Test Mode
-                  </Label>                  <Switch
-                    id="test-mode"
-                    checked={isTestMode}
-                    onCheckedChange={setIsTestMode}
-                  />
-                </div>
-              </div>
-            </SidebarGroup>
+              </SidebarGroup>
 
-            <SidebarGroup>
-              <SidebarGroupLabel>Audio Tests</SidebarGroupLabel>
-              <div className="space-y-2 p-4">
-                <Button onClick={playConnectedSound} variant="outline" className="w-full">
-                  <Music className="mr-2 h-4 w-4" />
-                  Test Connect Sound
-                </Button>
-                <Button onClick={playDisconnectedSound} variant="outline" className="w-full">
-                  <Music className="mr-2 h-4 w-4" />
-                  Test Disconnect Sound
-                </Button>
-              </div>
-            </SidebarGroup>
+              <SidebarGroup>
+                <SidebarGroupLabel>Audio Tests</SidebarGroupLabel>
+                <div className="space-y-2 p-4">
+                  <Button onClick={playConnectedSound} variant="outline" className="w-full">
+                    <Music className="mr-2 h-4 w-4" />
+                    Test Connect Sound
+                  </Button>
+                  <Button onClick={playDisconnectedSound} variant="outline" className="w-full">
+                    <Music className="mr-2 h-4 w-4" />
+                    Test Disconnect Sound
+                  </Button>
+                </div>
+              </SidebarGroup>
 
-          </ScrollArea>
+            </ScrollArea>
+          </TooltipProvider>
         </SidebarContent>
         <SidebarFooter>
           <ThemeToggle />
