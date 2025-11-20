@@ -1,51 +1,29 @@
 
-
 // UUIDs for the Bluetooth service and characteristic
 // These MUST match the UUIDs programmed into your ESP32 Arduino sketch
 const SORTER_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
 const COMMAND_CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
-// The STATUS_CHARACTERISTIC_UUID is no longer needed as the app controls timing.
-// const STATUS_CHARACTERISTIC_UUID = "f2ba755b-b92e-4638-9a39-42b477651a54";
 
 let bluetoothDevice: BluetoothDevice | null = null;
-let gattServer: BluetoothRemoteGATTServer | null = null;
-export let commandCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
-// let statusCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
-
-// Command Queue
-const commandQueue: string[] = [];
-let isProcessingQueue = false;
-
-// Function to process the command queue
-async function processCommandQueue() {
-    if (isProcessingQueue || commandQueue.length === 0) {
-        return;
-    }
-
-    isProcessingQueue = true;
-    const command = commandQueue.shift();
-
-    if (command && commandCharacteristic) {
-        try {
-            const encoder = new TextEncoder();
-            const data = encoder.encode(command);
-            await commandCharacteristic.writeValue(data);
-            console.log(`Sent command: ${command}`);
-        } catch (error) {
-            console.error(`Failed to send command "${command}":`, error);
-            // Optionally, re-queue the command or handle the error
-        }
-    }
-    
-    // Use a short delay before processing the next command to prevent overwhelming the device
-    setTimeout(() => {
-        isProcessingQueue = false;
-        processCommandQueue();
-    }, 100);
-}
+let commandCharacteristic: BluetoothRemoteGATTCharacteristic | null = null;
 
 export function isConnected(): boolean {
     return !!(bluetoothDevice && bluetoothDevice.gatt && bluetoothDevice.gatt.connected);
+}
+
+// Function to handle disconnection events
+function onDisconnected() {
+    console.log("Bluetooth device disconnected.");
+    
+    // Clean up resources
+    if (bluetoothDevice) {
+        bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected);
+    }
+    bluetoothDevice = null;
+    commandCharacteristic = null;
+    
+    // Notify the UI
+    window.dispatchEvent(new CustomEvent('bt-disconnected'));
 }
 
 // Function to connect to the Bluetooth device
@@ -54,19 +32,20 @@ export async function connectToBluetoothDevice() {
         console.log("Requesting Bluetooth device...");
         
         // Scan for devices with the specified service
-        bluetoothDevice = await navigator.bluetooth.requestDevice({
+        const device = await navigator.bluetooth.requestDevice({
             filters: [{ services: [SORTER_SERVICE_UUID] }],
             optionalServices: [SORTER_SERVICE_UUID]
         });
 
-        if (!bluetoothDevice) {
+        if (!device) {
             throw new Error("No device selected.");
         }
+        bluetoothDevice = device;
 
         console.log("Connecting to GATT Server...");
-        gattServer = await bluetoothDevice.gatt?.connect();
+        const server = await bluetoothDevice.gatt?.connect();
 
-        if (!gattServer) {
+        if (!server) {
             throw new Error("Could not connect to GATT server.");
         }
         
@@ -74,14 +53,11 @@ export async function connectToBluetoothDevice() {
         bluetoothDevice.addEventListener('gattserverdisconnected', onDisconnected);
 
         console.log("Getting Sorter Service...");
-        const service = await gattServer.getPrimaryService(SORTER_SERVICE_UUID);
+        const service = await server.getPrimaryService(SORTER_SERVICE_UUID);
 
         console.log("Getting Command Characteristic...");
-        commandCharacteristic = await service.getCharacteristic(COMMAND_CHARACTERISTIC_UUID);
-
-        // Status characteristic is no longer needed.
-        // console.log("Getting Status Characteristic...");
-        // statusCharacteristic = await service.getCharacteristic(STATUS_CHARACTERISTIC_UUID);
+        const characteristic = await service.getCharacteristic(COMMAND_CHARACTERISTIC_UUID);
+        commandCharacteristic = characteristic;
         
         window.dispatchEvent(new CustomEvent('bt-connected'));
         console.log("Bluetooth device connected and ready.");
@@ -96,49 +72,34 @@ export async function connectToBluetoothDevice() {
     }
 }
 
-// Function to handle disconnection events
-function onDisconnected() {
-    console.log("Bluetooth device disconnected.");
-    
-    // Clean up resources
-    if (bluetoothDevice) {
-        bluetoothDevice.removeEventListener('gattserverdisconnected', onDisconnected);
-    }
-    bluetoothDevice = null;
-    gattServer = null;
-    commandCharacteristic = null;
-    // statusCharacteristic = null;
-    commandQueue.length = 0; // Clear the queue on disconnect
-    isProcessingQueue = false;
-    
-    // Notify the UI
-    window.dispatchEvent(new CustomEvent('bt-disconnected'));
-}
-
 // Function to disconnect from the Bluetooth device
 export function disconnectFromBluetoothDevice() {
-    if (!bluetoothDevice || !bluetoothDevice.gatt) {
+    if (!bluetoothDevice) {
         return;
     }
-    if (bluetoothDevice.gatt.connected) {
+    if (bluetoothDevice.gatt?.connected) {
         console.log("Disconnecting from Bluetooth device...");
         bluetoothDevice.gatt.disconnect();
     } else {
         // If it's already disconnected but we're cleaning up
+        console.log("Cleaning up disconnected bluetooth device.");
         onDisconnected();
     }
 }
 
-// Function to send a command to the ESP32 by adding it to the queue
+// Function to send a command to the ESP32
 export async function sendCommand(command: string) {
-    if (!isConnected()) {
+    if (!isConnected() || !commandCharacteristic) {
         throw new Error("Not connected to a device.");
     }
-    commandQueue.push(command);
-    processCommandQueue();
-}
-
-// The app no longer needs to subscribe to status notifications.
-export async function subscribeToNotifications(logCallback: (message: string) => void) {
-    console.warn("subscribeToNotifications is deprecated and no longer has any effect.");
+    
+    try {
+        const encoder = new TextEncoder();
+        const data = encoder.encode(command);
+        await commandCharacteristic.writeValue(data);
+        console.log(`Sent command: ${command}`);
+    } catch (error) {
+        console.error(`Failed to send command "${command}":`, error);
+        throw error;
+    }
 }

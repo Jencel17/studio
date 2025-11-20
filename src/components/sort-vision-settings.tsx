@@ -3,7 +3,6 @@
 
 import { useState, useRef, useEffect, useCallback, ChangeEvent, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
-import type * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -14,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Timer, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, BluetoothSearching } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
 import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected } from "@/lib/bluetooth";
@@ -24,7 +23,6 @@ interface SortVisionSettingsProps {
     setModel: (model: tmImage.CustomMobileNet | null) => void;
     setAppStatus: (status: AppStatus) => void;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
-    tfRef: MutableRefObject<typeof tf | null>;
     isTestMode: boolean;
     setIsTestMode: (isTest: boolean) => void;
     wakeLockEnabled: boolean;
@@ -35,8 +33,6 @@ interface SortVisionSettingsProps {
     setAutoSortEnabled: (isEnabled: boolean) => void;
     autoFlashEnabled: boolean;
     setAutoFlashEnabled: (isEnabled: boolean) => void;
-    cameraRestartDelay: number;
-    setCameraRestartDelay: (delay: number) => void;
     addLog: (message: string) => void;
 }
 
@@ -45,7 +41,6 @@ export default function SortVisionSettings({
     setModel,
     setAppStatus,
     tmImageRef,
-    tfRef,
     isTestMode,
     setIsTestMode,
     wakeLockEnabled,
@@ -56,14 +51,12 @@ export default function SortVisionSettings({
     setAutoSortEnabled,
     autoFlashEnabled,
     setAutoFlashEnabled,
-    cameraRestartDelay,
-    setCameraRestartDelay,
     addLog,
 }: SortVisionSettingsProps) {
     const [isModelLoading, setIsModelLoading] = useState(false);
     const [isDragging, setIsDragging] = useState(false);
     const [savedModels, setSavedModels] = useState<StoredModel[]>([]);
-    const [newModelName, setNewModelName] = useState("");
+    const [newModelName, setNewModelName] useState("");
     const [modelFiles, setModelFiles] = useState<{ model: File; metadata: File; weights: File } | null>(null);
     const [isConnecting, setIsConnecting] = useState(false);
     const [isBtConnected, setIsBtConnected] = useState(isConnected());
@@ -76,7 +69,7 @@ export default function SortVisionSettings({
         setAppStatus("MODEL_LOADING");
         addLog("Loading model from files...");
 
-        if (!tmImageRef.current || !tfRef.current) {
+        if (!tmImageRef.current) {
             addLog("Model load failed: AI Libraries not ready.");
             toast({ variant: "destructive", title: "Load Error", description: "AI Libraries not ready. Please wait." });
             setIsModelLoading(false);
@@ -85,8 +78,6 @@ export default function SortVisionSettings({
         }
 
         try {
-          await tfRef.current.setBackend('webgl');
-          await tfRef.current.ready();
           
           const loadedModel = await tmImageRef.current.loadFromFiles(modelFile, weightsFile, metadataFile);
           
@@ -121,7 +112,7 @@ export default function SortVisionSettings({
         } finally {
             setIsModelLoading(false);
         }
-      }, [toast, setAppStatus, addLog, setModel, tmImageRef, tfRef]);
+      }, [toast, setAppStatus, addLog, setModel, tmImageRef]);
 
     const handleFileDrop = useCallback(async (event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault();
@@ -252,37 +243,20 @@ export default function SortVisionSettings({
          toast({ variant: "destructive", title: "Invalid Files", description: "Select a .zip or all three model component files." });
        }
     }
-    event.target.value = '';
+    if (event.target) {
+        event.target.value = '';
+    }
   };
   
     const refreshModelsFromDb = useCallback(async () => {
         addLog("Refreshing model library from local DB.");
         const models = await getModelsFromDb();
         setSavedModels(models);
-        toast({ title: "Model Library Refreshed" });
-    }, [addLog, toast]);
+    }, [addLog]);
 
     useEffect(() => {
-        let checkCount = 0;
-        const maxChecks = 5;
-        const interval = 1000; // 1 second
-
-        const refreshInterval = setInterval(() => {
-            if (model || checkCount >= maxChecks) {
-                clearInterval(refreshInterval);
-                return;
-            }
-            
-            checkCount++;
-            addLog(`[Auto-Refresh] Checking for saved models, attempt ${checkCount}/${maxChecks}`);
-            getModelsFromDb().then(models => {
-                setSavedModels(models);
-            });
-
-        }, interval);
-
-        return () => clearInterval(refreshInterval);
-    }, [model, addLog]);
+        refreshModelsFromDb();
+    }, [refreshModelsFromDb]);
 
     const handleSaveModel = async () => {
     if (!modelFiles || !newModelName) {
@@ -328,6 +302,8 @@ export default function SortVisionSettings({
       if(newModelName === name){
         setModel(null);
         setAppStatus("AWAITING_MODEL");
+        setNewModelName("");
+        setModelFiles(null);
       }
     } catch (error: any) {
       console.error("Failed to delete model from library:", error);
@@ -454,7 +430,7 @@ export default function SortVisionSettings({
                   type="file" 
                   ref={fileInputRef} 
                   className="hidden" 
-                  accept=".zip,model.json,metadata.json,application/octet-stream"
+                  accept=".zip,application/json,.bin"
                   multiple
                   onChange={handleFileSelect}
                   disabled={isModelLoading || !tmImageRef.current}
@@ -493,8 +469,7 @@ export default function SortVisionSettings({
                         <div className="flex gap-1">
                           <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !tmImageRef.current}>
                             {isModelLoading ? <Loader2 className="animate-spin"/> : <BrainCircuit />}
-                          </Button>
-                          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
+                          </Button>                          <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
                             <Trash2 />
                           </Button>
                         </div>
@@ -557,7 +532,7 @@ export default function SortVisionSettings({
                     id="auto-flash"
                     checked={autoFlashEnabled}
                     onCheckedChange={setAutoFlashEnabled}
-                    disabled={autoSortEnabled}
+                    disabled={!autoSortEnabled}
                   />
                 </div>
                 <div className="flex items-center justify-between">

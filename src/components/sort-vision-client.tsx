@@ -3,7 +3,6 @@
 
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
-import type * as tf from "@tensorflow/tfjs";
 import JSZip from "jszip";
 import {
   Card,
@@ -16,10 +15,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Terminal, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, CheckCircle, XCircle, TestTube, Download, Expand, Minimize, Sparkles, Lock, Unlock, Bluetooth, BluetoothConnected, BluetoothSearching, BluetoothOff } from "lucide-react";
+import { Camera, CameraOff, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, CheckCircle, XCircle, TestTube, Download, Sparkles, Lock, Unlock, BluetoothConnected, BluetoothOff } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { handleModelSwapCheck } from "@/app/actions/model-analysis";
-import { type InterpretDetectionsOutput } from "@/app/actions/ai-schemas";
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -28,7 +25,7 @@ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/
 import { AppStatus, LogEntry, Prediction } from "@/lib/types";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { commandCharacteristic, sendCommand as sendBluetoothCommand, subscribeToNotifications } from "@/lib/bluetooth";
+import { sendCommand as sendBluetoothCommand } from "@/lib/bluetooth";
 
 
 type CommandStatus = {
@@ -47,11 +44,9 @@ interface SortVisionClientProps {
     autoCaptureEnabled: boolean;
     autoSortEnabled: boolean;
     autoFlashEnabled: boolean;
-    cameraRestartDelay: number;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
-    tfRef: MutableRefObject<typeof tf | null>;
     logs: LogEntry[];
-    setLogs: (logs: Prediction[]) => void;
+    setLogs: (logs: LogEntry[]) => void;
     addLog: (message: string) => void;
 }
 
@@ -62,13 +57,14 @@ const IMAGE_CAPTURE_INTERVAL = 100;
 const CAPTURE_COUNTDOWN_SECONDS = 3;
 const AUTO_CAPTURE_TRIGGER_TIME = 2000; 
 const AUTO_CAPTURE_COOLDOWN_TIME = 5000;
+const CAMERA_RESTART_DELAY_MS = 3000;
 const CAMERA_WARMUP_DELAY = 3000;
 const DETECTION_SETTLE_DELAY = 1500;
 
 const interpretDetectionsLocal = (
   predictions: Prediction[],
   confidenceThreshold: number
-): InterpretDetectionsOutput => {
+): { detectionState: DetectionState, primaryObject?: string, detectedObjects?: string[], reason: string } => {
   const sortedPredictions = [...predictions].sort(
     (a, b) => b.probability - a.probability
   );
@@ -87,8 +83,6 @@ const interpretDetectionsLocal = (
     (p) => p.probability >= confidenceThreshold
   );
 
-  // Rule 1: Clear Single Object
-  // High confidence AND a large gap between the first and second prediction
   if (
     topPrediction.probability > 0.90 &&
     (!secondPrediction || topPrediction.probability > secondPrediction.probability * 2)
@@ -100,8 +94,6 @@ const interpretDetectionsLocal = (
     };
   }
 
-  // Rule 2: Multiple Objects
-  // If two or more predictions are above the confidence threshold
   if (highConfidencePredictions.length > 1) {
     return {
       detectionState: 'MULTIPLE_OBJECTS',
@@ -110,8 +102,6 @@ const interpretDetectionsLocal = (
     };
   }
 
-  // Rule 3: Tentative Single Object (still counts as single, but less certain)
-  // If one prediction is above the threshold, but doesn't meet the "very high confidence" rule.
   if (highConfidencePredictions.length === 1) {
      return {
       detectionState: 'SINGLE_OBJECT',
@@ -120,8 +110,6 @@ const interpretDetectionsLocal = (
     };
   }
 
-  // Rule 4: Ambiguous Detection
-  // If the top prediction is above a minimum but below the main threshold, or if scores are too close.
   if (topPrediction.probability >= 0.5 && topPrediction.probability < confidenceThreshold) {
     return {
       detectionState: 'AMBIGUOUS',
@@ -129,7 +117,6 @@ const interpretDetectionsLocal = (
     };
   }
 
-  // Fallback Rule
   return {
     detectionState: 'NO_DETECTION',
     reason: 'Analysis complete, but no clear result based on rules.',
@@ -145,9 +132,7 @@ export default function SortVisionClient({
     autoCaptureEnabled,
     autoSortEnabled,
     autoFlashEnabled,
-    cameraRestartDelay,
     tmImageRef,
-    tfRef,
     logs,
     setLogs,
     addLog,
@@ -156,8 +141,6 @@ export default function SortVisionClient({
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
   const [isFlashOn, setIsFlashOn] = useState(false);
   const [isFocusLocked, setIsFocusLocked] = useState(false);
-  const [lastClassifications, setLastClassifications] = useState<Prediction[]>([]);
-  const [isConsoleFullscreen, setIsConsoleFullscreen] = useState(false);
   const [isAutoScrollOn, setIsAutoScrollOn] = useState(true);
   const [detectionState, setDetectionState] = useState<DetectionState>("NO_DETECTION");
   const [primaryPrediction, setPrimaryPrediction] = useState<Prediction | null>(null);
@@ -166,7 +149,7 @@ export default function SortVisionClient({
   const [collectedImages, setCollectedImages] = useState<string[]>([]);
   const [countdown, setCountdown] = useState(0);
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
-  const [wakeLockRef, setWakeLockRef] = useState<WakeLockSentinel | null>(null);
+  const [wakeLock, setWakeLock] = useState<WakeLockSentinel | null>(null);
   const [isBtConnected, setIsBtConnected] = useState(false);
   const [stablePrediction, setStablePrediction] = useState<Prediction | null>(null);
 
@@ -176,13 +159,16 @@ export default function SortVisionClient({
   const ambiguousDetectionTimer = useRef<NodeJS.Timeout | null>(null);
   const detectionTimer = useRef<NodeJS.Timeout | null>(null);
   
-
   const { toast } = useToast();
 
     const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
         if (isTestMode) {
           addLog(`TEST MODE: Simulating light ${state} command.`);
           return true;
+        }
+        if (!isBtConnected) {
+            addLog("Cannot send light command: Bluetooth not connected.");
+            return false;
         }
         try {
             await sendBluetoothCommand(`LIGHT_${state}`);
@@ -197,7 +183,7 @@ export default function SortVisionClient({
             });
             return false;
         }
-    }, [isTestMode, addLog, toast]);
+    }, [isTestMode, addLog, toast, isBtConnected]);
 
   
   const startImageCollection = useCallback(async () => {
@@ -219,33 +205,35 @@ export default function SortVisionClient({
   }, [isCameraOn, hasCameraPermission, isCollectingImages, addLog, setAppStatus, sendLightCommand]);
 
     const releaseWakeLock = useCallback(async () => {
-    if (wakeLockRef) {
+    if (wakeLock) {
       try {
-        await wakeLockRef.release();
-        setWakeLockRef(null);
+        await wakeLock.release();
+        setWakeLock(null);
+        addLog("Screen wake lock released.");
       } catch (error: any) {
         console.error("Could not release wake lock:", error);
+        addLog(`Wake Lock Error on release: ${error.message}`);
       }
     }
-  }, [wakeLockRef]);
+  }, [wakeLock, addLog]);
 
     const requestWakeLock = useCallback(async () => {
-    if ('wakeLock' in navigator && wakeLockEnabled && !wakeLockRef) {
+    if ('wakeLock' in navigator && wakeLockEnabled && !wakeLock) {
       try {
         addLog("Requesting screen wake lock.");
         const lock = await navigator.wakeLock.request('screen');
-        setWakeLockRef(lock);
+        setWakeLock(lock);
         addLog("Screen wake lock acquired.");
         lock.addEventListener('release', () => {
           addLog("Screen wake lock released by browser.");
-          setWakeLockRef(null);
+          setWakeLock(null);
         });
       } catch (err: any) {
         addLog(`Wake Lock Error: ${err.message}`);
         console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
       }
     }
-  }, [wakeLockEnabled, wakeLockRef, addLog]);
+  }, [wakeLockEnabled, wakeLock, addLog]);
 
   const applyCameraSettings = useCallback(async (stream: MediaStream, { flash, focus }: { flash: boolean; focus: boolean; }) => {
       if (!stream) return;
@@ -344,9 +332,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
                         focus: options.restoreFocus ?? isFocusLocked,
                     });
 
-                    if (wakeLockEnabled) {
-                        requestWakeLock();
-                    }
+                    await requestWakeLock();
                 }).catch((error) => {
                     console.error("Video play failed:", error);
                     addLog(`Video play error: ${error.message}`);
@@ -371,7 +357,7 @@ const startCamera = useCallback(async (options: { restoreFlash?: boolean, restor
         });
         stopCamera();
     }
-}, [addLog, setAppStatus, stopCamera, toast, wakeLockEnabled, requestWakeLock, isFlashOn, isFocusLocked, applyCameraSettings]);
+}, [addLog, setAppStatus, stopCamera, toast, requestWakeLock, isFlashOn, isFocusLocked, applyCameraSettings]);
 
 
   const toggleFlash = useCallback(async () => {
@@ -505,10 +491,9 @@ const toggleFocus = useCallback(async () => {
     } else {
       addLog("Sort command failed. Restarting camera anyway.");
     }
-    setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), cameraRestartDelay * 1000);
+    setTimeout(() => startCamera({ restoreFlash: flashState, restoreFocus: focusState }), CAMERA_RESTART_DELAY_MS);
 
-
-}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked, cameraRestartDelay]);
+}, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked]);
 
  const runClassification = useCallback(async () => {
     if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
@@ -548,7 +533,6 @@ const toggleFocus = useCallback(async () => {
             // Timer completed, this is a stable detection
             addLog(`Stable detection of ${foundPrediction.className}. Proceeding to sort.`);
             
-            // This is the critical step: Stop the prediction loop immediately.
             if (predictionIntervalRef.current) {
               clearInterval(predictionIntervalRef.current);
               predictionIntervalRef.current = undefined;
@@ -556,7 +540,6 @@ const toggleFocus = useCallback(async () => {
             }
 
             setPrimaryPrediction(foundPrediction);
-            setLastClassifications(prev => [...prev, foundPrediction]);
 
             if (autoSortEnabled) {
               if (autoFlashEnabled) {
@@ -583,12 +566,10 @@ const toggleFocus = useCallback(async () => {
                   }, 500);
                 });
               } else {
-                // No auto-flash, sort directly
                 addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sorting.`);
                 handleSortAndRestart(foundPrediction.className);
               }
             } else {
-              // Manual sort mode
               setAppStatus("READY_TO_SEND");
               addLog(`Manual Sort: Detected ${foundPrediction.className}. Ready to send command.`);
             }
@@ -597,7 +578,6 @@ const toggleFocus = useCallback(async () => {
         }
       }
     } else {
-      // Not a single object, so reset the stability timer and prediction
       if (detectionTimer.current) {
         clearTimeout(detectionTimer.current);
         detectionTimer.current = null;
@@ -708,7 +688,7 @@ const toggleFocus = useCallback(async () => {
             a.href = url;
             a.download = `unidentified-images-${timestamp}.zip`;
             document.body.appendChild(a);
-a.click();
+            a.click();
             window.URL.revokeObjectURL(url);
             document.body.removeChild(a);
 
@@ -782,63 +762,9 @@ a.click();
   }, [requestWakeLock, isCameraOn]);
 
   useEffect(() => {
-    const checkModelPerformance = async () => {
-      if (model && lastClassifications.length >= 20) {
-        addLog(`Checking model performance with ${lastClassifications.length} classifications.`);
-        const classificationsToAnalyze = [...lastClassifications];
-        setLastClassifications([]);
-
-        const scores: { [key: string]: number[] } = {};
-         model?.getClassLabels().forEach(label => {
-            scores[label] = [];
-        });
-
-        classificationsToAnalyze.forEach(p => {
-            if (p.className in scores) {
-                scores[p.className].push(p.probability);
-            }
-        });
-        
-        const averageConfidenceScores: Record<string, number> = {};
-        for(const label in scores) {
-            if(scores[label].length > 0) {
-                averageConfidenceScores[label] = scores[label].reduce((a, b) => a + b, 0) / scores[label].length;
-            } else {
-                averageConfidenceScores[label] = 0;
-            }
-        }
-        
-        addLog(`Requesting AI analysis for model performance. Avg scores: ${JSON.stringify(averageConfidenceScores)}`);
-        try {
-          const result = await handleModelSwapCheck({
-              averageConfidenceScores,
-              numClassifications: classificationsToAnalyze.length,
-          });
-
-          if (result.shouldSuggestSwap) {
-            addLog(`AI Suggestion: ${result.reason}`);
-            toast({
-              title: "Model Performance Suggestion",
-              description: result.reason,
-              duration: 9000,
-            });
-          } else {
-              addLog(`AI Suggestion: No model swap needed. ${result.reason}`);
-          }
-        } catch (e) {
-          addLog("Could not get model performance suggestion.");
-        }
-      }
-    };
-
-    checkModelPerformance();
-  }, [lastClassifications, toast, addLog, model]);
-
-  useEffect(() => {
     const onConnected = () => {
         addLog("Bluetooth device connected.");
         setIsBtConnected(true);
-        // We no longer need to subscribe to notifications for READY status.
     };
     const onDisconnected = () => {
         addLog("Bluetooth device disconnected.");
@@ -1079,8 +1005,7 @@ a.click();
     );
   };
 
-  const LogViewer = ({ fullscreen }: {fullscreen: boolean}) => {
-    const scrollRef = useRef<HTMLDivElement>(null);
+  const LogViewer = () => {
     const viewportRef = useRef<HTMLDivElement>(null);
 
     useEffect(() => {
@@ -1091,10 +1016,10 @@ a.click();
 
 
     return (
-      <ScrollArea className={cn("w-full my-4 bg-muted/20 rounded-md border", fullscreen ? "flex-1" : "h-[150px]")} viewportRef={viewportRef}>
+      <ScrollArea className="w-full my-4 bg-muted/20 rounded-md border h-[200px]" viewportRef={viewportRef}>
         <div className="p-4 font-mono text-xs flex flex-col-reverse">
           <div>
-            {logs.map((log, index) => (
+            {[...logs].map((log, index) => (
               <p key={index}>
                 <span className="text-muted-foreground/50">{log.timestamp}</span>
                 <span className="ml-2 text-foreground">{log.message}</span>
@@ -1124,7 +1049,7 @@ a.click();
         </CardHeader>
 
         <CardContent className="flex-1 flex flex-col gap-4">
-          <div className={cn("grid md:grid-cols-[1fr_auto] gap-4 items-center", isConsoleFullscreen && "hidden")}>
+          <div className="grid md:grid-cols-[1fr_auto] gap-4 items-center">
               <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border-2 border-border/30">
                 <video
                     ref={videoRef}
@@ -1143,7 +1068,7 @@ a.click();
             <AccordionItem value="console" className="border-b-0">
                 <AccordionTrigger className="text-sm font-semibold hover:no-underline">Console</AccordionTrigger>
                 <AccordionContent className="flex flex-col">
-                    <LogViewer fullscreen={isConsoleFullscreen}/>
+                    <LogViewer />
                      <div className="flex items-center justify-end gap-4">
                         <div className="flex items-center gap-2">
                            <Switch id="auto-scroll" checked={isAutoScrollOn} onCheckedChange={setIsAutoScrollOn} />
@@ -1179,11 +1104,3 @@ a.click();
       </Card>
   );
 }
-
-    
-
-    
-
-    
-
-    

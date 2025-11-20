@@ -17,6 +17,12 @@ export const metadata: Metadata = {
   title: "SortVision",
   description: "AI-powered trash sorting assistant",
   manifest: "/manifest.json",
+  icons: {
+    icon: {
+      url: "/favicon.ico",
+    },
+    apple: "/apple-icon.png",
+  },
 };
 
 export const viewport: Viewport = {

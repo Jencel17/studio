@@ -16,13 +16,11 @@ export default function SortVision() {
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
     
     const [isTestMode, setIsTestMode] = useState(false);
-    const [wakeLockEnabled, setWakeLockEnabled] = useState(false);
-    const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(true);
+    const [wakeLockEnabled, setWakeLockEnabled] = useState(true);
+    const [autoCaptureEnabled, setAutoCaptureEnabled] = useState(false);
     const [autoSortEnabled, setAutoSortEnabled] = useState(true);
     const [autoFlashEnabled, setAutoFlashEnabled] = useState(false);
-    const [cameraRestartDelay, setCameraRestartDelay] = useState(3);
     const [logs, setLogs] = useState<LogEntry[]>([]);
-
     
     const tmImageRef = useRef<typeof tmImage | null>(null);
     const tfRef = useRef<typeof tf | null>(null);
@@ -33,7 +31,7 @@ export default function SortVision() {
             timestamp: new Date().toLocaleTimeString(),
             message,
         };
-        setLogs((prevLogs) => [...prevLogs, newLog].slice(-100));
+        setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, 100));
     }, []);
 
     useEffect(() => {
@@ -62,7 +60,6 @@ export default function SortVision() {
                     description: "Could not load core AI libraries. Please refresh the page.",
                 });
                 addLog("FATAL: Failed to load AI libraries.");
-                // We don't change status here, so it remains on the splash screen with an error.
             }
         };
 
@@ -74,13 +71,12 @@ export default function SortVision() {
     }
 
     return (
-    <>
+    <div className="flex h-full min-h-screen w-full items-center justify-center bg-background text-foreground">
       <SortVisionSettings 
         model={model}
         setModel={setModel}
         setAppStatus={setAppStatus}
         tmImageRef={tmImageRef}
-        tfRef={tfRef}
         isTestMode={isTestMode}
         setIsTestMode={setIsTestMode}
         wakeLockEnabled={wakeLockEnabled}
@@ -91,12 +87,10 @@ export default function SortVision() {
         setAutoSortEnabled={setAutoSortEnabled}
         autoFlashEnabled={autoFlashEnabled}
         setAutoFlashEnabled={setAutoFlashEnabled}
-        cameraRestartDelay={cameraRestartDelay}
-        setCameraRestartDelay={setCameraRestartDelay}
         addLog={addLog}
       />
 
-      <div className="grid min-h-screen flex-1 place-items-center p-4 sm:p-6">
+      <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
         <SortVisionClient
           model={model}
           appStatus={appStatus}
@@ -106,14 +100,12 @@ export default function SortVision() {
           autoCaptureEnabled={autoCaptureEnabled}
           autoSortEnabled={autoSortEnabled}
           autoFlashEnabled={autoFlashEnabled}
-          cameraRestartDelay={cameraRestartDelay}
           tmImageRef={tmImageRef}
-          tfRef={tfRef}
           logs={logs}
           setLogs={setLogs}
           addLog={addLog}
         />
-      </div>
-    </>
+      </main>
+    </div>
   );
 }
