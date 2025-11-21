@@ -13,7 +13,7 @@
     --popover: 40 33% 92%;
     --popover-foreground: 240 10% 3.9%;
 
-    --primary: 122 39% 49%; /* Forest Green */
+    --primary: 122 39% 40%; /* Darker Forest Green for better contrast */
     --primary-foreground: 60 90% 98%;
     
     --secondary: 180 100% 25%; /* Teal */
