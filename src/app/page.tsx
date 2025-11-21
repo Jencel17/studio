@@ -38,9 +38,17 @@ export default function SortVision() {
         if (authCookie === 'true') {
             setIsAuthenticated(true);
         } else {
+            // Set to false to trigger the redirect below, but only if the cookie is missing.
+            setIsAuthenticated(false);
+        }
+    }, []);
+
+    useEffect(() => {
+        // This effect runs separately to handle redirection once the auth state is determined.
+        if (isAuthenticated === false) {
             router.push('/login');
         }
-    }, [router]);
+    }, [isAuthenticated, router]);
 
     const addLog = useCallback((message: string) => {
         const newLog: LogEntry = {
@@ -84,6 +92,7 @@ export default function SortVision() {
         loadAiLibraries();
     }, [addLog, toast, isAuthenticated]);
 
+    // Show a loading screen while we check for the cookie.
     if (isAuthenticated === undefined) {
         return (
              <div className="flex h-screen w-full flex-col items-center justify-center bg-background text-foreground">
@@ -93,8 +102,8 @@ export default function SortVision() {
         );
     }
     
+    // If not authenticated, we will be redirected by the effect above. Return null to avoid flashing content.
     if (!isAuthenticated) {
-        // This will be shown briefly during the redirect to /login
         return null;
     }
 

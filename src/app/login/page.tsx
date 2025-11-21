@@ -21,9 +21,8 @@ export default function LoginPage() {
     e.preventDefault();
     setIsLoading(true);
 
-    // No need for a delay here. The logic is simple.
+    // This logic is simple and doesn't need a delay.
     if (username === 'admin' && password === 'jencelearl17') {
-      // Set a cookie that expires in 1 day
       Cookies.set('auth', 'true', { expires: 1 });
       
       toast({
