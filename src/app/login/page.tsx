@@ -1,3 +1,4 @@
+
 "use client";
 
 import { useState, FormEvent } from 'react';
@@ -32,10 +33,8 @@ export default function LoginPage() {
           description: 'Welcome back! Redirecting...',
         });
         
-        // Redirect after a short delay to allow toast to be seen
-        setTimeout(() => {
-          router.push('/');
-        }, 500);
+        // Redirect after the state has had a chance to update
+        router.push('/');
 
       } else {
         toast({
