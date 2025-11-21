@@ -18,7 +18,8 @@ import { Loader2 } from "lucide-react";
 export default function SortVision() {
     const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
-    const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+    const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
+    const [authChecked, setAuthChecked] = useState<boolean>(false);
     
     const [isTestMode, setIsTestMode] = usePersistentState('isTestMode', false);
     const [wakeLockEnabled, setWakeLockEnabled] = usePersistentState('wakeLockEnabled', false);
@@ -40,6 +41,7 @@ export default function SortVision() {
         } else {
             router.push('/login');
         }
+        setAuthChecked(true);
     }, [router]);
 
     const addLog = useCallback((message: string) => {
@@ -84,7 +86,7 @@ export default function SortVision() {
         loadAiLibraries();
     }, [addLog, toast, isAuthenticated]);
 
-    if (isAuthenticated === null) {
+    if (!authChecked) {
         return (
              <div className="flex h-screen w-full flex-col items-center justify-center bg-background text-foreground">
                 <Loader2 className="h-8 w-8 animate-spin" />
@@ -93,6 +95,11 @@ export default function SortVision() {
         );
     }
     
+    if (!isAuthenticated) {
+        // This will be shown briefly during the redirect to /login
+        return null;
+    }
+
     if (appStatus === 'LOADING_LIBS') {
         return <SplashScreen />;
     }
