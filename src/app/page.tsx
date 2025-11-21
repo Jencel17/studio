@@ -88,7 +88,7 @@ export default function SortVision() {
         return (
              <div className="flex h-screen w-full flex-col items-center justify-center bg-background text-foreground">
                 <Loader2 className="h-8 w-8 animate-spin" />
-                <p className="mt-4 text-muted-foreground">Checking authentication...</p>
+                <p className="mt-4 text-muted-foreground">Verifying authentication...</p>
             </div>
         );
     }

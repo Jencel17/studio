@@ -2,7 +2,6 @@
 "use client";
 
 import { useState, FormEvent } from 'react';
-import { useRouter } from 'next/navigation';
 import Cookies from 'js-cookie';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
@@ -16,35 +15,34 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
-  const router = useRouter();
   const { toast } = useToast();
 
   const handleLogin = (e: FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    // Simulate a short delay to give user feedback
-    setTimeout(() => {
-      if (username === 'admin' && password === 'jencelearl17') {
-        // Set a cookie that expires in 1 day
-        Cookies.set('auth', 'true', { expires: 1 });
-        toast({
-          title: 'Login Successful',
-          description: 'Welcome back! Redirecting...',
-        });
-        
-        // Redirect after the state has had a chance to update
-        router.push('/');
+    // No need for a delay here. The logic is simple.
+    if (username === 'admin' && password === 'jencelearl17') {
+      // Set a cookie that expires in 1 day
+      Cookies.set('auth', 'true', { expires: 1 });
+      
+      toast({
+        title: 'Login Successful',
+        description: 'Welcome back! Redirecting...',
+      });
+      
+      // Force a full page reload to ensure the new cookie is read correctly on the main page.
+      // This avoids Next.js router race conditions.
+      window.location.href = '/';
 
-      } else {
-        toast({
-          variant: 'destructive',
-          title: 'Login Failed',
-          description: 'Invalid username or password.',
-        });
-        setIsLoading(false);
-      }
-    }, 300);
+    } else {
+      toast({
+        variant: 'destructive',
+        title: 'Login Failed',
+        description: 'Invalid username or password.',
+      });
+      setIsLoading(false);
+    }
   };
 
   return (
