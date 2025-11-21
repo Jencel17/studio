@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useState, FormEvent } from 'react';
@@ -23,22 +22,30 @@ export default function LoginPage() {
     e.preventDefault();
     setIsLoading(true);
 
-    if (username === 'admin' && password === 'jencelearl17') {
-      // Set a cookie that expires in 1 day
-      Cookies.set('auth', 'true', { expires: 1 });
-      toast({
-        title: 'Login Successful',
-        description: 'Welcome back!',
-      });
-      router.push('/');
-    } else {
-      toast({
-        variant: 'destructive',
-        title: 'Login Failed',
-        description: 'Invalid username or password.',
-      });
-      setIsLoading(false);
-    }
+    // Simulate a short delay to give user feedback
+    setTimeout(() => {
+      if (username === 'admin' && password === 'jencelearl17') {
+        // Set a cookie that expires in 1 day
+        Cookies.set('auth', 'true', { expires: 1 });
+        toast({
+          title: 'Login Successful',
+          description: 'Welcome back! Redirecting...',
+        });
+        
+        // Redirect after a short delay to allow toast to be seen
+        setTimeout(() => {
+          router.push('/');
+        }, 500);
+
+      } else {
+        toast({
+          variant: 'destructive',
+          title: 'Login Failed',
+          description: 'Invalid username or password.',
+        });
+        setIsLoading(false);
+      }
+    }, 300);
   };
 
   return (
@@ -59,6 +66,7 @@ export default function LoginPage() {
                 required
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
+                disabled={isLoading}
               />
             </div>
             <div className="space-y-2 relative">
@@ -69,6 +77,7 @@ export default function LoginPage() {
                 required
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                disabled={isLoading}
               />
               <Button
                 type="button"
@@ -76,6 +85,7 @@ export default function LoginPage() {
                 size="icon"
                 className="absolute bottom-1 right-1 h-7 w-7"
                 onClick={() => setShowPassword(!showPassword)}
+                disabled={isLoading}
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                 <span className="sr-only">Toggle password visibility</span>
