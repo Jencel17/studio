@@ -4,6 +4,8 @@
 import { useState, useRef, useCallback, useEffect } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import type * as tf from "@tensorflow/tfjs";
+import { useRouter } from 'next/navigation';
+import Cookies from 'js-cookie';
 
 import SortVisionClient from "@/components/sort-vision-client";
 import SortVisionSettings from "@/components/sort-vision-settings";
@@ -11,10 +13,12 @@ import SplashScreen from "@/components/splash-screen";
 import { AppStatus, LogEntry } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { Loader2 } from "lucide-react";
 
 export default function SortVision() {
     const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
+    const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
     
     const [isTestMode, setIsTestMode] = usePersistentState('isTestMode', false);
     const [wakeLockEnabled, setWakeLockEnabled] = usePersistentState('wakeLockEnabled', false);
@@ -27,6 +31,16 @@ export default function SortVision() {
     const tmImageRef = useRef<typeof tmImage | null>(null);
     const tfRef = useRef<typeof tf | null>(null);
     const { toast } = useToast();
+    const router = useRouter();
+
+    useEffect(() => {
+        const authCookie = Cookies.get('auth');
+        if (authCookie === 'true') {
+            setIsAuthenticated(true);
+        } else {
+            router.push('/login');
+        }
+    }, [router]);
 
     const addLog = useCallback((message: string) => {
         const newLog: LogEntry = {
@@ -37,6 +51,8 @@ export default function SortVision() {
     }, []);
 
     useEffect(() => {
+        if (!isAuthenticated) return;
+
         const loadAiLibraries = async () => {
             if (tmImageRef.current && tfRef.current) {
                 addLog("AI libraries already loaded.");
@@ -66,8 +82,17 @@ export default function SortVision() {
         };
 
         loadAiLibraries();
-    }, [addLog, toast]);
+    }, [addLog, toast, isAuthenticated]);
 
+    if (isAuthenticated === null) {
+        return (
+             <div className="flex h-screen w-full flex-col items-center justify-center bg-background text-foreground">
+                <Loader2 className="h-8 w-8 animate-spin" />
+                <p className="mt-4 text-muted-foreground">Checking authentication...</p>
+            </div>
+        );
+    }
+    
     if (appStatus === 'LOADING_LIBS') {
         return <SplashScreen />;
     }
