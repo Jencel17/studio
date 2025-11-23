@@ -3,88 +3,109 @@
 @tailwind utilities;
 
 @layer base {
-  :root {
-    --background: 40 33% 92%; /* Light Beige */
-    --foreground: 240 10% 3.9%;
+    :root {
+        /* Light Mode Variables */
+        --background: 0 0% 100%;
+        --foreground: 222.2 84% 4.9%;
 
-    --card: 40 33% 96%; /* Slightly lighter beige for cards */
-    --card-foreground: 240 10% 3.9%;
+        --card: 0 0% 100%;
+        --card-foreground: 222.2 84% 4.9%;
 
-    --popover: 40 33% 92%;
-    --popover-foreground: 240 10% 3.9%;
+        --popover: 0 0% 100%;
+        --popover-foreground: 222.2 84% 4.9%;
 
-    --primary: 122 39% 40%; /* Darker Forest Green for better contrast */
-    --primary-foreground: 60 90% 98%;
-    
-    --secondary: 180 100% 25%; /* Teal */
-    --secondary-foreground: 60 90% 98%;
+        /* Primary Blue #2F64DF */
+        --primary: 220 68% 53%;
+        --primary-foreground: 210 40% 98%;
 
-    --muted: 40 20% 88%;
-    --muted-foreground: 240 5% 35%; /* Increased contrast */
+        --secondary: 210 40% 96.1%;
+        --secondary-foreground: 222.2 47.4% 11.2%;
 
-    --accent: 180 80% 35%; /* Lighter Teal for accents */
-    --accent-foreground: 60 90% 98%;
+        --muted: 210 40% 96.1%;
+        --muted-foreground: 215.4 16.3% 46.9%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 60 90% 98%;
+        /* New "Dark Kinda Blue" Accent */
+        --accent: 220 85% 35%;
+        --accent-foreground: 210 40% 98%;
 
-    --border: 122 20% 65%; /* Increased contrast */
-    --input: 122 20% 85%;
-    --ring: 122 39% 49%;
+        --destructive: 0 84.2% 60.2%;
+        --destructive-foreground: 210 40% 98%;
 
-    --radius: 0.5rem;
+        --border: 214.3 31.8% 91.4%;
+        --input: 214.3 31.8% 91.4%;
+        --ring: 220 68% 53%;
 
-    --sidebar-background: 40 33% 88%;
-    --sidebar-foreground: 240 10% 3.9%;
-    --sidebar-border: 122 20% 65%; /* Increased contrast */
-    --sidebar-accent: 40 33% 82%;
-    --sidebar-accent-foreground: 240 10% 3.9%;
-    --sidebar-ring: 122 39% 49%;
-  }
+        --radius: 0.75rem;
 
-  .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 60 90% 98%;
+        --sidebar-background: 0 0% 98%;
+        --sidebar-foreground: 240 5.3% 26.1%;
+        --sidebar-border: 220 13% 91%;
+        --sidebar-accent: 220 85% 35%;
+        --sidebar-accent-foreground: 210 40% 98%;
+        --sidebar-ring: 217 91% 60%;
+    }
 
-    --card: 240 5% 15%;
-    --card-foreground: 60 90% 98%;
+    .dark {
+        /* Deep Midnight Blue Background - harmonized with card */
+        --background: 222 47% 8%;
+        --foreground: 210 40% 98%;
 
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 60 90% 98%;
+        /* Glassmorphic Cards */
+        --card: 222 47% 11%;
+        --card-foreground: 210 40% 98%;
 
-    --primary: 122 39% 49%; /* Forest Green */
-    --primary-foreground: 60 90% 98%;
-    
-    --secondary: 180 100% 25%; /* Teal */
-    --secondary-foreground: 60 90% 98%;
+        --popover: 222 47% 11%;
+        --popover-foreground: 210 40% 98%;
 
-    --muted: 240 4% 20%;
-    --muted-foreground: 240 5% 65%;
+        /* Primary Blue #2F64DF */
+        --primary: 220 68% 53%;
+        --primary-foreground: 210 40% 98%;
 
-    --accent: 180 80% 35%; /* Lighter Teal */
-    --accent-foreground: 60 90% 98%;
+        /* Cyan/Teal Secondary */
+        --secondary: 180 100% 50%;
+        --secondary-foreground: 222 47% 11%;
 
-    --destructive: 0 63% 31%;
-    --destructive-foreground: 60 90% 98%;
+        --muted: 217 33% 17%;
+        --muted-foreground: 215 20% 65%;
 
-    --border: 240 4% 30%; /* Increased contrast */
-    --input: 240 4% 25%;
-    --ring: 122 39% 49%;
-    
-    --sidebar-background: 240 10% 3.9%;
-    --sidebar-foreground: 60 90% 98%;
-    --sidebar-border: 240 4% 30%; /* Increased contrast */
-    --sidebar-accent: 240 5% 15%;
-    --sidebar-accent-foreground: 60 90% 98%;
-    --sidebar-ring: 122 39% 49%;
-  }
+        /* New "Dark Kinda Blue" Accent */
+        --accent: 220 85% 35%;
+        --accent-foreground: 210 40% 98%;
+
+        --destructive: 0 62.8% 30.6%;
+        --destructive-foreground: 210 40% 98%;
+
+        --border: 217 33% 20%;
+        --input: 217 33% 17%;
+        --ring: 220 68% 53%;
+
+        --sidebar-background: 222 47% 10%;
+        --sidebar-foreground: 210 40% 98%;
+        --sidebar-border: 217 33% 20%;
+        --sidebar-accent: 220 85% 35%;
+        --sidebar-accent-foreground: 210 40% 98%;
+        --sidebar-ring: 220 68% 53%;
+    }
+
+    * {
+        @apply border-border;
+    }
+
+    body {
+        @apply bg-background text-foreground;
+    }
 }
 
-@layer base {
-  * {
-    @apply border-border;
-  }
-  body {
-    @apply bg-background text-foreground;
-  }
+@layer utilities {
+    .glass {
+        @apply bg-background/60 backdrop-blur-lg border border-border/50 shadow-xl dark:bg-white/5 dark:border-white/10;
+    }
+
+    .glass-card {
+        @apply bg-card/50 backdrop-blur-md border border-border/50 shadow-lg dark:bg-card/30 dark:border-white/5;
+    }
+
+    .text-gradient {
+        @apply bg-clip-text text-transparent bg-gradient-to-r from-primary via-cyan-400 to-accent;
+    }
 }

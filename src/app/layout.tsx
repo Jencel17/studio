@@ -1,15 +1,14 @@
 
 import type { Metadata, Viewport } from "next";
-import { PT_Sans } from "next/font/google";
+import { Outfit } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 
-const ptSans = PT_Sans({
+const outfit = Outfit({
   subsets: ["latin"],
-  weight: ["400", "700"],
-  variable: "--font-pt-sans",
+  variable: "--font-outfit",
 });
 
 export const metadata: Metadata = {
@@ -41,14 +40,14 @@ export default function RootLayout({
       <head>
         <link rel="apple-touch-icon" href="/icon-192x192.png"></link>
       </head>
-      <body className={`${ptSans.variable} font-sans antialiased`}>
+      <body className={`${outfit.variable} font-sans antialiased`}>
         <ThemeProvider
           attribute="class"
-          defaultTheme="light"
+          defaultTheme="dark"
           enableSystem
           disableTransitionOnChange
         >
-          <SidebarProvider>
+          <SidebarProvider defaultOpen={false}>
             <SidebarInset>
               {children}
             </SidebarInset>

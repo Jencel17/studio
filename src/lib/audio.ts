@@ -1,6 +1,6 @@
 
 let audioContext: AudioContext | null = null;
-const audioBufferCache: {[key: string]: AudioBuffer} = {};
+const audioBufferCache: { [key: string]: AudioBuffer } = {};
 
 // Initialize AudioContext on user interaction.
 // Browsers require a user gesture to start the audio context.
@@ -22,15 +22,15 @@ const initializeAudioContext = () => {
 
 // Add a listener for the first user interaction
 if (typeof window !== 'undefined') {
-    const initAudio = () => {
-        initializeAudioContext();
-        document.removeEventListener('click', initAudio);
-        document.removeEventListener('touchstart', initAudio);
-        document.removeEventListener('keydown', initAudio);
-    };
-    document.addEventListener('click', initAudio);
-    document.addEventListener('touchstart', initAudio);
-    document.addEventListener('keydown', initAudio);
+  const initAudio = () => {
+    initializeAudioContext();
+    document.removeEventListener('click', initAudio);
+    document.removeEventListener('touchstart', initAudio);
+    document.removeEventListener('keydown', initAudio);
+  };
+  document.addEventListener('click', initAudio);
+  document.addEventListener('touchstart', initAudio);
+  document.addEventListener('keydown', initAudio);
 }
 
 
@@ -40,7 +40,7 @@ async function playSound(url: string) {
     console.error("AudioContext is not available.");
     return;
   }
-  
+
   try {
     // Always try to resume context on play, as it might get suspended.
     if (context.state === 'suspended') {
@@ -64,7 +64,7 @@ async function playSound(url: string) {
     const source = context.createBufferSource();
     source.buffer = buffer;
     source.connect(context.destination);
-    
+
     source.start(0);
 
   } catch (error) {

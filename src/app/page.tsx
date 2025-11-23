@@ -19,15 +19,16 @@ export default function SortVision() {
     const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
     const [isAuthenticated, setIsAuthenticated] = useState<boolean | undefined>(undefined);
-    
+
     const [isTestMode, setIsTestMode] = usePersistentState('isTestMode', false);
     const [wakeLockEnabled, setWakeLockEnabled] = usePersistentState('wakeLockEnabled', false);
     const [autoCaptureEnabled, setAutoCaptureEnabled] = usePersistentState('autoCaptureEnabled', false);
     const [autoSortEnabled, setAutoSortEnabled] = usePersistentState('autoSortEnabled', false);
     const [autoFlashEnabled, setAutoFlashEnabled] = usePersistentState('autoFlashEnabled', false);
+    const [confidenceThreshold, setConfidenceThreshold] = usePersistentState('confidenceThreshold', 0.8);
 
     const [logs, setLogs] = useState<LogEntry[]>([]);
-    
+
     const tmImageRef = useRef<typeof tmImage | null>(null);
     const tfRef = useRef<typeof tf | null>(null);
     const { toast } = useToast();
@@ -52,10 +53,11 @@ export default function SortVision() {
 
     const addLog = useCallback((message: string) => {
         const newLog: LogEntry = {
+            id: crypto.randomUUID(),
             timestamp: new Date().toLocaleTimeString(),
             message,
         };
-        setLogs((prevLogs) => [newLog, ...prevLogs].slice(0, 100));
+        setLogs((prevLogs) => [...prevLogs, newLog].slice(-100));
     }, []);
 
     useEffect(() => {
@@ -95,13 +97,13 @@ export default function SortVision() {
     // Show a loading screen while we check for the cookie.
     if (isAuthenticated === undefined) {
         return (
-             <div className="flex h-screen w-full flex-col items-center justify-center bg-background text-foreground">
+            <div className="flex h-screen w-full flex-col items-center justify-center bg-background text-foreground">
                 <Loader2 className="h-8 w-8 animate-spin" />
                 <p className="mt-4 text-muted-foreground">Verifying authentication...</p>
             </div>
         );
     }
-    
+
     // If not authenticated, we will be redirected by the effect above. Return null to avoid flashing content.
     if (!isAuthenticated) {
         return null;
@@ -112,41 +114,45 @@ export default function SortVision() {
     }
 
     return (
-    <div className="flex h-full min-h-screen w-full items-center justify-center bg-background text-foreground">
-      <SortVisionSettings 
-        model={model}
-        setModel={setModel}
-        setAppStatus={setAppStatus}
-        tmImageRef={tmImageRef}
-        isTestMode={isTestMode}
-        setIsTestMode={setIsTestMode}
-        wakeLockEnabled={wakeLockEnabled}
-        setWakeLockEnabled={setWakeLockEnabled}
-        autoCaptureEnabled={autoCaptureEnabled}
-        setAutoCaptureEnabled={setAutoCaptureEnabled}
-        autoSortEnabled={autoSortEnabled}
-        setAutoSortEnabled={setAutoSortEnabled}
-        autoFlashEnabled={autoFlashEnabled}
-        setAutoFlashEnabled={setAutoFlashEnabled}
-        addLog={addLog}
-      />
+        <div className="flex h-full min-h-screen w-full items-center justify-center bg-background text-foreground">
+            <SortVisionSettings
+                model={model}
+                setModel={setModel}
+                setAppStatus={setAppStatus}
+                tmImageRef={tmImageRef}
+                isTestMode={isTestMode}
+                setIsTestMode={setIsTestMode}
+                wakeLockEnabled={wakeLockEnabled}
+                setWakeLockEnabled={setWakeLockEnabled}
+                autoCaptureEnabled={autoCaptureEnabled}
+                setAutoCaptureEnabled={setAutoCaptureEnabled}
+                autoSortEnabled={autoSortEnabled}
+                setAutoSortEnabled={setAutoSortEnabled}
+                autoFlashEnabled={autoFlashEnabled}
+                setAutoFlashEnabled={setAutoFlashEnabled}
+                addLog={addLog}
+                confidenceThreshold={confidenceThreshold}
+                setConfidenceThreshold={setConfidenceThreshold}
+            />
 
-      <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
-        <SortVisionClient
-          model={model}
-          appStatus={appStatus}
-          setAppStatus={setAppStatus}
-          isTestMode={isTestMode}
-          wakeLockEnabled={wakeLockEnabled}
-          autoCaptureEnabled={autoCaptureEnabled}
-          autoSortEnabled={autoSortEnabled}
-          autoFlashEnabled={autoFlashEnabled}
-          tmImageRef={tmImageRef}
-          logs={logs}
-          setLogs={setLogs}
-          addLog={addLog}
-        />
-      </main>
-    </div>
-  );
+            <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
+                <SortVisionClient
+                    model={model}
+                    appStatus={appStatus}
+                    setAppStatus={setAppStatus}
+                    isTestMode={isTestMode}
+                    wakeLockEnabled={wakeLockEnabled}
+                    autoCaptureEnabled={autoCaptureEnabled}
+                    autoSortEnabled={autoSortEnabled}
+                    autoFlashEnabled={autoFlashEnabled}
+                    confidenceThreshold={confidenceThreshold}
+                    setConfidenceThreshold={setConfidenceThreshold}
+                    tmImageRef={tmImageRef}
+                    logs={logs}
+                    setLogs={setLogs}
+                    addLog={addLog}
+                />
+            </main>
+        </div>
+    );
 }

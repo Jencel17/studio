@@ -131,6 +131,23 @@ const SidebarProvider = React.forwardRef<
       [state, open, setOpen, isMobile, openMobile, setOpenMobile, toggleSidebar]
     )
 
+    const [touchStart, setTouchStart] = React.useState<number | null>(null)
+
+    const onTouchStart = (e: React.TouchEvent) => {
+      setTouchStart(e.targetTouches[0].clientX)
+    }
+
+    const onTouchEnd = (e: React.TouchEvent) => {
+      if (touchStart === null) return
+      const touchEnd = e.changedTouches[0].clientX
+      const distance = touchEnd - touchStart
+
+      if (touchStart < 50 && distance > 50) {
+        setOpen(true)
+      }
+      setTouchStart(null)
+    }
+
     return (
       <SidebarContext.Provider value={contextValue}>
         <TooltipProvider delayDuration={0}>
@@ -147,6 +164,8 @@ const SidebarProvider = React.forwardRef<
               className
             )}
             ref={ref}
+            onTouchStart={onTouchStart}
+            onTouchEnd={onTouchEnd}
             {...props}
           >
             {children}
@@ -183,7 +202,7 @@ const Sidebar = React.forwardRef<
       return (
         <div
           className={cn(
-            "flex h-full w-[--sidebar-width] flex-col bg-sidebar text-sidebar-foreground",
+            "flex h-full w-[--sidebar-width] flex-col bg-sidebar/80 backdrop-blur-md text-sidebar-foreground",
             className
           )}
           ref={ref}
@@ -200,7 +219,7 @@ const Sidebar = React.forwardRef<
           <SheetContent
             data-sidebar="sidebar"
             data-mobile="true"
-            className="w-[--sidebar-width] bg-sidebar p-0 text-sidebar-foreground"
+            className="w-[--sidebar-width] bg-sidebar/80 backdrop-blur-md p-0 text-sidebar-foreground"
             style={
               {
                 "--sidebar-width": SIDEBAR_WIDTH_MOBILE,
@@ -209,10 +228,10 @@ const Sidebar = React.forwardRef<
             side={side}
           >
             <VisuallyHidden asChild>
-                <SheetTitle>Sidebar Menu</SheetTitle>
+              <SheetTitle>Sidebar Menu</SheetTitle>
             </VisuallyHidden>
             <VisuallyHidden asChild>
-                <SheetDescription>The main navigation and settings for the application.</SheetDescription>
+              <SheetDescription>The main navigation and settings for the application.</SheetDescription>
             </VisuallyHidden>
             <div className="flex h-full w-full flex-col">{children}</div>
           </SheetContent>
@@ -256,7 +275,7 @@ const Sidebar = React.forwardRef<
         >
           <div
             data-sidebar="sidebar"
-            className="flex h-full w-full flex-col bg-sidebar group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow"
+            className="flex h-full w-full flex-col bg-sidebar/80 backdrop-blur-md group-data-[variant=floating]:rounded-lg group-data-[variant=floating]:border group-data-[variant=floating]:border-sidebar-border group-data-[variant=floating]:shadow"
           >
             {children}
           </div>
@@ -667,7 +686,7 @@ const SidebarMenuAction = React.forwardRef<
         "peer-data-[size=lg]/menu-button:top-2.5",
         "group-data-[collapsible=icon]:hidden",
         showOnHover &&
-          "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 peer-data-[active=true]/menu-button:text-sidebar-accent-foreground md:opacity-0",
+        "group-focus-within/menu-item:opacity-100 group-hover/menu-item:opacity-100 data-[state=open]:opacity-100 peer-data-[active=true]/menu-button:text-sidebar-accent-foreground md:opacity-0",
         className
       )}
       {...props}
@@ -817,4 +836,3 @@ export {
   useSidebar,
 }
 
-    

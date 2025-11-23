@@ -106,6 +106,12 @@ void handleSortRequest() {
       performSort(PAPER_POS, "PAPER");
       server.send(200, "text/plain", "OK: Sorted PAPER");
     } 
+    else if (material == "MULTIPLE") {
+      Serial.println("Multiple objects detected. Treating as distinct category.");
+      // Perform sort for MULTIPLE category (using default for now)
+      performSort(SORTER_DEFAULT, "MULTIPLE"); 
+      server.send(200, "text/plain", "OK: Sorted MULTIPLE");
+    }
     else {
       Serial.print("ERROR: Unknown material type: ");
       Serial.println(material);
