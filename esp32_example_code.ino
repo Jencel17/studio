@@ -1,14 +1,8 @@
-
-#include <WiFi.h>
-#include <WebServer.h>
+#include <BluetoothSerial.h>
 #include <ESP32Servo.h>
 
-// -- WiFi Configuration --
-const char* ssid = "Research Test";        // The name of the WiFi network to create.
-const char* password = "reseachcapstone";  // The password for the WiFi network. (8 characters minimum)
-
-// -- Web Server Configuration --
-WebServer server(80);  // Create a web server on port 80
+// -- Bluetooth Configuration --
+BluetoothSerial SerialBT;
 
 // -- Sorter Status --
 // This variable tracks the state of the sorter machine.
@@ -70,76 +64,48 @@ void performSort(byte position, const char* materialName) {
   Serial.println("--- Sort Sequence Complete ---\n");
 }
 
-void handleRoot() {
-  server.send(200, "text/plain", "ESP32 Server is running.");
-}
-
 // -- Handler for Sorting Requests --
-void handleSortRequest() {
+void handleSortRequest(String material) {
   // Only process sort command if the sorter is READY
   if (strcmp(sorterStatus, "READY") != 0) {
-    server.send(503, "text/plain", "BUSY"); // 503 Service Unavailable
+    SerialBT.println("BUSY");
     return;
   }
   
-  String material = "";
+  sorterStatus = "BUSY"; // Set status to BUSY before starting sort
   
-  if (server.hasArg("class")) {
-    sorterStatus = "BUSY"; // Set status to BUSY before starting sort
-    
-    material = server.arg("class");
-    material.toUpperCase();
-    
-    Serial.print("Received sort command for: ");
-    Serial.println(material);
+  material.toUpperCase();
+  material.trim(); // Remove any whitespace
+  
+  Serial.print("Received sort command for: ");
+  Serial.println(material);
 
-    // =============Perform sorting based on material type detected=======================|
-    if (material == "PLASTIC") {
-      performSort(PLASTIC_POS, "PLASTIC");
-      server.send(200, "text/plain", "OK: Sorted PLASTIC");
-    } 
-    else if (material == "METAL") {
-      performSort(METAL_POS, "METAL");
-      server.send(200, "text/plain", "OK: Sorted METAL");
-    } 
-    else if (material == "PAPER") {
-      performSort(PAPER_POS, "PAPER");
-      server.send(200, "text/plain", "OK: Sorted PAPER");
-    } 
-    else if (material == "MULTIPLE") {
-      Serial.println("Multiple objects detected. Treating as distinct category.");
-      // Perform sort for MULTIPLE category (using default for now)
-      performSort(SORTER_DEFAULT, "MULTIPLE"); 
-      server.send(200, "text/plain", "OK: Sorted MULTIPLE");
-    }
-    else {
-      Serial.print("ERROR: Unknown material type: ");
-      Serial.println(material);
-      server.send(400, "text/plain", "ERROR: Unknown material type");
-    }
-
-    sorterStatus = "READY"; // Set status back to READY after sort is complete
-    
-  } else {
-    Serial.println("Sort request received without 'class' parameter.");
-    server.send(400, "text/plain", "ERROR: Missing 'class' parameter.");
+  // =============Perform sorting based on material type detected=======================|
+  if (material == "PLASTIC") {
+    performSort(PLASTIC_POS, "PLASTIC");
+    SerialBT.println("OK: Sorted PLASTIC");
+  } 
+  else if (material == "METAL") {
+    performSort(METAL_POS, "METAL");
+    SerialBT.println("OK: Sorted METAL");
+  } 
+  else if (material == "PAPER") {
+    performSort(PAPER_POS, "PAPER");
+    SerialBT.println("OK: Sorted PAPER");
+  } 
+  else if (material == "MULTIPLE") {
+    Serial.println("Multiple objects detected. Treating as distinct category.");
+    // Perform sort for MULTIPLE category (using default for now)
+    performSort(SORTER_DEFAULT, "MULTIPLE"); 
+    SerialBT.println("OK: Sorted MULTIPLE");
   }
-}
+  else {
+    Serial.print("ERROR: Unknown material type: ");
+    Serial.println(material);
+    SerialBT.println("ERROR: Unknown material type");
+  }
 
-// -- Handler for Status Requests --
-// This allows the app to check if the ESP32 is busy or ready.
-void handleStatusRequest() {
-  server.send(200, "text/plain", sorterStatus);
-}
-
-// -- Handler for Ping Requests --
-// This allows the app to confirm it's connected to the ESP32.
-void handlePingRequest() {
-  server.send(200, "text/plain", "pong");
-}
-
-void handleNotFound() {
-  server.send(404, "text/plain", "Not found");
+  sorterStatus = "READY"; // Set status back to READY after sort is complete
 }
 
 void setup() {
@@ -163,24 +129,11 @@ void setup() {
   pinMode(TRIG_PIN, OUTPUT);
   digitalWrite(TRIG_PIN, LOW);
 
-  // Set up the ESP32 as a WiFi Access Point
-  Serial.println("Setting up Access Point...");
-  WiFi.softAP(ssid, password);
+  // Set up Bluetooth
+  Serial.println("Starting Bluetooth...");
+  SerialBT.begin("ESP32_Sorter"); // Bluetooth device name
+  Serial.println("Bluetooth started. Pair with 'ESP32_Sorter'");
 
-  IPAddress apIP = WiFi.softAPIP();
-  Serial.print("AP IP address: ");
-  Serial.println(apIP);
-
-  // Define server routes
-  server.on("/", HTTP_GET, handleRoot);
-  server.on("/sort", HTTP_GET, handleSortRequest);
-  server.on("/status", HTTP_GET, handleStatusRequest); // New endpoint for status
-  server.on("/ping", HTTP_GET, handlePingRequest);     // New endpoint for ping
-  server.onNotFound(handleNotFound);
-
-  // Start the server
-  server.begin();
-  Serial.println("Web Server started.");
   sorterStatus = "READY"; // Ensure status is READY on startup
 }
 
@@ -202,7 +155,11 @@ void loop() {
     digitalWrite(LED_PIN, LOW);
   } 
 
-  // This is the core of the synchronous web server.
-  // It constantly checks for and processes incoming client requests.
-  server.handleClient();
+  // Check for incoming Bluetooth data
+  if (SerialBT.available()) {
+    String incomingString = SerialBT.readStringUntil('\n');
+    if (incomingString.length() > 0) {
+        handleSortRequest(incomingString);
+    }
+  }
 }
