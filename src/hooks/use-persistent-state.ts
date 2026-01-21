@@ -1,9 +1,9 @@
 
 "use client";
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Dispatch, SetStateAction } from 'react';
 
-export function usePersistentState<T>(key: string, defaultValue: T): [T, (value: T) => void] {
+export function usePersistentState<T>(key: string, defaultValue: T): [T, Dispatch<SetStateAction<T>>] {
   const [state, setState] = useState<T>(defaultValue);
   const [isHydrated, setIsHydrated] = useState(false);
 

@@ -12,6 +12,8 @@ import { AppStatus, LogEntry, Prediction } from "@/lib/types";
 import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { Card } from "@/components/ui/card";
 
+import { usePersistentState } from "@/hooks/use-persistent-state";
+
 interface ClientViewProps {
     model: tmImage.CustomMobileNet | null;
     appStatus: AppStatus;
@@ -25,7 +27,7 @@ const PREDICTION_INTERVAL = 100;
 const DETECTION_SETTLE_DELAY = 1000; // Faster than admin for responsiveness?
 const CAMERA_WARMUP_DELAY = 1500;
 
-type ViewState = "IDLE" | "DETECTED" | "CORRECTION" | "THANK_YOU";
+type ViewState = "IDLE" | "DETECTED" | "CORRECTION" | "THANK_YOU" | "MULTIPLE_DETECTION";
 
 export default function ClientView({
     model,
@@ -40,6 +42,9 @@ export default function ClientView({
     const [hasCameraPermission, setHasCameraPermission] = useState(true);
     const [stablePrediction, setStablePrediction] = useState<Prediction | null>(null);
     const [detectedLabel, setDetectedLabel] = useState<string>("");
+
+    // Persistent stats
+    const [totalItemsSorted, setTotalItemsSorted] = usePersistentState<number>('totalItemsSorted', 0);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -134,6 +139,14 @@ export default function ClientView({
 
     const isPredictingRef = useRef(false);
 
+    const [detectionId, setDetectionId] = useState<number>(0);
+
+    // Keep a ref of viewState for async access in timeouts
+    const viewStateRef = useRef(viewState);
+    useEffect(() => {
+        viewStateRef.current = viewState;
+    }, [viewState]);
+
     // --- Prediction Loop ---
     const runClassification = useCallback(async () => {
         // Guard against overlapping predictions or invalid state
@@ -162,16 +175,34 @@ export default function ClientView({
                         // Debounce the actual state change
                         if (detectionTimer.current) clearTimeout(detectionTimer.current);
                         detectionTimer.current = setTimeout(() => {
+                            // Check latest state via Ref to avoid closure staleness issues
+                            const currentViewState = viewStateRef.current;
+
                             // If we are already detecting something, this "overwrites" it
-                            // Only overwrite if it's a DIFFERENT object
-                            if (viewState === "IDLE" || (viewState === "DETECTED" && detectedLabel !== pred.className)) {
+                            if (currentViewState === "IDLE" || currentViewState === "DETECTED") {
+                                // If we are overwriting an existing detection that hasn't been acted on, count it!
+                                if (currentViewState === "DETECTED") {
+                                    setTotalItemsSorted(prev => prev + 1);
+                                }
+
                                 setDetectedLabel(pred.className);
+                                setDetectionId(prev => prev + 1); // Force UI refresh
                                 setViewState("DETECTED");
                                 addLog(`Detected: ${pred.className} (Overwrite/New)`);
                             }
                         }, DETECTION_SETTLE_DELAY);
                     }
                 }
+            } else if (result.detectionState === 'MULTIPLE_OBJECTS') {
+                // Handle multiple objects detection
+                if (detectionTimer.current) clearTimeout(detectionTimer.current);
+                detectionTimer.current = setTimeout(() => {
+                    const currentViewState = viewStateRef.current;
+                    if (currentViewState === "IDLE" || currentViewState === "DETECTED") {
+                        setViewState("MULTIPLE_DETECTION");
+                        addLog("Multiple objects detected.");
+                    }
+                }, DETECTION_SETTLE_DELAY);
             } else {
                 // If we lose detection, we don't necessarily want to reset immediately if we are in 'DETECTED' mode
                 // waiting for user input. We only reset the stable tracker.
@@ -237,6 +268,7 @@ export default function ClientView({
 
     const handleCorrect = () => {
         setViewState("THANK_YOU");
+        setTotalItemsSorted(prev => prev + 1); // Increment count
         setTimeout(() => {
             setViewState("IDLE");
             setStablePrediction(null);
@@ -293,6 +325,9 @@ export default function ClientView({
                 toast({ variant: "destructive", title: "Save Error", description: "Failed to save training data." });
             }
         }
+
+        // Count correction as a sort too
+        setTotalItemsSorted(prev => prev + 1);
 
         setViewState("THANK_YOU");
         setTimeout(() => {
@@ -379,13 +414,9 @@ export default function ClientView({
 
                     {/* Mock Stats/Decorations */}
                     <div className="absolute bottom-12 flex gap-8">
+                        {/* Points removed as requested */}
                         <div className="text-center">
-                            <div className="text-3xl font-bold text-white">0</div>
-                            <div className="text-xxs text-emerald-400 uppercase tracking-wider">Points</div>
-                        </div>
-                        <div className="h-10 w-px bg-white/20" />
-                        <div className="text-center">
-                            <div className="text-3xl font-bold text-white">0</div>
+                            <div className="text-3xl font-bold text-white transition-all duration-300 transform key={totalItemsSorted}">{totalItemsSorted}</div>
                             <div className="text-xxs text-emerald-400 uppercase tracking-wider">Items</div>
                         </div>
                     </div>
@@ -394,7 +425,7 @@ export default function ClientView({
 
             {/* 2. DETECTED STATE: "Was it correct?" Split Screen */}
             {viewState === "DETECTED" && (
-                <div key={detectedLabel} className="relative z-20 flex h-full w-full animate-in slide-in-from-bottom-10 fade-in duration-300">
+                <div key={`${detectedLabel}-${detectionId}`} className="relative z-20 flex h-full w-full animate-in slide-in-from-bottom-10 fade-in duration-300">
                     <div className="flex flex-col md:flex-row w-full h-full max-w-6xl mx-auto items-center p-6 md:p-12 gap-6">
 
                         {/* Left: Product Card */}
@@ -482,6 +513,26 @@ export default function ClientView({
                     </div>
                     <h1 className="text-6xl font-black text-white uppercase tracking-tighter">Thank You!</h1>
                     <p className="text-emerald-100 text-xl mt-4 max-w-md text-center">Sorting smarter, one item at a time.</p>
+                </div>
+            )}
+            {/* 5. MULTIPLE DETECTION STATE */}
+            {viewState === "MULTIPLE_DETECTION" && (
+                <div className="relative z-20 h-full w-full flex flex-col items-center justify-center bg-zinc-950/90 p-6 animate-in fade-in zoom-in-95 duration-500">
+                    <div className="bg-amber-500/10 rounded-full p-8 mb-6 border border-amber-500/20 shadow-[0_0_50px_rgba(245,158,11,0.2)]">
+                        <AlertTriangle className="h-24 w-24 text-amber-500 animate-pulse" />
+                    </div>
+                    <h2 className="text-4xl md:text-5xl font-black text-white text-center mb-4 tracking-tight">
+                        Multiple Objects <br /><span className="text-amber-500">Detected</span>
+                    </h2>
+                    <p className="text-zinc-400 text-lg mb-12 text-center max-w-lg">
+                        Please verify that only one item is visible to the camera at a time.
+                    </p>
+                    <Button
+                        onClick={handleManualReset}
+                        className="h-16 px-12 text-xl font-bold rounded-full bg-white text-black hover:bg-zinc-200 transition-transform active:scale-95 shadow-xl"
+                    >
+                        Retry
+                    </Button>
                 </div>
             )}
         </div>
