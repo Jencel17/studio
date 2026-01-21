@@ -4,30 +4,49 @@
 import { useState, useEffect } from 'react';
 
 export function usePersistentState<T>(key: string, defaultValue: T): [T, (value: T) => void] {
-  const [state, setState] = useState<T>(() => {
-    // This function only runs on the initial render.
-    // It prevents trying to access localStorage on the server.
-    if (typeof window === 'undefined') {
-      return defaultValue;
-    }
-    try {
-      const storedValue = window.localStorage.getItem(key);
-      return storedValue ? JSON.parse(storedValue) : defaultValue;
-    } catch (error) {
-      console.error(`Error reading localStorage key "${key}":`, error);
-      return defaultValue;
-    }
-  });
+  const [state, setState] = useState<T>(defaultValue);
+  const [isHydrated, setIsHydrated] = useState(false);
 
   useEffect(() => {
-    // This effect runs only on the client, after hydration.
-    // It ensures that state changes are saved to localStorage.
-    try {
-      window.localStorage.setItem(key, JSON.stringify(state));
-    } catch (error) {
-      console.error(`Error setting localStorage key "${key}":`, error);
+    // Initial load from localStorage
+    const storedValue = window.localStorage.getItem(key);
+    if (storedValue !== null) {
+      try {
+        setState(JSON.parse(storedValue));
+      } catch (error) {
+        console.error(`Error reading localStorage key "${key}":`, error);
+      }
     }
-  }, [key, state]);
+    setIsHydrated(true);
+  }, [key]);
+
+  useEffect(() => {
+    // Save to localStorage when state changes
+    if (isHydrated) {
+      try {
+        window.localStorage.setItem(key, JSON.stringify(state));
+      } catch (error) {
+        console.error(`Error setting localStorage key "${key}":`, error);
+      }
+    }
+  }, [key, state, isHydrated]);
+
+  // Sync across tabs
+  useEffect(() => {
+    const handleStorageChange = (event: StorageEvent) => {
+      if (event.key === key && event.newValue !== null) {
+        try {
+          setState(JSON.parse(event.newValue));
+        } catch (error) {
+          console.error(`Error parsing synced value for "${key}":`, error);
+        }
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, [key]);
 
   return [state, setState];
 }
+

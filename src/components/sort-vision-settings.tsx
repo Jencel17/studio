@@ -632,6 +632,18 @@ export default function SortVisionSettings({
         </TooltipProvider>
       </SidebarContent>
       <SidebarFooter>
+        <div className="p-4 pt-0">
+          <Button
+            variant="outline"
+            className="w-full justify-start text-muted-foreground hover:text-primary mb-2"
+            asChild
+          >
+            <a href="/client">
+              <Zap className="mr-2 h-4 w-4" />
+              Switch to Client View
+            </a>
+          </Button>
+        </div>
         <ThemeToggle />
       </SidebarFooter>
     </Sidebar>
