@@ -190,7 +190,7 @@ export default function ClientView({
 
                         // Debounce the actual state change
                         if (detectionTimer.current) clearTimeout(detectionTimer.current);
-                        detectionTimer.current = setTimeout(async () => {
+                        detectionTimer.current = setTimeout(() => {
                             // Check latest state via Ref to avoid closure staleness issues
                             const currentViewState = viewStateRef.current;
 
@@ -206,21 +206,20 @@ export default function ClientView({
                                 setDetectionId(prev => prev + 1); // Force UI refresh
                                 setTotalItemsSorted(prev => prev + 1); // Count this sort
 
-                                // Send sort command IMMEDIATELY
-                                try {
-                                    if (isConnected()) {
-                                        await sendCommand(pred.className.toUpperCase());
-                                        addLog(`Auto-sorted: ${pred.className}. Asking for confirmation.`);
-                                    } else {
-                                        addLog(`Detected: ${pred.className}. Bluetooth not connected.`);
-                                    }
-                                } catch (error: any) {
-                                    console.error("Failed to send Bluetooth command:", error);
-                                    addLog(`Sort command error: ${error.message}`);
-                                }
-
-                                // Now show the confirmation screen
+                                // Show the confirmation screen IMMEDIATELY (don't wait for BT)
                                 setViewState("DETECTED");
+
+                                // Send sort command in background (fire-and-forget)
+                                if (isConnected()) {
+                                    sendCommand(pred.className.toUpperCase())
+                                        .then(() => addLog(`Auto-sorted: ${pred.className}.`))
+                                        .catch((error: any) => {
+                                            console.error("Failed to send Bluetooth command:", error);
+                                            addLog(`Sort command error: ${error.message}`);
+                                        });
+                                } else {
+                                    addLog(`Detected: ${pred.className}. Bluetooth not connected.`);
+                                }
                             }
                         }, DETECTION_SETTLE_DELAY);
                     }
