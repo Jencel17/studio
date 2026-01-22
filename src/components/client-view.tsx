@@ -190,7 +190,7 @@ export default function ClientView({
 
                         // Debounce the actual state change
                         if (detectionTimer.current) clearTimeout(detectionTimer.current);
-                        detectionTimer.current = setTimeout(() => {
+                        detectionTimer.current = setTimeout(async () => {
                             // Check latest state via Ref to avoid closure staleness issues
                             const currentViewState = viewStateRef.current;
 
@@ -201,10 +201,26 @@ export default function ClientView({
                                     setTotalItemsSorted(prev => prev + 1);
                                 }
 
+                                // *** NEW FLOW: Sort immediately, then ask for confirmation ***
                                 setDetectedLabel(pred.className);
                                 setDetectionId(prev => prev + 1); // Force UI refresh
+                                setTotalItemsSorted(prev => prev + 1); // Count this sort
+
+                                // Send sort command IMMEDIATELY
+                                try {
+                                    if (isConnected()) {
+                                        await sendCommand(pred.className.toUpperCase());
+                                        addLog(`Auto-sorted: ${pred.className}. Asking for confirmation.`);
+                                    } else {
+                                        addLog(`Detected: ${pred.className}. Bluetooth not connected.`);
+                                    }
+                                } catch (error: any) {
+                                    console.error("Failed to send Bluetooth command:", error);
+                                    addLog(`Sort command error: ${error.message}`);
+                                }
+
+                                // Now show the confirmation screen
                                 setViewState("DETECTED");
-                                addLog(`Detected: ${pred.className}. Waiting for user approval.`);
                             }
                         }, DETECTION_SETTLE_DELAY);
                     }
@@ -284,28 +300,15 @@ export default function ClientView({
     };
 
     const handleCorrect = async () => {
+        // Sort command was already sent on detection, just confirm and go to thank you
+        addLog(`User confirmed detection: ${detectedLabel}`);
         setViewState("THANK_YOU");
-        setTotalItemsSorted(prev => prev + 1); // Increment count
-
-        // Send command to ESP32
-        try {
-            if (isConnected()) {
-                await sendCommand(detectedLabel.toUpperCase());
-                addLog(`Sent sort command for: ${detectedLabel}`);
-            } else {
-                addLog(`Bluetooth not connected. Could not send command for: ${detectedLabel}`);
-            }
-        } catch (error: any) {
-            console.error("Failed to send Bluetooth command:", error);
-            addLog(`Error sending command: ${error.message}`);
-        }
 
         setTimeout(() => {
             setViewState("IDLE");
             setStablePrediction(null);
             setDetectedLabel("");
         }, 2000);
-        addLog(`User confirmed detection: ${detectedLabel}`);
     };
 
     const [capturedImages, setCapturedImages] = useState<string[]>([]);
@@ -523,7 +526,7 @@ export default function ClientView({
                                 </Button>
                             </div>
 
-                            <p className="mt-6 md:mt-12 text-white/40 text-xs md:text-sm">Tap to confirm detection</p>
+                            <p className="mt-6 md:mt-12 text-white/40 text-xs md:text-sm">Item already sorted! Was it correct?</p>
                         </div>
                     </div>
                 </div>
