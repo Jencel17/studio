@@ -2,7 +2,7 @@
 import { openDB, type IDBPDatabase } from 'idb';
 
 const DB_NAME = 'SortVisionDB';
-const DB_VERSION = 1;
+const DB_VERSION = 2; // Updated to include new stores
 const STORE_NAME = 'models';
 
 export interface StoredModel {
@@ -24,9 +24,19 @@ const initDB = (): Promise<IDBPDatabase> => {
     return dbPromise;
   }
   dbPromise = openDB(DB_NAME, DB_VERSION, {
-    upgrade(db) {
+    upgrade(db, oldVersion) {
+      // Models store (original, version 1)
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'name' });
+      }
+      // New stores added in version 2
+      if (!db.objectStoreNames.contains('categoryStats')) {
+        db.createObjectStore('categoryStats', { keyPath: 'category' });
+      }
+      if (!db.objectStoreNames.contains('trainingImages')) {
+        const store = db.createObjectStore('trainingImages', { keyPath: 'id', autoIncrement: true });
+        store.createIndex('correctedTo', 'correctedTo', { unique: false });
+        store.createIndex('timestamp', 'timestamp', { unique: false });
       }
     },
   });
@@ -50,7 +60,7 @@ export const getModelsFromDb = async (): Promise<StoredModel[]> => {
   const db = await initDB();
   const allModels = await db.getAll(STORE_NAME);
   // Return only metadata, not the large file blobs
-  return allModels.map(({ name, createdAt, id }) => ({ name, createdAt, id })).sort((a,b) => b.createdAt.getTime() - a.createdAt.getTime());
+  return allModels.map(({ name, createdAt, id }) => ({ name, createdAt, id })).sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime());
 };
 
 export const getModelFromDb = async (name: string): Promise<StoredModelFiles | undefined> => {

@@ -1,21 +1,31 @@
 {
   "name": "SortVision",
   "short_name": "SortVision",
-  "description": "AI-powered trash sorting assistant",
-  "start_url": "/",
+  "description": "AI-powered smart trash sorting assistant",
+  "start_url": "/client",
+  "scope": "/",
   "display": "standalone",
-  "background_color": "#F5F5DC",
-  "theme_color": "#4CAF50",
+  "orientation": "portrait",
+  "background_color": "#09090b",
+  "theme_color": "#10b981",
+  "categories": [
+    "utilities",
+    "education"
+  ],
   "icons": [
     {
       "src": "/icon-192x192.png",
       "sizes": "192x192",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     },
     {
       "src": "/icon-512x512.png",
       "sizes": "512x512",
-      "type": "image/png"
+      "type": "image/png",
+      "purpose": "any maskable"
     }
-  ]
+  ],
+  "screenshots": [],
+  "prefer_related_applications": false
 }

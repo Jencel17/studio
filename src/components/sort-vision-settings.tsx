@@ -14,13 +14,14 @@ import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, Music } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, Music, BarChart3 } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
 import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected } from "@/lib/bluetooth";
 import Link from "next/link";
 import { playConnectedSound, playDisconnectedSound } from "@/lib/audio";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import AdminDashboard from "@/components/admin-dashboard";
 
 
 interface SortVisionSettingsProps {
@@ -626,6 +627,16 @@ export default function SortVisionSettings({
                   <Music className="mr-2 h-4 w-4" />
                   Test Disconnect Sound
                 </Button>
+              </div>
+            </SidebarGroup>
+
+            <SidebarGroup>
+              <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs flex items-center gap-2">
+                <BarChart3 className="h-4 w-4" />
+                Statistics & Training
+              </SidebarGroupLabel>
+              <div className="p-4">
+                <AdminDashboard addLog={addLog} />
               </div>
             </SidebarGroup>
 

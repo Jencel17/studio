@@ -12,6 +12,8 @@ import { AppStatus, LogEntry, Prediction } from "@/lib/types";
 import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { Card } from "@/components/ui/card";
 import { sendCommand, isConnected } from "@/lib/bluetooth";
+import { getMaterialConfig, getRecyclableLabel } from "@/lib/material-config";
+import { incrementCategoryCount, saveMultipleTrainingImages } from "@/lib/stats-db";
 
 import { usePersistentState } from "@/hooks/use-persistent-state";
 
@@ -330,6 +332,14 @@ export default function ClientView({
         // Detection was correct! 
         // Discard the pre-captured images (we don't need them for training)
         setPreCapturedImages([]);
+
+        // Track stats: correct detection
+        try {
+            await incrementCategoryCount(detectedLabel, true);
+        } catch (e) {
+            console.error("Failed to save stats:", e);
+        }
+
         addLog(`User confirmed detection: ${detectedLabel}. Pre-captured images discarded.`);
         setViewState("THANK_YOU");
 
@@ -355,12 +365,16 @@ export default function ClientView({
     const handleCorrectionSelect = async (correctLabel: string) => {
         if (capturedImages.length > 0) {
             try {
+                // Save training images locally to IndexedDB for later export
+                await saveMultipleTrainingImages(detectedLabel, correctLabel, capturedImages);
+                addLog(`Saved ${capturedImages.length} training images locally for "${correctLabel}".`);
+
+                // Also download immediately as ZIP
                 const zip = new JSZip();
                 const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 
                 capturedImages.forEach((imgData, index) => {
                     const base64Data = imgData.split(',')[1];
-                    // Filename: Label_Timestamp_Sequence.jpg
                     zip.file(`${correctLabel}_${timestamp}_${index + 1}.jpg`, base64Data, { base64: true });
                 });
 
@@ -374,8 +388,7 @@ export default function ClientView({
                 window.URL.revokeObjectURL(url);
                 document.body.removeChild(a);
 
-                toast({ title: "Feedback Saved", description: `${capturedImages.length} images saved for training.` });
-                addLog(`User corrected ${detectedLabel} to ${correctLabel} (${capturedImages.length} samples)`);
+                addLog(`User corrected ${detectedLabel} to ${correctLabel} (${capturedImages.length} samples saved).`);
 
                 // Send corrected command to ESP32
                 try {
@@ -391,6 +404,13 @@ export default function ClientView({
                 console.error(e);
                 toast({ variant: "destructive", title: "Save Error", description: "Failed to save training data." });
             }
+        }
+
+        // Track stats: incorrect detection (corrected from detectedLabel to correctLabel)
+        try {
+            await incrementCategoryCount(correctLabel, false);
+        } catch (e) {
+            console.error("Failed to save stats:", e);
         }
 
         // Count correction as a sort too
@@ -505,57 +525,67 @@ export default function ClientView({
             )}
 
             {/* 2. DETECTED STATE: "Was it correct?" Split Screen */}
-            {viewState === "DETECTED" && (
-                <div key={`${detectedLabel}-${detectionId}`} className="relative z-20 flex h-full w-full animate-in slide-in-from-bottom-10 fade-in duration-300 overflow-y-auto">
-                    <div className="flex flex-col md:flex-row w-full h-full max-w-6xl mx-auto items-center p-4 md:p-12 gap-4 md:gap-6">
+            {viewState === "DETECTED" && (() => {
+                const materialConfig = getMaterialConfig(detectedLabel);
+                const recyclableLabel = getRecyclableLabel(detectedLabel);
+                return (
+                    <div key={`${detectedLabel}-${detectionId}`} className="relative z-20 flex h-full w-full animate-in slide-in-from-bottom-10 fade-in duration-300 overflow-y-auto">
+                        <div className="flex flex-col md:flex-row w-full h-full max-w-6xl mx-auto items-center p-4 md:p-12 gap-4 md:gap-6">
 
-                        {/* Left: Product Card */}
-                        <div className="flex-shrink-0 md:flex-1 w-full md:h-full flex items-center justify-center">
-                            <Card className="w-full max-w-[320px] md:max-w-none md:w-full h-auto md:h-full md:max-h-[600px] bg-[#f0f4f8] border-none shadow-2xl rounded-[2rem] md:rounded-[3rem] flex flex-col items-center justify-center relative overflow-hidden p-4 md:p-8 py-6 md:py-8">
-                                <div className="absolute top-0 w-full h-20 md:h-32 bg-yellow-400/20" /> {/* Decor */}
+                            {/* Left: Product Card */}
+                            <div className="flex-shrink-0 md:flex-1 w-full md:h-full flex items-center justify-center">
+                                <Card className="w-full max-w-[320px] md:max-w-none md:w-full h-auto md:h-full md:max-h-[600px] bg-[#f0f4f8] border-none shadow-2xl rounded-[2rem] md:rounded-[3rem] flex flex-col items-center justify-center relative overflow-hidden p-4 md:p-8 py-6 md:py-8">
+                                    <div className={cn("absolute top-0 w-full h-20 md:h-32", materialConfig.color, "opacity-20")} />
 
-                                <h2 className="text-2xl md:text-4xl font-extrabold text-slate-800 uppercase tracking-tight mb-4 md:mb-8 z-10">{detectedLabel}</h2>
+                                    <h2 className="text-2xl md:text-4xl font-extrabold text-slate-800 uppercase tracking-tight mb-4 md:mb-8 z-10">{detectedLabel}</h2>
 
-                                {/* 3D Cube Icon Placeholder */}
-                                <div className="w-36 h-36 md:w-64 md:h-64 relative z-10">
-                                    <div className="w-full h-full bg-gradient-to-br from-blue-300 to-blue-500 rounded-2xl md:rounded-3xl transform rotate-3 shadow-xl flex items-center justify-center text-white border-4 border-white/50">
-                                        <span className="text-4xl md:text-6xl font-black opacity-20">{detectedLabel[0]}</span>
+                                    {/* Material Icon with Dynamic Color */}
+                                    <div className="w-36 h-36 md:w-64 md:h-64 relative z-10">
+                                        <div className={cn(
+                                            "w-full h-full bg-gradient-to-br rounded-2xl md:rounded-3xl transform rotate-3 shadow-xl flex items-center justify-center border-4 border-white/50",
+                                            materialConfig.gradient
+                                        )}>
+                                            <span className="text-6xl md:text-8xl">{materialConfig.icon}</span>
+                                        </div>
                                     </div>
-                                </div>
 
-                                <div className="mt-6 md:mt-12 bg-yellow-400 text-yellow-900 font-bold px-4 md:px-8 py-2 md:py-3 rounded-full text-sm md:text-xl uppercase tracking-widest shadow-lg z-10">
-                                    Recyclable
-                                </div>
-                            </Card>
-                        </div>
-
-                        {/* Right: Feedback */}
-                        <div className="flex-shrink-0 md:flex-1 w-full md:h-full flex flex-col items-center justify-center bg-white/5 backdrop-blur-md rounded-[2rem] md:rounded-[3rem] border border-white/10 p-4 md:p-8 py-6 md:py-8 shadow-2xl">
-                            <h3 className="text-3xl md:text-5xl font-bold text-white mb-6 md:mb-12 text-center leading-tight drop-shadow-md">
-                                Was it <br /><span className="text-blue-400">Correct?</span>
-                            </h3>
-
-                            <div className="flex gap-4 md:gap-8 items-center">
-                                <Button
-                                    onClick={handleIncorrect}
-                                    className="h-24 w-24 md:h-40 md:w-40 rounded-full bg-rose-500 hover:bg-rose-600 border-4 border-white/20 shadow-xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95"
-                                >
-                                    <ThumbsDown className="h-12 w-12 md:h-20 md:w-20 text-white fill-white" />
-                                </Button>
-
-                                <Button
-                                    onClick={handleCorrect}
-                                    className="h-24 w-24 md:h-40 md:w-40 rounded-full bg-emerald-500 hover:bg-emerald-600 border-4 border-white/20 shadow-xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95"
-                                >
-                                    <ThumbsUp className="h-12 w-12 md:h-20 md:w-20 text-white fill-white" />
-                                </Button>
+                                    <div className={cn(
+                                        "mt-6 md:mt-12 font-bold px-4 md:px-8 py-2 md:py-3 rounded-full text-sm md:text-xl uppercase tracking-widest shadow-lg z-10",
+                                        materialConfig.color, "text-white"
+                                    )}>
+                                        {recyclableLabel}
+                                    </div>
+                                </Card>
                             </div>
 
-                            <p className="mt-6 md:mt-12 text-white/40 text-xs md:text-sm">Item already sorted! Was it correct?</p>
+                            {/* Right: Feedback */}
+                            <div className="flex-shrink-0 md:flex-1 w-full md:h-full flex flex-col items-center justify-center bg-white/5 backdrop-blur-md rounded-[2rem] md:rounded-[3rem] border border-white/10 p-4 md:p-8 py-6 md:py-8 shadow-2xl">
+                                <h3 className="text-3xl md:text-5xl font-bold text-white mb-6 md:mb-12 text-center leading-tight drop-shadow-md">
+                                    Was it <br /><span className="text-blue-400">Correct?</span>
+                                </h3>
+
+                                <div className="flex gap-4 md:gap-8 items-center">
+                                    <Button
+                                        onClick={handleIncorrect}
+                                        className="h-24 w-24 md:h-40 md:w-40 rounded-full bg-rose-500 hover:bg-rose-600 border-4 border-white/20 shadow-xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95"
+                                    >
+                                        <ThumbsDown className="h-12 w-12 md:h-20 md:w-20 text-white fill-white" />
+                                    </Button>
+
+                                    <Button
+                                        onClick={handleCorrect}
+                                        className="h-24 w-24 md:h-40 md:w-40 rounded-full bg-emerald-500 hover:bg-emerald-600 border-4 border-white/20 shadow-xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95"
+                                    >
+                                        <ThumbsUp className="h-12 w-12 md:h-20 md:w-20 text-white fill-white" />
+                                    </Button>
+                                </div>
+
+                                <p className="mt-6 md:mt-12 text-white/40 text-xs md:text-sm">Item already sorted! Was it correct?</p>
+                            </div>
                         </div>
                     </div>
-                </div>
-            )}
+                );
+            })()}
 
             {/* 3. CORRECTION STATE */}
             {viewState === "CORRECTION" && (
