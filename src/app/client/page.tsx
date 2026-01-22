@@ -23,6 +23,7 @@ export default function ClientPage() {
 
     // Shared state
     const [confidenceThreshold] = usePersistentState('confidenceThreshold', 0.8);
+    const [autoSortEnabled] = usePersistentState('autoSortEnabled', false);
 
     const tmImageRef = useRef<typeof tmImage | null>(null);
     const tfRef = useRef<typeof tf | null>(null);
@@ -127,6 +128,7 @@ export default function ClientPage() {
                             tmImageRef={tmImageRef}
                             addLog={addLog}
                             confidenceThreshold={confidenceThreshold}
+                            autoSortEnabled={autoSortEnabled}
                         />
                     </ClientLoader>
                 )

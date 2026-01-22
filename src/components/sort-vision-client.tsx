@@ -178,6 +178,7 @@ export default function SortVisionClient({
   const predictionIntervalRef = useRef<NodeJS.Timeout>();
   const ambiguousDetectionTimer = useRef<NodeJS.Timeout | null>(null);
   const detectionTimer = useRef<NodeJS.Timeout | null>(null);
+  const isPredictingRef = useRef(false);
 
   const { toast } = useToast();
 
@@ -523,7 +524,7 @@ export default function SortVisionClient({
   }, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked]);
 
   const runClassification = useCallback(async () => {
-    if (!isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
+    if (isPredictingRef.current || !isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
       return;
     }
 
@@ -532,141 +533,148 @@ export default function SortVisionClient({
       return;
     }
 
-    const predictions = await model.predict(video);
-    setCurrentPredictions(predictions);
+    isPredictingRef.current = true;
 
-    const filteredPredictions = predictions.filter(
-      (p) => p.className.toLowerCase() !== "background"
-    );
+    try {
+      const predictions = await model.predict(video);
+      setCurrentPredictions(predictions);
 
-    const localResult = interpretDetectionsLocal(
-      filteredPredictions,
-      confidenceThreshold
-    );
+      const filteredPredictions = predictions.filter(
+        (p) => p.className.toLowerCase() !== "background"
+      );
 
-    setDetectionState(localResult.detectionState);
-    let newAppStatus: AppStatus = appStatus;
+      const localResult = interpretDetectionsLocal(
+        filteredPredictions,
+        confidenceThreshold
+      );
 
-    if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
-      const foundPrediction = filteredPredictions.find(p => p.className === localResult.primaryObject);
+      setDetectionState(localResult.detectionState);
+      let newAppStatus: AppStatus = appStatus;
 
-      if (foundPrediction) {
-        if (!stablePrediction || stablePrediction.className !== foundPrediction.className) {
-          setStablePrediction(foundPrediction);
+      if (localResult.detectionState === 'SINGLE_OBJECT' && localResult.primaryObject) {
+        const foundPrediction = filteredPredictions.find(p => p.className === localResult.primaryObject);
+
+        if (foundPrediction) {
+          if (!stablePrediction || stablePrediction.className !== foundPrediction.className) {
+            setStablePrediction(foundPrediction);
+            if (detectionTimer.current) clearTimeout(detectionTimer.current);
+
+            detectionTimer.current = setTimeout(() => {
+              addLog(`Stable detection of ${foundPrediction.className}. Proceeding to sort.`);
+
+              if (predictionIntervalRef.current) {
+                clearInterval(predictionIntervalRef.current);
+                predictionIntervalRef.current = undefined;
+                addLog("Detection loop stopped for sorting.");
+              }
+
+              setPrimaryPrediction(foundPrediction);
+
+              if (autoSortEnabled) {
+                if (autoFlashEnabled) {
+                  addLog(`Initial detection: ${foundPrediction.className}. Turning on light for final check.`);
+                  sendLightCommand('ON').then(() => {
+                    setTimeout(async () => {
+                      if (!videoRef.current) {
+                        if (isFlashOn) await sendLightCommand('OFF');
+                        handleSortAndRestart("RESTART_NO_SORT");
+                        return;
+                      }
+                      addLog("Re-classifying with light on...");
+                      try {
+                        const finalPredictions = await model.predict(videoRef.current);
+                        const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
+                        const finalResult = interpretDetectionsLocal(finalFiltered, confidenceThreshold);
+                        if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
+                          addLog(`Final confirmation: ${finalResult.primaryObject}. Sorting.`);
+                          handleSortAndRestart(finalResult.primaryObject);
+                        } else {
+                          addLog(`Final check failed. Result: ${finalResult.detectionState}. Restarting camera.`);
+                          handleSortAndRestart("RESTART_NO_SORT");
+                        }
+                      } catch (e) {
+                        handleSortAndRestart("RESTART_NO_SORT");
+                      }
+                    }, 500);
+                  });
+                } else {
+                  addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sorting.`);
+                  handleSortAndRestart(foundPrediction.className);
+                }
+              } else {
+                setAppStatus("READY_TO_SEND");
+                addLog(`Manual Sort: Detected ${foundPrediction.className}. Ready to send command.`);
+              }
+            }, DETECTION_SETTLE_DELAY);
+          }
+        }
+      } else if (localResult.detectionState === 'MULTIPLE_OBJECTS') {
+        const commandLabel = "MULTIPLE";
+        const displayLabel = localResult.detectedObjects ? localResult.detectedObjects.join(', ') : "Multiple Items";
+        const multiplePrediction = { className: commandLabel, probability: 1 };
+
+        if (!stablePrediction || stablePrediction.className !== commandLabel) {
+          setStablePrediction(multiplePrediction);
           if (detectionTimer.current) clearTimeout(detectionTimer.current);
 
           detectionTimer.current = setTimeout(() => {
-            addLog(`Stable detection of ${foundPrediction.className}. Proceeding to sort.`);
+            addLog(`Stable detection of multiple objects (${displayLabel}). Sending '${commandLabel}' command.`);
 
             if (predictionIntervalRef.current) {
               clearInterval(predictionIntervalRef.current);
               predictionIntervalRef.current = undefined;
-              addLog("Detection loop stopped for sorting.");
             }
 
-            setPrimaryPrediction(foundPrediction);
+            setPrimaryPrediction(multiplePrediction);
 
             if (autoSortEnabled) {
-              if (autoFlashEnabled) {
-                addLog(`Initial detection: ${foundPrediction.className}. Turning on light for final check.`);
-                sendLightCommand('ON').then(() => {
-                  setTimeout(async () => {
-                    if (!videoRef.current) {
-                      if (isFlashOn) await sendLightCommand('OFF');
-                      handleSortAndRestart("RESTART_NO_SORT");
-                      return;
-                    }
-                    addLog("Re-classifying with light on...");
-                    const finalPredictions = await model.predict(videoRef.current);
-                    const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
-                    const finalResult = interpretDetectionsLocal(finalFiltered, confidenceThreshold);
-                    if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
-                      addLog(`Final confirmation: ${finalResult.primaryObject}. Sorting.`);
-                      handleSortAndRestart(finalResult.primaryObject);
-                    } else {
-                      addLog(`Final check failed. Result: ${finalResult.detectionState}. Restarting camera.`);
-                      handleSortAndRestart("RESTART_NO_SORT");
-                    }
-                  }, 500);
-                });
-              } else {
-                addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sorting.`);
-                handleSortAndRestart(foundPrediction.className);
-              }
+              addLog(`Auto-Sort: Detected Multiple Objects. Sending '${commandLabel}'.`);
+              handleSortAndRestart(commandLabel);
             } else {
               setAppStatus("READY_TO_SEND");
-              addLog(`Manual Sort: Detected ${foundPrediction.className}. Ready to send command.`);
+              addLog(`Manual Sort: Detected Multiple Objects. Ready to send '${commandLabel}'.`);
             }
           }, DETECTION_SETTLE_DELAY);
         }
+      } else {
+        if (detectionTimer.current) {
+          clearTimeout(detectionTimer.current);
+          detectionTimer.current = null;
+        }
+        if (stablePrediction) setStablePrediction(null);
+        setPrimaryPrediction(null);
+
+        const isUncertain = localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5));
+        const nextStatus: AppStatus = isUncertain ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
+
+        if (appStatus !== nextStatus) {
+          setAppStatus(nextStatus);
+        }
       }
-    } else if (localResult.detectionState === 'MULTIPLE_OBJECTS') {
-      const commandLabel = "MULTIPLE";
-      const displayLabel = localResult.detectedObjects ? localResult.detectedObjects.join(', ') : "Multiple Items";
-      const multiplePrediction = { className: commandLabel, probability: 1 };
-
-      if (!stablePrediction || stablePrediction.className !== commandLabel) {
-        setStablePrediction(multiplePrediction);
-        if (detectionTimer.current) clearTimeout(detectionTimer.current);
-
-        detectionTimer.current = setTimeout(() => {
-          addLog(`Stable detection of multiple objects (${displayLabel}). Sending '${commandLabel}' command.`);
-
-          if (predictionIntervalRef.current) {
-            clearInterval(predictionIntervalRef.current);
-            predictionIntervalRef.current = undefined;
-          }
-
-          setPrimaryPrediction(multiplePrediction);
-
-          if (autoSortEnabled) {
-            addLog(`Auto-Sort: Detected Multiple Objects. Sending '${commandLabel}'.`);
-            handleSortAndRestart(commandLabel);
-          } else {
-            setAppStatus("READY_TO_SEND");
-            addLog(`Manual Sort: Detected Multiple Objects. Ready to send '${commandLabel}'.`);
-          }
-        }, DETECTION_SETTLE_DELAY);
+    } catch (err: any) {
+      const msg = err.message || "";
+      if (!msg.includes("stopTraining") && !msg.includes("already be working") && !msg.includes("compiled") && !msg.includes("Sequential")) {
+        console.error("Prediction error:", err);
       }
-    } else {
-      if (detectionTimer.current) {
-        clearTimeout(detectionTimer.current);
-        detectionTimer.current = null;
-      }
-      if (stablePrediction) {
-        setStablePrediction(null);
-      }
-      setPrimaryPrediction(null);
-
-      const isUncertain = localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5));
-      newAppStatus = isUncertain ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
-
-      if (localResult.detectionState === 'MULTIPLE_OBJECTS') {
-        newAppStatus = "MULTIPLE_OBJECTS_DETECTED";
-      }
-
-      if (appStatus !== newAppStatus) {
-        setAppStatus(newAppStatus);
-      }
+    } finally {
+      isPredictingRef.current = false;
     }
 
-    if (autoCaptureEnabled && newAppStatus === "CONFIDENCE_TOO_LOW" && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
+    // Auto-capture logic
+    const needsCapture = detectionState === 'AMBIGUOUS' || (detectionState === 'NO_DETECTION' && currentPredictions.some(p => p.className.toLowerCase() !== 'background' && p.probability > 0.5));
+    if (autoCaptureEnabled && needsCapture && !isCollectingImages && appStatus !== 'COOLDOWN' && appStatus !== 'CAMERA_CYCLING') {
       if (!ambiguousDetectionTimer.current) {
-        addLog(`Uncertain detection. Triggering training image capture in ${AUTO_CAPTURE_TRIGGER_TIME / 1000}s.`);
+        addLog("Threshold met. Starting automatic training image capture.");
         ambiguousDetectionTimer.current = setTimeout(() => {
-          addLog("Threshold met. Starting automatic training image capture.");
           startImageCollection();
           ambiguousDetectionTimer.current = null;
         }, AUTO_CAPTURE_TRIGGER_TIME);
       }
-    } else if (newAppStatus !== 'CONFIDENCE_TOO_LOW') {
-      if (ambiguousDetectionTimer.current) {
-        addLog("Detection became clear or changed state. Cancelling auto-capture trigger.");
-        clearTimeout(ambiguousDetectionTimer.current);
-        ambiguousDetectionTimer.current = null;
-      }
+    } else if (!needsCapture && ambiguousDetectionTimer.current) {
+      clearTimeout(ambiguousDetectionTimer.current);
+      ambiguousDetectionTimer.current = null;
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction, confidenceThreshold]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction, confidenceThreshold, detectionState, currentPredictions]);
 
   useEffect(() => {
     return () => {

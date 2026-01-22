@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { AppStatus, LogEntry, Prediction } from "@/lib/types";
 import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { Card } from "@/components/ui/card";
+import { sendCommand, isConnected } from "@/lib/bluetooth";
 
 import { usePersistentState } from "@/hooks/use-persistent-state";
 
@@ -21,6 +22,7 @@ interface ClientViewProps {
     tmImageRef: MutableRefObject<typeof tmImage | null>;
     addLog: (message: string) => void;
     confidenceThreshold?: number;
+    autoSortEnabled?: boolean;
 }
 
 const PREDICTION_INTERVAL = 100;
@@ -36,6 +38,7 @@ export default function ClientView({
     tmImageRef,
     addLog,
     confidenceThreshold = 0.8, // Default high for client
+    autoSortEnabled = false,
 }: ClientViewProps) {
     const [viewState, setViewState] = useState<ViewState>("IDLE");
     const [isCameraOn, setIsCameraOn] = useState(false);
@@ -143,9 +146,22 @@ export default function ClientView({
 
     // Keep a ref of viewState for async access in timeouts
     const viewStateRef = useRef(viewState);
+    const [isBtConnected, setIsBtConnected] = useState(isConnected());
+
     useEffect(() => {
         viewStateRef.current = viewState;
     }, [viewState]);
+
+    useEffect(() => {
+        const onConnected = () => setIsBtConnected(true);
+        const onDisconnected = () => setIsBtConnected(false);
+        window.addEventListener('bt-connected', onConnected);
+        window.addEventListener('bt-disconnected', onDisconnected);
+        return () => {
+            window.removeEventListener('bt-connected', onConnected);
+            window.removeEventListener('bt-disconnected', onDisconnected);
+        }
+    }, []);
 
     // --- Prediction Loop ---
     const runClassification = useCallback(async () => {
@@ -188,7 +204,7 @@ export default function ClientView({
                                 setDetectedLabel(pred.className);
                                 setDetectionId(prev => prev + 1); // Force UI refresh
                                 setViewState("DETECTED");
-                                addLog(`Detected: ${pred.className} (Overwrite/New)`);
+                                addLog(`Detected: ${pred.className}. Waiting for user approval.`);
                             }
                         }, DETECTION_SETTLE_DELAY);
                     }
@@ -214,7 +230,8 @@ export default function ClientView({
             }
         } catch (err: any) {
             // Suppress specific TFJS errors that occur during fast reloads or uninitialization
-            if (err.message && (err.message.includes("stopTraining") || err.message.includes("already be working"))) {
+            const msg = err.message || "";
+            if (msg.includes("stopTraining") || msg.includes("already be working") || msg.includes("compiled") || msg.includes("Sequential")) {
                 return;
             }
             console.error("Prediction error:", err);
@@ -266,9 +283,23 @@ export default function ClientView({
         return null;
     };
 
-    const handleCorrect = () => {
+    const handleCorrect = async () => {
         setViewState("THANK_YOU");
         setTotalItemsSorted(prev => prev + 1); // Increment count
+
+        // Send command to ESP32
+        try {
+            if (isConnected()) {
+                await sendCommand(detectedLabel.toUpperCase());
+                addLog(`Sent sort command for: ${detectedLabel}`);
+            } else {
+                addLog(`Bluetooth not connected. Could not send command for: ${detectedLabel}`);
+            }
+        } catch (error: any) {
+            console.error("Failed to send Bluetooth command:", error);
+            addLog(`Error sending command: ${error.message}`);
+        }
+
         setTimeout(() => {
             setViewState("IDLE");
             setStablePrediction(null);
@@ -320,6 +351,17 @@ export default function ClientView({
 
                 toast({ title: "Feedback Saved", description: `${capturedImages.length} images saved for training.` });
                 addLog(`User corrected ${detectedLabel} to ${correctLabel} (${capturedImages.length} samples)`);
+
+                // Send corrected command to ESP32
+                try {
+                    if (isConnected()) {
+                        await sendCommand(correctLabel.toUpperCase());
+                        addLog(`Sent corrected sort command for: ${correctLabel}`);
+                    }
+                } catch (error: any) {
+                    console.error("Failed to send Bluetooth command:", error);
+                    addLog(`Error sending command: ${error.message}`);
+                }
             } catch (e: any) {
                 console.error(e);
                 toast({ variant: "destructive", title: "Save Error", description: "Failed to save training data." });
@@ -380,6 +422,17 @@ export default function ClientView({
                     "absolute inset-0 transition-opacity duration-700 pointer-events-none",
                     viewState === "IDLE" ? "bg-black/40" : "bg-black/70 backdrop-blur-sm"
                 )} />
+            </div>
+
+            {/* BT Status (Top-Right) */}
+            <div className="absolute top-4 right-4 z-50">
+                <div className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md border text-[10px] font-bold uppercase tracking-wider",
+                    isBtConnected ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400" : "bg-rose-500/10 border-rose-500/50 text-rose-400"
+                )}>
+                    <div className={cn("w-2 h-2 rounded-full", isBtConnected ? "bg-emerald-400 animate-pulse" : "bg-rose-400")} />
+                    {isBtConnected ? "Connected" : "Disconnected"}
+                </div>
             </div>
 
 

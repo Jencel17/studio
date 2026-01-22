@@ -18,6 +18,7 @@ import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot,
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
 import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected } from "@/lib/bluetooth";
+import Link from "next/link";
 import { playConnectedSound, playDisconnectedSound } from "@/lib/audio";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
@@ -638,10 +639,10 @@ export default function SortVisionSettings({
             className="w-full justify-start text-muted-foreground hover:text-primary mb-2"
             asChild
           >
-            <a href="/client">
+            <Link href="/client" className="flex items-center w-full">
               <Zap className="mr-2 h-4 w-4" />
               Switch to Client View
-            </a>
+            </Link>
           </Button>
         </div>
         <ThemeToggle />
