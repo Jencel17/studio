@@ -29,7 +29,7 @@ const PREDICTION_INTERVAL = 100;
 const DETECTION_SETTLE_DELAY = 1000; // Faster than admin for responsiveness?
 const CAMERA_WARMUP_DELAY = 1500;
 
-type ViewState = "IDLE" | "DETECTED" | "CORRECTION" | "THANK_YOU" | "MULTIPLE_DETECTION";
+type ViewState = "IDLE" | "DETECTED" | "CORRECTION" | "THANK_YOU";
 
 export default function ClientView({
     model,
@@ -190,7 +190,7 @@ export default function ClientView({
 
                         // Debounce the actual state change
                         if (detectionTimer.current) clearTimeout(detectionTimer.current);
-                        detectionTimer.current = setTimeout(() => {
+                        detectionTimer.current = setTimeout(async () => {
                             // Check latest state via Ref to avoid closure staleness issues
                             const currentViewState = viewStateRef.current;
 
@@ -201,7 +201,37 @@ export default function ClientView({
                                     setTotalItemsSorted(prev => prev + 1);
                                 }
 
-                                // *** NEW FLOW: Sort immediately, then ask for confirmation ***
+                                // *** STEP 1: CAPTURE IMAGES BEFORE SORTING ***
+                                // This way we have valid images if the user says it was incorrect
+                                const preImages: string[] = [];
+                                const burstCount = 10;
+                                const burstInterval = 50; // Faster burst since we're capturing before sort
+
+                                for (let i = 0; i < burstCount; i++) {
+                                    const video = videoRef.current;
+                                    if (video && video.readyState >= video.HAVE_ENOUGH_DATA) {
+                                        try {
+                                            const canvas = document.createElement('canvas');
+                                            canvas.width = video.videoWidth;
+                                            canvas.height = video.videoHeight;
+                                            const ctx = canvas.getContext('2d');
+                                            if (ctx) {
+                                                ctx.drawImage(video, 0, 0);
+                                                const imgData = canvas.toDataURL('image/jpeg');
+                                                preImages.push(imgData);
+                                            }
+                                        } catch (e) {
+                                            console.error("Pre-capture frame error:", e);
+                                        }
+                                    }
+                                    await new Promise(r => setTimeout(r, burstInterval));
+                                }
+
+                                // Store the pre-captured images
+                                setPreCapturedImages(preImages);
+                                addLog(`Captured ${preImages.length} images before sorting.`);
+
+                                // *** STEP 2: UPDATE UI ***
                                 setDetectedLabel(pred.className);
                                 setDetectionId(prev => prev + 1); // Force UI refresh
                                 setTotalItemsSorted(prev => prev + 1); // Count this sort
@@ -209,7 +239,7 @@ export default function ClientView({
                                 // Show the confirmation screen IMMEDIATELY (don't wait for BT)
                                 setViewState("DETECTED");
 
-                                // Send sort command in background (fire-and-forget)
+                                // *** STEP 3: SORT (send command after capturing) ***
                                 if (isConnected()) {
                                     sendCommand(pred.className.toUpperCase())
                                         .then(() => addLog(`Auto-sorted: ${pred.className}.`))
@@ -225,15 +255,13 @@ export default function ClientView({
                     }
                 }
             } else if (result.detectionState === 'MULTIPLE_OBJECTS') {
-                // Handle multiple objects detection
-                if (detectionTimer.current) clearTimeout(detectionTimer.current);
-                detectionTimer.current = setTimeout(() => {
-                    const currentViewState = viewStateRef.current;
-                    if (currentViewState === "IDLE" || currentViewState === "DETECTED") {
-                        setViewState("MULTIPLE_DETECTION");
-                        addLog("Multiple objects detected.");
-                    }
-                }, DETECTION_SETTLE_DELAY);
+                // Multiple objects - just ignore and keep detecting
+                // Clear any pending detection timer
+                if (detectionTimer.current) {
+                    clearTimeout(detectionTimer.current);
+                    detectionTimer.current = null;
+                }
+                setStablePrediction(null);
             } else {
                 // If we lose detection, we don't necessarily want to reset immediately if we are in 'DETECTED' mode
                 // waiting for user input. We only reset the stable tracker.
@@ -299,8 +327,10 @@ export default function ClientView({
     };
 
     const handleCorrect = async () => {
-        // Sort command was already sent on detection, just confirm and go to thank you
-        addLog(`User confirmed detection: ${detectedLabel}`);
+        // Detection was correct! 
+        // Discard the pre-captured images (we don't need them for training)
+        setPreCapturedImages([]);
+        addLog(`User confirmed detection: ${detectedLabel}. Pre-captured images discarded.`);
         setViewState("THANK_YOU");
 
         setTimeout(() => {
@@ -311,22 +341,15 @@ export default function ClientView({
     };
 
     const [capturedImages, setCapturedImages] = useState<string[]>([]);
+    // Pre-captured images: taken at detection time BEFORE sorting
+    const [preCapturedImages, setPreCapturedImages] = useState<string[]>([]);
 
     const handleIncorrect = async () => {
+        // Detection was incorrect!
+        // Use the pre-captured images (taken BEFORE sorting, while trash was still visible)
+        setCapturedImages(preCapturedImages);
+        addLog(`Using ${preCapturedImages.length} pre-captured images for training.`);
         setViewState("CORRECTION");
-        await new Promise(r => setTimeout(r, 50));
-
-        const images: string[] = [];
-        const burstCount = 10;
-        const burstInterval = 100;
-
-        for (let i = 0; i < burstCount; i++) {
-            const img = captureFrame();
-            if (img) images.push(img);
-            await new Promise(r => setTimeout(r, burstInterval));
-        }
-
-        setCapturedImages(images);
     };
 
     const handleCorrectionSelect = async (correctLabel: string) => {
@@ -376,6 +399,7 @@ export default function ClientView({
         setViewState("THANK_YOU");
         setTimeout(() => {
             setCapturedImages([]);
+            setPreCapturedImages([]); // Clear pre-captured images too
             setViewState("IDLE");
             setStablePrediction(null);
             setDetectedLabel("");
@@ -385,6 +409,8 @@ export default function ClientView({
     const handleManualReset = () => {
         setViewState("IDLE");
         setStablePrediction(null);
+        setCapturedImages([]);
+        setPreCapturedImages([]);
     };
 
 
@@ -570,26 +596,7 @@ export default function ClientView({
                     <p className="text-emerald-100 text-xl mt-4 max-w-md text-center">Sorting smarter, one item at a time.</p>
                 </div>
             )}
-            {/* 5. MULTIPLE DETECTION STATE */}
-            {viewState === "MULTIPLE_DETECTION" && (
-                <div className="relative z-20 h-full w-full flex flex-col items-center justify-center bg-zinc-950/90 p-6 animate-in fade-in zoom-in-95 duration-500">
-                    <div className="bg-amber-500/10 rounded-full p-8 mb-6 border border-amber-500/20 shadow-[0_0_50px_rgba(245,158,11,0.2)]">
-                        <AlertTriangle className="h-24 w-24 text-amber-500 animate-pulse" />
-                    </div>
-                    <h2 className="text-4xl md:text-5xl font-black text-white text-center mb-4 tracking-tight">
-                        Multiple Objects <br /><span className="text-amber-500">Detected</span>
-                    </h2>
-                    <p className="text-zinc-400 text-lg mb-12 text-center max-w-lg">
-                        Please verify that only one item is visible to the camera at a time.
-                    </p>
-                    <Button
-                        onClick={handleManualReset}
-                        className="h-16 px-12 text-xl font-bold rounded-full bg-white text-black hover:bg-zinc-200 transition-transform active:scale-95 shadow-xl"
-                    >
-                        Retry
-                    </Button>
-                </div>
-            )}
+
         </div>
     );
 }

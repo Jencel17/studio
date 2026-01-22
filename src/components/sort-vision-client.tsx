@@ -609,33 +609,13 @@ export default function SortVisionClient({
           }
         }
       } else if (localResult.detectionState === 'MULTIPLE_OBJECTS') {
-        const commandLabel = "MULTIPLE";
-        const displayLabel = localResult.detectedObjects ? localResult.detectedObjects.join(', ') : "Multiple Items";
-        const multiplePrediction = { className: commandLabel, probability: 1 };
-
-        if (!stablePrediction || stablePrediction.className !== commandLabel) {
-          setStablePrediction(multiplePrediction);
-          if (detectionTimer.current) clearTimeout(detectionTimer.current);
-
-          detectionTimer.current = setTimeout(() => {
-            addLog(`Stable detection of multiple objects (${displayLabel}). Sending '${commandLabel}' command.`);
-
-            if (predictionIntervalRef.current) {
-              clearInterval(predictionIntervalRef.current);
-              predictionIntervalRef.current = undefined;
-            }
-
-            setPrimaryPrediction(multiplePrediction);
-
-            if (autoSortEnabled) {
-              addLog(`Auto-Sort: Detected Multiple Objects. Sending '${commandLabel}'.`);
-              handleSortAndRestart(commandLabel);
-            } else {
-              setAppStatus("READY_TO_SEND");
-              addLog(`Manual Sort: Detected Multiple Objects. Ready to send '${commandLabel}'.`);
-            }
-          }, DETECTION_SETTLE_DELAY);
+        // Multiple objects - just ignore and keep detecting
+        if (detectionTimer.current) {
+          clearTimeout(detectionTimer.current);
+          detectionTimer.current = null;
         }
+        if (stablePrediction) setStablePrediction(null);
+        setPrimaryPrediction(null);
       } else {
         if (detectionTimer.current) {
           clearTimeout(detectionTimer.current);
@@ -820,7 +800,7 @@ export default function SortVisionClient({
   }, [appStatus, addLog, setAppStatus]);
 
   useEffect(() => {
-    const activeStates: AppStatus[] = ['AWAITING_OBJECT', 'CONFIDENCE_TOO_LOW', 'MULTIPLE_OBJECTS_DETECTED'];
+    const activeStates: AppStatus[] = ['AWAITING_OBJECT', 'CONFIDENCE_TOO_LOW'];
     const shouldRunLoop = isCameraOn && model && !predictionIntervalRef.current && activeStates.includes(appStatus) && !isCollectingImages;
 
     if (shouldRunLoop) {
@@ -882,7 +862,7 @@ export default function SortVisionClient({
         case "CAMERA_CYCLING": return "Waiting for Sorter...";
         case "COLLECTING_IMAGES": return "Collecting Images...";
         case "COOLDOWN": return "Cooldown";
-        case "MULTIPLE_OBJECTS_DETECTED": return "Multiple Objects";
+
         case "READY_TO_SEND":
           return `Sending: ${primaryPrediction?.className || '...'}`;
         default: return "Analyzing...";
@@ -900,7 +880,7 @@ export default function SortVisionClient({
         case "CAMERA_CYCLING":
         case "CAMERA_WARMING_UP": return "secondary";
         case "CONFIDENCE_TOO_LOW": return "destructive";
-        case "MULTIPLE_OBJECTS_DETECTED": return "destructive";
+
         case "AWAITING_OBJECT":
           return stablePrediction ? "default" : "outline";
         default: return "outline";
@@ -1053,16 +1033,7 @@ export default function SortVisionClient({
               </div>
             );
           }
-          if (appStatus === 'MULTIPLE_OBJECTS_DETECTED') {
-            return (
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-6 w-6 text-yellow-400" />
-                <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
-                  Multiple Objects
-                </h3>
-              </div>
-            );
-          }
+
           return <p className="text-lg text-white/90 shadow-md">Analyzing...</p>;
       }
     };
