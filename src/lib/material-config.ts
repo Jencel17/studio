@@ -12,7 +12,7 @@ export interface MaterialConfig {
 
 export const materialConfigs: Record<string, MaterialConfig> = {
     paper: {
-        label: "Paper",
+        label: "BIODEGRADABLE",
         color: "bg-amber-500",
         textColor: "text-amber-500",
         borderColor: "border-amber-500",
@@ -20,7 +20,7 @@ export const materialConfigs: Record<string, MaterialConfig> = {
         gradient: "from-amber-400 to-orange-500",
     },
     plastic: {
-        label: "Plastic",
+        label: "RECYCLABLE",
         color: "bg-blue-500",
         textColor: "text-blue-500",
         borderColor: "border-blue-500",
@@ -28,7 +28,7 @@ export const materialConfigs: Record<string, MaterialConfig> = {
         gradient: "from-blue-400 to-cyan-500",
     },
     metal: {
-        label: "Metal",
+        label: "NON-BIODEGRADABLE",
         color: "bg-slate-400",
         textColor: "text-slate-400",
         borderColor: "border-slate-400",
@@ -89,12 +89,6 @@ export const materialConfigs: Record<string, MaterialConfig> = {
 export function getMaterialConfig(materialName: string): MaterialConfig {
     const key = materialName.toLowerCase().trim();
     return materialConfigs[key] || materialConfigs.default;
-}
-
-// Badge styles for each material (useful for tags/chips)
-export function getMaterialBadgeClasses(materialName: string): string {
-    const config = getMaterialConfig(materialName);
-    return `${config.color} text-white`;
 }
 
 // Get the recyclable status label

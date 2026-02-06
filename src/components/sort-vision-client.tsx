@@ -467,9 +467,19 @@ export default function SortVisionClient({
     }
   }, [isCameraOn, isFocusLocked, addLog, toast]);
 
+  const getArduinoCommand = (label: string): string => {
+    const l = label.toUpperCase();
+    if (l === "PAPER") return "BIODEGRADABLE";
+    if (l === "METAL") return "NON-BIODEGRADABLE";
+    if (l === "PLASTIC") return "RECYCLABLE";
+    return l;
+  };
+
   const sendSortCommand = useCallback(async (classificationLabel: string) => {
+    const arduinoCommand = getArduinoCommand(classificationLabel);
+
     if (isTestMode) {
-      addLog(`TEST MODE: Simulating command for ${classificationLabel}`);
+      addLog(`TEST MODE: Simulating command for ${classificationLabel} (${arduinoCommand})`);
       setCommandStatus({ status: "SUCCESS", message: `Test: Sorted ${classificationLabel}` });
       toast({ title: "Command Sent (Test Mode)", description: `Simulated sort for: ${classificationLabel}` });
       return true;
@@ -482,7 +492,7 @@ export default function SortVisionClient({
     }
 
     try {
-      await sendBluetoothCommand(classificationLabel.toUpperCase());
+      await sendBluetoothCommand(arduinoCommand);
       setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
       toast({ title: "Command Sent", description: `Sorted: ${classificationLabel}` });
       return true;

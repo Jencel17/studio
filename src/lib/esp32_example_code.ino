@@ -53,21 +53,21 @@ void handleSortRequest(AsyncWebServerRequest *request) {
     Serial.print("Received sort command for: ");
     Serial.println(material);
 
-    if (material == "PLASTIC") {
-      // TODO: Add your logic to move the 'PLASTIC' servo
+    if (material == "RECYCLABLE") {
+      // TODO: Add your logic to move the 'RECYCLABLE' servo
       // For example:
       // plasticServo.write(90);
       // delay(500);
       // plasticServo.write(0);
-      request->send(200, "text/plain", "OK: Sorted as PLASTIC");
+      request->send(200, "text/plain", "OK: Sorted as RECYCLABLE");
 
-    } else if (material == "METAL") {
-      // TODO: Add your logic to move the 'METAL' servo
-      request->send(200, "text/plain", "OK: Sorted as METAL");
+    } else if (material == "NON-BIODEGRADABLE") {
+      // TODO: Add your logic to move the 'NON-BIODEGRADABLE' servo
+      request->send(200, "text/plain", "OK: Sorted as NON-BIODEGRADABLE");
 
-    } else if (material == "PAPER") {
-      // TODO: Add your logic to move the 'PAPER' servo
-      request->send(200, "text/plain", "OK: Sorted as PAPER");
+    } else if (material == "BIODEGRADABLE") {
+      // TODO: Add your logic to move the 'BIODEGRADABLE' servo
+      request->send(200, "text/plain", "OK: Sorted as BIODEGRADABLE");
 
     } else {
       request->send(400, "text/plain", "Error: Unknown class '" + material + "'");
