@@ -8,9 +8,11 @@ import { Progress } from "@/components/ui/progress";
 import { getSummaryStats, getAllTrainingImages, clearAllTrainingImages, resetAllStats, type SummaryStats, type TrainingImage } from "@/lib/stats-db";
 import { getMaterialConfig } from "@/lib/material-config";
 import { cn } from "@/lib/utils";
-import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, TrendingUp } from "lucide-react";
+import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, TrendingUp, Users, ShieldCheck, User, Radio } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import JSZip from "jszip";
+import { useAuth, type UserRole } from "@/contexts/auth-context";
+import { subscribeToLiveDetection, type LiveDetectionState } from "@/lib/firestore-sync";
 
 interface AdminDashboardProps {
     addLog: (message: string) => void;
@@ -20,7 +22,11 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     const [stats, setStats] = useState<SummaryStats | null>(null);
     const [isLoading, setIsLoading] = useState(true);
     const [isExporting, setIsExporting] = useState(false);
+    const [users, setUsers] = useState<{ uid: string; email: string; role: UserRole; createdAt: Date }[]>([]);
+    const [isLoadingUsers, setIsLoadingUsers] = useState(false);
+    const [liveDetection, setLiveDetection] = useState<LiveDetectionState | null>(null);
     const { toast } = useToast();
+    const { getAllUsers, setUserRole, user: currentUser } = useAuth();
 
     const refreshStats = useCallback(async () => {
         setIsLoading(true);
@@ -37,6 +43,42 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     useEffect(() => {
         refreshStats();
     }, [refreshStats]);
+
+    // Load users
+    const loadUsers = useCallback(async () => {
+        setIsLoadingUsers(true);
+        try {
+            const allUsers = await getAllUsers();
+            setUsers(allUsers);
+        } catch (e) {
+            console.error("Failed to load users:", e);
+        } finally {
+            setIsLoadingUsers(false);
+        }
+    }, [getAllUsers]);
+
+    useEffect(() => {
+        loadUsers();
+    }, [loadUsers]);
+
+    // Subscribe to live detection
+    useEffect(() => {
+        const unsubscribe = subscribeToLiveDetection((state) => {
+            setLiveDetection(state);
+        });
+        return () => unsubscribe();
+    }, []);
+
+    const handleToggleRole = async (uid: string, currentRole: UserRole) => {
+        const newRole: UserRole = currentRole === 'admin' ? 'user' : 'admin';
+        try {
+            await setUserRole(uid, newRole);
+            toast({ title: 'Role Updated', description: `User role changed to ${newRole}.` });
+            loadUsers();
+        } catch (e: any) {
+            toast({ variant: 'destructive', title: 'Error', description: e.message });
+        }
+    };
 
     const handleExportTrainingImages = async () => {
         setIsExporting(true);
@@ -231,6 +273,85 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
                     Reset All
                 </Button>
             </div>
+
+            {/* Live Detection State */}
+            <Card className="p-4 border-white/10">
+                <div className="flex items-center gap-2 text-muted-foreground mb-3">
+                    <Radio className="h-4 w-4" />
+                    <span className="text-sm font-semibold uppercase tracking-wider">Live Detection</span>
+                    {liveDetection && (
+                        <span className="ml-auto flex items-center gap-1">
+                            <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <span className="text-xs">Live</span>
+                        </span>
+                    )}
+                </div>
+                {liveDetection ? (
+                    <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">Prediction</span>
+                            <span className="font-semibold capitalize">{liveDetection.currentPrediction || 'None'}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">Confidence</span>
+                            <span className="font-semibold">{(liveDetection.confidence * 100).toFixed(1)}%</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">Status</span>
+                            <span className="text-xs font-mono bg-muted px-2 py-0.5 rounded">{liveDetection.appStatus}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                            <span className="text-sm text-muted-foreground">Last Update</span>
+                            <span className="text-xs text-muted-foreground">{new Date(liveDetection.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                    </div>
+                ) : (
+                    <p className="text-sm text-muted-foreground">No client is currently detecting.</p>
+                )}
+            </Card>
+
+            {/* User Management */}
+            <Card className="p-4 border-white/10">
+                <div className="flex items-center justify-between mb-3">
+                    <div className="flex items-center gap-2 text-muted-foreground">
+                        <Users className="h-4 w-4" />
+                        <span className="text-sm font-semibold uppercase tracking-wider">User Management</span>
+                    </div>
+                    <Button onClick={loadUsers} variant="ghost" size="sm" disabled={isLoadingUsers}>
+                        <RefreshCw className={cn("h-3 w-3", isLoadingUsers && "animate-spin")} />
+                    </Button>
+                </div>
+                <div className="space-y-2">
+                    {users.map((u) => (
+                        <div key={u.uid} className="flex items-center justify-between rounded-lg border border-white/10 p-3">
+                            <div className="flex items-center gap-2 min-w-0">
+                                {u.role === 'admin' ? (
+                                    <ShieldCheck className="h-4 w-4 text-primary flex-shrink-0" />
+                                ) : (
+                                    <User className="h-4 w-4 text-muted-foreground flex-shrink-0" />
+                                )}
+                                <div className="min-w-0">
+                                    <p className="text-sm font-medium truncate">{u.email}</p>
+                                    <p className="text-xs text-muted-foreground capitalize">{u.role}</p>
+                                </div>
+                            </div>
+                            {u.uid !== currentUser?.uid && (
+                                <Button
+                                    onClick={() => handleToggleRole(u.uid, u.role)}
+                                    variant="outline"
+                                    size="sm"
+                                    className="ml-2 flex-shrink-0"
+                                >
+                                    {u.role === 'admin' ? 'Demote' : 'Promote'}
+                                </Button>
+                            )}
+                        </div>
+                    ))}
+                    {users.length === 0 && !isLoadingUsers && (
+                        <p className="text-sm text-muted-foreground text-center py-2">No users found.</p>
+                    )}
+                </div>
+            </Card>
         </div>
     );
 }

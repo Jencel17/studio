@@ -1,5 +1,6 @@
 
 import { getDB } from './db';
+import { syncCategoryStatsToFirestore, syncDailyStatsToFirestore } from './firestore-sync';
 
 const STATS_STORE = 'categoryStats';
 const TRAINING_STORE = 'trainingImages';
@@ -59,6 +60,9 @@ export const incrementCategoryCount = async (
     }
 
     await tx.done;
+
+    // Sync to Firestore
+    syncCategoryStatsAfterUpdate().catch(console.error);
 };
 
 export const getAllCategoryStats = async (): Promise<CategoryStats[]> => {
@@ -71,6 +75,9 @@ export const resetAllStats = async (): Promise<void> => {
     const tx = db.transaction(STATS_STORE, 'readwrite');
     await tx.store.clear();
     await tx.done;
+
+    // Sync cleared stats to Firestore
+    syncCategoryStatsToFirestore({}).catch(console.error);
 };
 
 // ===================== TRAINING IMAGES =====================
@@ -191,6 +198,9 @@ export const incrementDailyStat = async (isCorrect: boolean): Promise<void> => {
 
     await tx.store.put(stats);
     await tx.done;
+
+    // Sync to Firestore
+    syncDailyStatsAfterUpdate().catch(console.error);
 };
 
 export const getDailyStats = async (days: number = 7): Promise<DailyStats[]> => {
@@ -202,4 +212,33 @@ export const getDailyStats = async (days: number = 7): Promise<DailyStats[]> => 
         .sort((a, b) => b.date.localeCompare(a.date))
         .slice(0, days)
         .reverse(); // Return in chronological order
+};
+
+// ===================== FIRESTORE SYNC HELPERS =====================
+
+const syncCategoryStatsAfterUpdate = async (): Promise<void> => {
+    const allStats = await getAllCategoryStats();
+    const statsMap: Record<string, { count: number; correctCount: number; incorrectCount: number; lastUpdated: string }> = {};
+    for (const stat of allStats) {
+        statsMap[stat.category] = {
+            count: stat.count,
+            correctCount: stat.correctCount,
+            incorrectCount: stat.incorrectCount,
+            lastUpdated: stat.lastUpdated instanceof Date ? stat.lastUpdated.toISOString() : String(stat.lastUpdated),
+        };
+    }
+    await syncCategoryStatsToFirestore(statsMap);
+};
+
+const syncDailyStatsAfterUpdate = async (): Promise<void> => {
+    const allDaily = await getDailyStats(30);
+    const dailyMap: Record<string, { totalSorted: number; correctCount: number; incorrectCount: number }> = {};
+    for (const day of allDaily) {
+        dailyMap[day.date] = {
+            totalSorted: day.totalSorted,
+            correctCount: day.correctCount,
+            incorrectCount: day.incorrectCount,
+        };
+    }
+    await syncDailyStatsToFirestore(dailyMap);
 };

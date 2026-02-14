@@ -6,6 +6,7 @@ import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
 import OfflineIndicator from "@/components/offline-indicator";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { AuthProvider } from "@/contexts/auth-context";
 
 const outfit = Outfit({
   subsets: ["latin"],
@@ -48,13 +49,15 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <SidebarProvider defaultOpen={true}>
-            <SidebarInset>
-              {children}
-              <OfflineIndicator />
-              <Toaster />
-            </SidebarInset>
-          </SidebarProvider>
+          <AuthProvider>
+            <SidebarProvider defaultOpen={true}>
+              <SidebarInset>
+                {children}
+                <OfflineIndicator />
+                <Toaster />
+              </SidebarInset>
+            </SidebarProvider>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

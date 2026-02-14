@@ -4,7 +4,6 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import type * as tf from "@tensorflow/tfjs";
 import { useRouter } from 'next/navigation';
-import Cookies from 'js-cookie';
 
 import SortVisionClient from "@/components/sort-vision-client";
 import SortVisionSettings from "@/components/sort-vision-settings";
@@ -13,12 +12,14 @@ import ErrorBoundary from "@/components/error-boundary";
 import { AppStatus, LogEntry } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { usePersistentState } from "@/hooks/use-persistent-state";
-import { Loader2 } from "lucide-react";
+import { Loader2, ShieldAlert } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
 
 export default function AdminPage() {
     const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
-    const [isAuthenticated, setIsAuthenticated] = useState<boolean | undefined>(undefined);
+
+    const { user, userRole, loading } = useAuth();
 
     const [isTestMode, setIsTestMode] = usePersistentState('isTestMode', false);
     const [wakeLockEnabled, setWakeLockEnabled] = usePersistentState('wakeLockEnabled', false);
@@ -35,19 +36,10 @@ export default function AdminPage() {
     const router = useRouter();
 
     useEffect(() => {
-        const authCookie = Cookies.get('auth');
-        if (authCookie === 'true') {
-            setIsAuthenticated(true);
-        } else {
-            setIsAuthenticated(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        if (isAuthenticated === false) {
+        if (!loading && !user) {
             router.push('/login');
         }
-    }, [isAuthenticated, router]);
+    }, [loading, user, router]);
 
     const addLog = useCallback((message: string) => {
         const newLog: LogEntry = {
@@ -59,7 +51,7 @@ export default function AdminPage() {
     }, []);
 
     useEffect(() => {
-        if (!isAuthenticated) return;
+        if (!user || userRole !== 'admin') return;
 
         const loadAiLibraries = async () => {
             if (tmImageRef.current && tfRef.current) {
@@ -90,9 +82,9 @@ export default function AdminPage() {
         };
 
         loadAiLibraries();
-    }, [addLog, toast, isAuthenticated]);
+    }, [addLog, toast, user, userRole]);
 
-    if (isAuthenticated === undefined) {
+    if (loading) {
         return (
             <div className="flex h-screen w-full flex-col items-center justify-center bg-background text-foreground">
                 <Loader2 className="h-8 w-8 animate-spin" />
@@ -101,8 +93,25 @@ export default function AdminPage() {
         );
     }
 
-    if (!isAuthenticated) {
+    if (!user) {
         return null;
+    }
+
+    // Non-admin users see access denied
+    if (userRole !== 'admin') {
+        return (
+            <div className="flex h-screen w-full flex-col items-center justify-center bg-background text-foreground gap-4">
+                <ShieldAlert className="h-16 w-16 text-destructive" />
+                <h2 className="text-2xl font-bold">Access Denied</h2>
+                <p className="text-muted-foreground">You need admin privileges to access this page.</p>
+                <button
+                    onClick={() => router.push('/')}
+                    className="text-primary hover:underline"
+                >
+                    Go back to home
+                </button>
+            </div>
+        );
     }
 
     if (appStatus === 'LOADING_LIBS') {

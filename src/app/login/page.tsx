@@ -2,44 +2,56 @@
 "use client";
 
 import { useState, FormEvent } from 'react';
-import Cookies from 'js-cookie';
+import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/hooks/use-toast';
 import { Eye, EyeOff } from 'lucide-react';
+import { useAuth } from '@/contexts/auth-context';
 
 export default function LoginPage() {
-  const [username, setUsername] = useState('');
+  const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const { toast } = useToast();
+  const { signIn } = useAuth();
+  const router = useRouter();
 
-  const handleLogin = (e: FormEvent) => {
+  const handleLogin = async (e: FormEvent) => {
     e.preventDefault();
     setIsLoading(true);
 
-    // This logic is simple and doesn't need a delay.
-    if (username === 'admin' && password === 'jencelearl17') {
-      Cookies.set('auth', 'true', { expires: 1 });
-      
+    try {
+      await signIn(email, password);
+
       toast({
         title: 'Login Successful',
         description: 'Welcome back! Redirecting...',
       });
-      
-      // Force a full page reload to ensure the new cookie is read correctly on the main page.
-      // This avoids Next.js router race conditions.
-      window.location.href = '/';
 
-    } else {
+      router.push('/');
+    } catch (error: any) {
+      let message = 'Invalid email or password.';
+      if (error?.code === 'auth/user-not-found') {
+        message = 'No account found with this email.';
+      } else if (error?.code === 'auth/wrong-password') {
+        message = 'Incorrect password.';
+      } else if (error?.code === 'auth/invalid-email') {
+        message = 'Please enter a valid email address.';
+      } else if (error?.code === 'auth/too-many-requests') {
+        message = 'Too many failed attempts. Please try again later.';
+      }
+
       toast({
         variant: 'destructive',
         title: 'Login Failed',
-        description: 'Invalid username or password.',
+        description: message,
       });
+    } finally {
       setIsLoading(false);
     }
   };
@@ -48,20 +60,20 @@ export default function LoginPage() {
     <div className="flex h-screen w-full items-center justify-center bg-background px-4">
       <Card className="w-full max-w-sm">
         <CardHeader>
-          <CardTitle className="text-2xl">Admin Login</CardTitle>
-          <CardDescription>Enter your credentials to access SortVision.</CardDescription>
+          <CardTitle className="text-2xl">Login</CardTitle>
+          <CardDescription>Sign in to access SortVision.</CardDescription>
         </CardHeader>
         <form onSubmit={handleLogin}>
           <CardContent className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="email">Email</Label>
               <Input
-                id="username"
-                type="text"
-                placeholder="admin"
+                id="email"
+                type="email"
+                placeholder="you@example.com"
                 required
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
                 disabled={isLoading}
               />
             </div>
@@ -88,10 +100,16 @@ export default function LoginPage() {
               </Button>
             </div>
           </CardContent>
-          <CardFooter>
+          <CardFooter className="flex flex-col gap-3">
             <Button type="submit" className="w-full" disabled={isLoading}>
-              {isLoading ? 'Logging in...' : 'Login'}
+              {isLoading ? 'Signing in...' : 'Sign In'}
             </Button>
+            <p className="text-sm text-muted-foreground text-center">
+              Don&apos;t have an account?{' '}
+              <Link href="/register" className="text-primary hover:underline font-medium">
+                Register
+              </Link>
+            </p>
           </CardFooter>
         </form>
       </Card>

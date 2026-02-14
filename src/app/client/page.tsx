@@ -5,7 +5,6 @@ import { useState, useRef, useCallback, useEffect } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import type * as tf from "@tensorflow/tfjs";
 import { useRouter } from 'next/navigation';
-import Cookies from 'js-cookie';
 
 import ClientView from "@/components/client-view";
 import SplashScreen from "@/components/splash-screen";
@@ -15,12 +14,14 @@ import { useToast } from "@/hooks/use-toast";
 
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { Loader2 } from "lucide-react";
+import { useAuth } from "@/contexts/auth-context";
 
 export default function ClientPage() {
     const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
-    const [isAuthenticated, setIsAuthenticated] = useState<boolean | undefined>(undefined);
     const [logs, setLogs] = useState<LogEntry[]>([]);
+
+    const { user, loading } = useAuth();
 
     // Shared state
     const [confidenceThreshold] = usePersistentState('confidenceThreshold', 0.8);
@@ -32,19 +33,10 @@ export default function ClientPage() {
     const router = useRouter();
 
     useEffect(() => {
-        const authCookie = Cookies.get('auth');
-        if (authCookie === 'true') {
-            setIsAuthenticated(true);
-        } else {
-            setIsAuthenticated(false);
-        }
-    }, []);
-
-    useEffect(() => {
-        if (isAuthenticated === false) {
+        if (!loading && !user) {
             router.push('/login');
         }
-    }, [isAuthenticated, router]);
+    }, [loading, user, router]);
 
     const addLog = useCallback((message: string) => {
         const newLog: LogEntry = {
@@ -56,7 +48,7 @@ export default function ClientPage() {
     }, []);
 
     useEffect(() => {
-        if (!isAuthenticated) return;
+        if (!user) return;
 
         const loadAiLibraries = async () => {
             if (tmImageRef.current && tfRef.current) {
@@ -87,34 +79,15 @@ export default function ClientPage() {
         };
 
         loadAiLibraries();
-    }, [addLog, toast, isAuthenticated]);
-
-    // Attempt to auto-load model from DB if SortVisionSettings isn't here to do it?
-    // Wait, ClientPage doesn't have Settings.
-    // The user said "Communication Protocol: This plan assumes ... synced via localStorage."
-    // But `model` object cannot be synced via localStorage.
-    // The model must be loaded into memory.
-    // So the ClientPage must ALSO load the model.
-    // How? Auto-load the "Default" model? Or prompt?
-    // The prompt says "No Settings: User cannot change confidence threshold...".
-    // But how do they get the model?
-    // "Navigate to /admin, load the model... Open /client".
-    // If they are in the same browser, IndexedDB is shared!
-    // So I can auto-load the *most recent* model or a *specific* model from IndexedDB?
-    // `saveModelToDb` allows saving. `getModelsFromDb` listing.
-    // I should create a "Default" mechanism or just picking the first one.
-    // Or I can add a simple "Select Model" overlay if none is loaded.
-    // For now, I will try to auto-load the first available model from DB.
-
-    /* Warning: I need to import DB functions from `@/lib/model-db`. */
+    }, [addLog, toast, user]);
 
     return (
         <div className="h-screen w-full bg-black">
-            {isAuthenticated === undefined ? (
+            {loading ? (
                 <div className="flex h-full w-full items-center justify-center">
                     <Loader2 className="h-8 w-8 animate-spin text-white" />
                 </div>
-            ) : !isAuthenticated ? null : (
+            ) : !user ? null : (
                 appStatus === 'LOADING_LIBS' ? <SplashScreen /> : (
                     <ClientLoader
                         tmImageRef={tmImageRef}

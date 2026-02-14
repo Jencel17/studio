@@ -16,6 +16,7 @@ import { getMaterialConfig, getRecyclableLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat } from "@/lib/stats-db";
 
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { updateLiveDetection } from "@/lib/firestore-sync";
 
 interface ClientViewProps {
     model: tmImage.CustomMobileNet | null;
@@ -285,6 +286,36 @@ export default function ClientView({
         }
 
     }, [model, viewState, appStatus, confidenceThreshold, stablePrediction, detectedLabel, addLog]);
+
+    // Push live detection state to Firestore (throttled)
+    const lastLivePushRef = useRef<number>(0);
+    useEffect(() => {
+        if (!stablePrediction && viewState === "IDLE") {
+            const now = Date.now();
+            if (now - lastLivePushRef.current > 2000) {
+                lastLivePushRef.current = now;
+                updateLiveDetection({
+                    currentPrediction: null,
+                    confidence: 0,
+                    appStatus,
+                    timestamp: now,
+                    deviceId: 'client',
+                }).catch(console.error);
+            }
+        } else if (stablePrediction) {
+            const now = Date.now();
+            if (now - lastLivePushRef.current > 500) {
+                lastLivePushRef.current = now;
+                updateLiveDetection({
+                    currentPrediction: stablePrediction.className,
+                    confidence: stablePrediction.probability,
+                    appStatus,
+                    timestamp: now,
+                    deviceId: 'client',
+                }).catch(console.error);
+            }
+        }
+    }, [stablePrediction, appStatus, viewState]);
 
     useEffect(() => {
         if (isCameraOn && appStatus === "AWAITING_OBJECT") {
