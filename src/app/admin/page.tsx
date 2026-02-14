@@ -9,6 +9,7 @@ import Cookies from 'js-cookie';
 import SortVisionClient from "@/components/sort-vision-client";
 import SortVisionSettings from "@/components/sort-vision-settings";
 import SplashScreen from "@/components/splash-screen";
+import ErrorBoundary from "@/components/error-boundary";
 import { AppStatus, LogEntry } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { usePersistentState } from "@/hooks/use-persistent-state";
@@ -131,22 +132,24 @@ export default function AdminPage() {
             />
 
             <main className="flex flex-1 items-center justify-center p-4 sm:p-6">
-                <SortVisionClient
-                    model={model}
-                    appStatus={appStatus}
-                    setAppStatus={setAppStatus}
-                    isTestMode={isTestMode}
-                    wakeLockEnabled={wakeLockEnabled}
-                    autoCaptureEnabled={autoCaptureEnabled}
-                    autoSortEnabled={autoSortEnabled}
-                    autoFlashEnabled={autoFlashEnabled}
-                    confidenceThreshold={confidenceThreshold}
-                    setConfidenceThreshold={setConfidenceThreshold}
-                    tmImageRef={tmImageRef}
-                    logs={logs}
-                    setLogs={setLogs}
-                    addLog={addLog}
-                />
+                <ErrorBoundary fallbackTitle="Classification Error">
+                    <SortVisionClient
+                        model={model}
+                        appStatus={appStatus}
+                        setAppStatus={setAppStatus}
+                        isTestMode={isTestMode}
+                        wakeLockEnabled={wakeLockEnabled}
+                        autoCaptureEnabled={autoCaptureEnabled}
+                        autoSortEnabled={autoSortEnabled}
+                        autoFlashEnabled={autoFlashEnabled}
+                        confidenceThreshold={confidenceThreshold}
+                        setConfidenceThreshold={setConfidenceThreshold}
+                        tmImageRef={tmImageRef}
+                        logs={logs}
+                        setLogs={setLogs}
+                        addLog={addLog}
+                    />
+                </ErrorBoundary>
             </main>
         </div>
     );

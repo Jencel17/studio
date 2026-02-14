@@ -5,13 +5,19 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import Cookies from "js-cookie";
 import { useRouter } from "next/navigation";
-import { Shield, Smartphone, Loader2, LogOut } from "lucide-react";
+import { Shield, Smartphone, Loader2, LogOut, BarChart3, Target, Images } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { getSummaryStats, type SummaryStats } from "@/lib/stats-db";
 
 export default function LandingPage() {
     const [isAuthenticated, setIsAuthenticated] = useState<boolean | undefined>(undefined);
+    const [stats, setStats] = useState<SummaryStats | null>(null);
     const router = useRouter();
+
+    useEffect(() => {
+        getSummaryStats().then(setStats).catch(console.error);
+    }, []);
 
     useEffect(() => {
         const authCookie = Cookies.get('auth');
@@ -96,6 +102,32 @@ export default function LandingPage() {
                         </Card>
                     </Link>
                 </div>
+
+                {stats && stats.totalSorted > 0 && (
+                    <div className="grid grid-cols-3 gap-4">
+                        <Card className="text-center bg-card/50 backdrop-blur-sm">
+                            <CardContent className="pt-6">
+                                <BarChart3 className="h-6 w-6 mx-auto text-primary mb-2" />
+                                <p className="text-2xl font-bold">{stats.totalSorted}</p>
+                                <p className="text-xs text-muted-foreground">Items Sorted</p>
+                            </CardContent>
+                        </Card>
+                        <Card className="text-center bg-card/50 backdrop-blur-sm">
+                            <CardContent className="pt-6">
+                                <Target className="h-6 w-6 mx-auto text-emerald-500 mb-2" />
+                                <p className="text-2xl font-bold">{stats.accuracyRate.toFixed(1)}%</p>
+                                <p className="text-xs text-muted-foreground">Accuracy</p>
+                            </CardContent>
+                        </Card>
+                        <Card className="text-center bg-card/50 backdrop-blur-sm">
+                            <CardContent className="pt-6">
+                                <Images className="h-6 w-6 mx-auto text-blue-500 mb-2" />
+                                <p className="text-2xl font-bold">{stats.trainingImagesCount}</p>
+                                <p className="text-xs text-muted-foreground">Training Images</p>
+                            </CardContent>
+                        </Card>
+                    </div>
+                )}
 
                 <div className="flex justify-center pt-8">
                     <Button variant="ghost" className="text-muted-foreground hover:text-destructive" onClick={handleLogout}>

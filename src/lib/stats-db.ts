@@ -1,8 +1,6 @@
 
-import { openDB, type IDBPDatabase } from 'idb';
+import { getDB } from './db';
 
-const DB_NAME = 'SortVisionDB';
-const DB_VERSION = 2;
 const STATS_STORE = 'categoryStats';
 const TRAINING_STORE = 'trainingImages';
 
@@ -29,27 +27,6 @@ export interface DailyStats {
     incorrectCount: number;
 }
 
-// Use the same DB initialization as model-db.ts
-const getDB = async (): Promise<IDBPDatabase> => {
-    return openDB(DB_NAME, DB_VERSION, {
-        upgrade(db) {
-            // Models store
-            if (!db.objectStoreNames.contains('models')) {
-                db.createObjectStore('models', { keyPath: 'name' });
-            }
-            // Category stats store
-            if (!db.objectStoreNames.contains(STATS_STORE)) {
-                db.createObjectStore(STATS_STORE, { keyPath: 'category' });
-            }
-            // Training images store
-            if (!db.objectStoreNames.contains(TRAINING_STORE)) {
-                const store = db.createObjectStore(TRAINING_STORE, { keyPath: 'id', autoIncrement: true });
-                store.createIndex('correctedTo', 'correctedTo', { unique: false });
-                store.createIndex('timestamp', 'timestamp', { unique: false });
-            }
-        },
-    });
-};
 
 // ===================== CATEGORY STATS =====================
 
@@ -185,4 +162,44 @@ export const getSummaryStats = async (): Promise<SummaryStats> => {
         categoryBreakdown: categoryStats.sort((a, b) => b.count - a.count),
         trainingImagesCount: trainingCount,
     };
+};
+
+// ===================== DAILY STATS =====================
+
+const DAILY_STATS_STORE = 'dailyStats';
+
+export const incrementDailyStat = async (isCorrect: boolean): Promise<void> => {
+    const db = await getDB();
+    const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+
+    const tx = db.transaction(DAILY_STATS_STORE, 'readwrite');
+    const existing = await tx.store.get(today);
+
+    const stats: DailyStats = existing || {
+        date: today,
+        totalSorted: 0,
+        correctCount: 0,
+        incorrectCount: 0,
+    };
+
+    stats.totalSorted += 1;
+    if (isCorrect) {
+        stats.correctCount += 1;
+    } else {
+        stats.incorrectCount += 1;
+    }
+
+    await tx.store.put(stats);
+    await tx.done;
+};
+
+export const getDailyStats = async (days: number = 7): Promise<DailyStats[]> => {
+    const db = await getDB();
+    const allStats: DailyStats[] = await db.getAll(DAILY_STATS_STORE);
+
+    // Sort by date descending and return last N days
+    return allStats
+        .sort((a, b) => b.date.localeCompare(a.date))
+        .slice(0, days)
+        .reverse(); // Return in chronological order
 };

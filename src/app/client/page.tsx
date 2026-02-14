@@ -9,6 +9,7 @@ import Cookies from 'js-cookie';
 
 import ClientView from "@/components/client-view";
 import SplashScreen from "@/components/splash-screen";
+import ErrorBoundary from "@/components/error-boundary";
 import { AppStatus, LogEntry } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 
@@ -121,15 +122,17 @@ export default function ClientPage() {
                         setAppStatus={setAppStatus}
                         model={model}
                     >
-                        <ClientView
-                            model={model}
-                            appStatus={appStatus}
-                            setAppStatus={setAppStatus}
-                            tmImageRef={tmImageRef}
-                            addLog={addLog}
-                            confidenceThreshold={confidenceThreshold}
-                            autoSortEnabled={autoSortEnabled}
-                        />
+                        <ErrorBoundary fallbackTitle="Classification Error">
+                            <ClientView
+                                model={model}
+                                appStatus={appStatus}
+                                setAppStatus={setAppStatus}
+                                tmImageRef={tmImageRef}
+                                addLog={addLog}
+                                confidenceThreshold={confidenceThreshold}
+                                autoSortEnabled={autoSortEnabled}
+                            />
+                        </ErrorBoundary>
                     </ClientLoader>
                 )
             )}

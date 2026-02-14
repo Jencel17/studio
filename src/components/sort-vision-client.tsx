@@ -4,6 +4,10 @@
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import JSZip from "jszip";
+import StatusDisplay from "@/components/status-display";
+import PredictionDisplay from "@/components/prediction-display";
+import DetectionRates from "@/components/detection-rates";
+import LogViewer from "@/components/log-viewer";
 import {
   Card,
   CardContent,
@@ -26,6 +30,7 @@ import { AppStatus, LogEntry, Prediction } from "@/lib/types";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { sendCommand as sendBluetoothCommand } from "@/lib/bluetooth";
+import { interpretDetectionsLocal, type DetectionState } from "@/lib/detection";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
@@ -35,8 +40,6 @@ type CommandStatus = {
   status: "IDLE" | "SUCCESS" | "ERROR";
   message: string;
 };
-
-type DetectionState = "SINGLE_OBJECT" | "MULTIPLE_OBJECTS" | "NO_DETECTION" | "AMBIGUOUS";
 
 interface SortVisionClientProps {
   model: tmImage.CustomMobileNet | null;
@@ -65,77 +68,6 @@ const AUTO_CAPTURE_COOLDOWN_TIME = 5000;
 const CAMERA_RESTART_DELAY_MS = 3000;
 const CAMERA_WARMUP_DELAY = 3000;
 const DETECTION_SETTLE_DELAY = 1500;
-
-const interpretDetectionsLocal = (
-  predictions: Prediction[],
-  confidenceThreshold: number
-): { detectionState: DetectionState, primaryObject?: string, detectedObjects?: string[], reason: string } => {
-  const sortedPredictions = [...predictions].sort(
-    (a, b) => b.probability - a.probability
-  );
-
-  if (!sortedPredictions.length || sortedPredictions[0].probability < 0.5) {
-    return {
-      detectionState: 'NO_DETECTION',
-      reason: 'No object detected with sufficient confidence.',
-    };
-  }
-
-  const topPrediction = sortedPredictions[0];
-  const secondPrediction = sortedPredictions.length > 1 ? sortedPredictions[1] : null;
-
-  const highConfidencePredictions = sortedPredictions.filter(
-    (p) => p.probability >= confidenceThreshold
-  );
-
-  if (
-    topPrediction.probability > 0.90 &&
-    (!secondPrediction || topPrediction.probability > secondPrediction.probability * 2)
-  ) {
-    return {
-      detectionState: 'SINGLE_OBJECT',
-      primaryObject: topPrediction.className,
-      reason: `Very high confidence for ${topPrediction.className}.`,
-    };
-  }
-
-  // Split confidence check
-  if (secondPrediction && (topPrediction.probability + secondPrediction.probability > 0.85) && secondPrediction.probability > 0.15) {
-    return {
-      detectionState: 'MULTIPLE_OBJECTS',
-      detectedObjects: [topPrediction.className, secondPrediction.className],
-      reason: 'Split confidence between two objects.',
-    };
-  }
-
-  if (highConfidencePredictions.length > 1) {
-    return {
-      detectionState: 'MULTIPLE_OBJECTS',
-      detectedObjects: highConfidencePredictions.map((p) => p.className),
-      reason: 'Multiple objects detected above confidence threshold.',
-    };
-  }
-
-  if (highConfidencePredictions.length === 1) {
-    return {
-      detectionState: 'SINGLE_OBJECT',
-      primaryObject: highConfidencePredictions[0].className,
-      reason: `One object found above threshold: ${highConfidencePredictions[0].className}.`,
-    };
-  }
-
-  if (topPrediction.probability >= 0.5 && topPrediction.probability < confidenceThreshold) {
-    return {
-      detectionState: 'AMBIGUOUS',
-      reason: `Highest confidence (${(topPrediction.probability * 100).toFixed(0)}%) is below the required ${confidenceThreshold * 100}% threshold.`,
-    };
-  }
-
-  return {
-    detectionState: 'NO_DETECTION',
-    reason: 'Analysis complete, but no clear result based on rules.',
-  };
-};
 
 export default function SortVisionClient({
   model,
@@ -859,233 +791,6 @@ export default function SortVisionClient({
     }
   }, [addLog]);
 
-  const StatusDisplay = () => {
-    const getStatusText = () => {
-      switch (appStatus) {
-        case "AWAITING_MODEL": return "Awaiting Model";
-        case "LOADING_LIBS": return "Loading AI libs...";
-        case "MODEL_LOADING": return "Loading Model...";
-        case "CAMERA_WARMING_UP": return "Camera Warming Up...";
-        case "AWAITING_OBJECT":
-          return stablePrediction ? `Confirming ${stablePrediction.className}...` : "Awaiting Object";
-        case "CONFIDENCE_TOO_LOW": return "Confidence Too Low";
-        case "CAMERA_CYCLING": return "Waiting for Sorter...";
-        case "COLLECTING_IMAGES": return "Collecting Images...";
-        case "COOLDOWN": return "Cooldown";
-
-        case "READY_TO_SEND":
-          return `Sending: ${primaryPrediction?.className || '...'}`;
-        default: return "Analyzing...";
-      }
-    };
-
-    const getStatusBadgeVariant = () => {
-      switch (appStatus) {
-        case "READY_TO_SEND": return "default";
-        case "COLLECTING_IMAGES": return "default";
-        case "AWAITING_MODEL": return "secondary";
-        case "COOLDOWN":
-        case "LOADING_LIBS":
-        case "MODEL_LOADING":
-        case "CAMERA_CYCLING":
-        case "CAMERA_WARMING_UP": return "secondary";
-        case "CONFIDENCE_TOO_LOW": return "destructive";
-
-        case "AWAITING_OBJECT":
-          return stablePrediction ? "default" : "outline";
-        default: return "outline";
-      }
-    };
-
-    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_WARMING_UP' || (appStatus === 'AWAITING_OBJECT' && !!stablePrediction);
-
-    return (
-      <div className="flex flex-col items-end gap-2">
-        <div className="flex flex-wrap items-center justify-end gap-2">
-          <Badge variant={getStatusBadgeVariant()} className="text-xs">
-            {isLoading && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
-            {appStatus === 'ANALYZING_MATERIAL' && <Sparkles className="h-3 w-3 mr-1 animate-pulse" />}
-            {getStatusText()}
-          </Badge>
-          <Badge variant={isTestMode ? "default" : isBtConnected ? "default" : "destructive"} className="gap-2 text-xs">
-            {isTestMode ? <TestTube className="h-3 w-3" /> : isBtConnected ? <BluetoothConnected className="h-3 w-3" /> : <BluetoothOff className="h-3 w-3" />}
-            {isTestMode ? "Test Mode" : isBtConnected ? "Sorter Connected" : "Sorter Disconnected"}
-          </Badge>
-        </div>
-        <div className="flex items-center gap-2 text-xs text-muted-foreground">
-          {commandStatus.status === 'IDLE' && <p>{commandStatus.message}</p>}
-          {commandStatus.status === 'SUCCESS' && <CheckCircle className="h-4 w-4 text-green-500" />}
-          {commandStatus.status === 'ERROR' && <XCircle className="h-4 w-4 text-red-500" />}
-          <p className="truncate">{commandStatus.status !== 'IDLE' && commandStatus.message}</p>
-        </div>
-      </div>
-    );
-  };
-
-
-  const PredictionDisplay = () => {
-    const renderContent = () => {
-      if (!isCameraOn) {
-        if (!hasCameraPermission) {
-          return (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm p-4 text-center">
-              <Alert variant="destructive">
-                <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>Camera Access Required</AlertTitle>
-                <AlertDescription>
-                  Please allow camera access in your browser settings to use this feature.
-                </AlertDescription>
-              </Alert>
-            </div>
-          );
-        }
-        return (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
-            <CameraOff className="h-16 w-16 text-muted-foreground" />
-            <p className="mt-2 text-muted-foreground">Camera is off</p>
-          </div>
-        );
-      }
-
-      if (countdown > 0) {
-        return <h3 className="text-6xl font-bold text-white drop-shadow-lg animate-ping">{countdown}</h3>;
-      }
-
-      if (appStatus === 'CAMERA_WARMING_UP') {
-        return (
-          <div className="flex items-center gap-2">
-            <Hourglass className="h-6 w-6 text-white animate-spin" />
-            <h3 className="text-xl font-bold text-white drop-shadow-lg">
-              Warming up...
-            </h3>
-          </div>
-        );
-      }
-
-      if (isCollectingImages) {
-        return (
-          <div className="w-full max-w-xs text-center">
-            <p className="text-lg text-white/90 shadow-md mb-2">Capturing...</p>
-            <Progress value={(collectedImages.length / IMAGE_CAPTURE_COUNT) * 100} className="h-2 w-full bg-white/30" />
-          </div>
-        );
-      }
-
-      if (appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || (!model && appStatus !== "AWAITING_OBJECT")) {
-        return (
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
-            <Upload className="h-16 w-16 text-muted-foreground animate-pulse" />
-            <p className="mt-2 text-muted-foreground">{appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' ? 'Loading Model...' : 'Please load a model from settings.'}</p>
-          </div>
-        );
-      }
-
-      if (appStatus === 'ANALYZING_MATERIAL') {
-        return (
-          <div className="flex items-center gap-2">
-            <Sparkles className="h-6 w-6 text-blue-400 animate-pulse" />
-            <h3 className="text-xl font-bold text-blue-400 drop-shadow-lg">
-              Analyzing Material...
-            </h3>
-          </div>
-        );
-      }
-
-      switch (detectionState) {
-        case "SINGLE_OBJECT":
-          if (primaryPrediction) {
-            return (
-              <>
-                <h3 className="text-2xl font-bold text-white drop-shadow-lg">
-                  {primaryPrediction.className}
-                </h3>
-                <div className="flex items-center gap-2">
-                  <p className="text-sm text-white/90 drop-shadow-md">
-                    Confidence:
-                  </p>
-                  <Progress value={primaryPrediction.probability * 100} className="h-2 w-24 bg-white/30" />
-                  <span className="text-sm font-semibold text-white">
-                    {(primaryPrediction.probability * 100).toFixed(0)}%
-                  </span>
-                </div>
-              </>
-            );
-          } else if (stablePrediction) {
-            return (
-              <div className="flex items-center gap-2">
-                <Hourglass className="h-6 w-6 text-white animate-spin" />
-                <h3 className="text-xl font-bold text-white drop-shadow-lg">
-                  Confirming {stablePrediction.className}...
-                </h3>
-              </div>
-            );
-          }
-          return <p className="text-lg text-white/90 shadow-md">Analyzing...</p>;
-        case "MULTIPLE_OBJECTS":
-        case "AMBIGUOUS":
-          return (
-            <div className="flex items-center gap-2">
-              <AlertTriangle className="h-6 w-6 text-yellow-400" />
-              <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
-                {detectionState === 'AMBIGUOUS' ? 'Ambiguous Detection' : 'Multiple Objects'}
-              </h3>
-            </div>
-          );
-        case "NO_DETECTION":
-        default:
-          if (appStatus === 'CONFIDENCE_TOO_LOW') {
-            return (
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="h-6 w-6 text-yellow-400" />
-                <h3 className="text-xl font-bold text-yellow-400 drop-shadow-lg">
-                  Confidence Too Low
-                </h3>
-              </div>
-            );
-          }
-
-          return <p className="text-lg text-white/90 shadow-md">Analyzing...</p>;
-      }
-    };
-
-    return (
-      <div className={cn("absolute inset-0 p-4 bg-gradient-to-b from-black/60 to-transparent flex flex-col items-center", isCollectingImages || countdown > 0 || appStatus === 'CAMERA_WARMING_UP' ? "justify-center" : "justify-start")}>
-        {renderContent()}
-      </div>
-    );
-  };
-
-  const DetectionRates = () => {
-    const getProbability = (label: string) => {
-      const prediction = currentPredictions.find(p => p.className === label);
-      return prediction ? prediction.probability : 0;
-    };
-    const modelLabels = model?.getClassLabels() ?? [];
-
-    return (
-      <div className="flex flex-col justify-center h-full w-full p-4 space-y-3">
-        {modelLabels.length > 0 ? (
-          modelLabels.filter(l => l.toLowerCase() !== 'background').map(label => {
-            const probability = getProbability(label);
-            const percentage = probability * 100;
-            return (
-              <div key={label} className="w-full space-y-1">
-                <div className="flex justify-between items-center text-sm">
-                  <span className="capitalize text-muted-foreground">{label}</span>
-                  <span className="font-semibold">
-                    {percentage.toFixed(1)}%
-                  </span>
-                </div>
-                <Progress value={percentage} className="h-2" />
-              </div>
-            );
-          })
-        ) : (
-          <p className="text-sm text-muted-foreground text-center">Load a model to see categories.</p>
-        )}
-      </div>
-    );
-  };
 
   const isCameraControlDisabled = isCollectingImages;
 
@@ -1143,7 +848,14 @@ export default function SortVisionClient({
           </div>
         )}
 
-        <StatusDisplay />
+        <StatusDisplay
+          appStatus={appStatus}
+          stablePrediction={stablePrediction}
+          primaryPrediction={primaryPrediction}
+          isTestMode={isTestMode}
+          isBtConnected={isBtConnected}
+          commandStatus={commandStatus}
+        />
       </CardHeader>
 
       <CardContent className="flex-1 flex flex-col gap-4">
@@ -1156,10 +868,21 @@ export default function SortVisionClient({
               muted
               autoPlay
             />
-            <PredictionDisplay />
+            <PredictionDisplay
+              isCameraOn={isCameraOn}
+              hasCameraPermission={hasCameraPermission}
+              countdown={countdown}
+              appStatus={appStatus}
+              isCollectingImages={isCollectingImages}
+              collectedImages={collectedImages}
+              model={model}
+              detectionState={detectionState}
+              primaryPrediction={primaryPrediction}
+              stablePrediction={stablePrediction}
+            />
           </div>
           <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full w-[240px]">
-            <DetectionRates />
+            <DetectionRates model={model} currentPredictions={currentPredictions} />
           </div>
         </div>
         <Accordion type="single" collapsible>
@@ -1226,28 +949,3 @@ export default function SortVisionClient({
   );
 }
 
-function LogViewer({ logs, isAutoScrollOn }: { logs: LogEntry[]; isAutoScrollOn: boolean }) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const bottomRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (isAutoScrollOn && bottomRef.current) {
-      bottomRef.current.scrollIntoView({ behavior: "smooth" });
-    }
-  }, [logs, isAutoScrollOn]);
-
-  return (
-    <div
-      ref={scrollRef}
-      className="w-full my-4 bg-muted/20 rounded-md border h-[200px] overflow-y-auto p-4 font-mono text-xs"
-    >
-      {logs.map((log) => (
-        <p key={log.id}>
-          <span className="text-muted-foreground/50">{log.timestamp}</span>
-          <span className="ml-2 text-foreground">{log.message}</span>
-        </p>
-      ))}
-      <div ref={bottomRef} />
-    </div>
-  );
-}

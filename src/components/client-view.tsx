@@ -13,7 +13,7 @@ import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { Card } from "@/components/ui/card";
 import { sendCommand, isConnected } from "@/lib/bluetooth";
 import { getMaterialConfig, getRecyclableLabel } from "@/lib/material-config";
-import { incrementCategoryCount, saveMultipleTrainingImages } from "@/lib/stats-db";
+import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat } from "@/lib/stats-db";
 
 import { usePersistentState } from "@/hooks/use-persistent-state";
 
@@ -336,6 +336,7 @@ export default function ClientView({
         // Track stats: correct detection
         try {
             await incrementCategoryCount(detectedLabel, true);
+            await incrementDailyStat(true);
         } catch (e) {
             console.error("Failed to save stats:", e);
         }
@@ -409,6 +410,7 @@ export default function ClientView({
         // Track stats: incorrect detection (corrected from detectedLabel to correctLabel)
         try {
             await incrementCategoryCount(correctLabel, false);
+            await incrementDailyStat(false);
         } catch (e) {
             console.error("Failed to save stats:", e);
         }

@@ -4,6 +4,7 @@ import { Outfit } from "next/font/google";
 import "./globals.css";
 import { Toaster } from "@/components/ui/toaster";
 import { ThemeProvider } from "@/components/theme-provider";
+import OfflineIndicator from "@/components/offline-indicator";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 
 const outfit = Outfit({
@@ -50,9 +51,10 @@ export default function RootLayout({
           <SidebarProvider defaultOpen={true}>
             <SidebarInset>
               {children}
+              <OfflineIndicator />
+              <Toaster />
             </SidebarInset>
           </SidebarProvider>
-          <Toaster />
         </ThemeProvider>
       </body>
     </html>
