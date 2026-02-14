@@ -9,6 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { getSummaryStats, type SummaryStats } from "@/lib/stats-db";
 import { useAuth } from "@/contexts/auth-context";
+import { subscribeToStats } from "@/lib/firestore-sync";
 
 export default function LandingPage() {
     const { user, userRole, loading, signOut } = useAuth();
@@ -16,7 +17,38 @@ export default function LandingPage() {
     const router = useRouter();
 
     useEffect(() => {
+        // Initial load
         getSummaryStats().then(setStats).catch(console.error);
+
+        // Real-time updates
+        const unsubscribe = subscribeToStats((data) => {
+            if (data.categoryStats) {
+                const categoryBreakdown = Object.entries(data.categoryStats).map(([category, s]) => ({
+                    category,
+                    count: s.count,
+                    correctCount: s.correctCount,
+                    incorrectCount: s.incorrectCount,
+                    lastUpdated: new Date(s.lastUpdated)
+                }));
+
+                const totalSorted = categoryBreakdown.reduce((sum, c) => sum + c.count, 0);
+                const totalCorrect = categoryBreakdown.reduce((sum, c) => sum + c.correctCount, 0);
+                const totalIncorrect = categoryBreakdown.reduce((sum, c) => sum + c.incorrectCount, 0);
+                const accuracyRate = totalSorted > 0 ? (totalCorrect / totalSorted) * 100 : 0;
+
+                setStats(prev => ({
+                    ...prev,
+                    totalSorted,
+                    totalCorrect,
+                    totalIncorrect,
+                    accuracyRate,
+                    categoryBreakdown: categoryBreakdown.sort((a, b) => b.count - a.count),
+                    trainingImagesCount: prev?.trainingImagesCount || 0
+                }));
+            }
+        });
+
+        return () => unsubscribe();
     }, []);
 
     useEffect(() => {

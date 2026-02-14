@@ -513,8 +513,9 @@ export default function SortVisionClient({
               setPrimaryPrediction(foundPrediction);
 
               if (autoSortEnabled) {
+                setAppStatus("DETECTED");
                 if (autoFlashEnabled) {
-                  addLog(`Initial detection: ${foundPrediction.className}. Turning on light for final check.`);
+                  addLog(`Initial detection: ${foundPrediction.className} (${localResult.reason}). Turning on light for final check.`);
                   sendLightCommand('ON').then(() => {
                     setTimeout(async () => {
                       if (!videoRef.current) {
@@ -529,9 +530,10 @@ export default function SortVisionClient({
                         const finalResult = interpretDetectionsLocal(finalFiltered, confidenceThreshold);
                         if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
                           addLog(`Final confirmation: ${finalResult.primaryObject}. Sorting.`);
+                          setAppStatus("SORTING");
                           handleSortAndRestart(finalResult.primaryObject);
                         } else {
-                          addLog(`Final check failed. Result: ${finalResult.detectionState}. Restarting camera.`);
+                          addLog(`Final check failed. Result: ${finalResult.detectionState}. Reason: ${finalResult.reason}`);
                           handleSortAndRestart("RESTART_NO_SORT");
                         }
                       } catch (e) {
@@ -540,12 +542,13 @@ export default function SortVisionClient({
                     }, 500);
                   });
                 } else {
-                  addLog(`Auto-Sort: Detected ${foundPrediction.className}. Sorting.`);
+                  addLog(`Auto-Sort: Detected ${foundPrediction.className}. Reason: ${localResult.reason}`);
+                  setAppStatus("SORTING");
                   handleSortAndRestart(foundPrediction.className);
                 }
               } else {
-                setAppStatus("READY_TO_SEND");
-                addLog(`Manual Sort: Detected ${foundPrediction.className}. Ready to send command.`);
+                setAppStatus("DETECTED");
+                addLog(`Manual Sort: Detected ${foundPrediction.className}. ${localResult.reason}`);
               }
             }, DETECTION_SETTLE_DELAY);
           }

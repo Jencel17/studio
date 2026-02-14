@@ -13,10 +13,8 @@ import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { Card } from "@/components/ui/card";
 import { sendCommand, isConnected } from "@/lib/bluetooth";
 import { getMaterialConfig, getRecyclableLabel } from "@/lib/material-config";
-import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat } from "@/lib/stats-db";
-
-import { usePersistentState } from "@/hooks/use-persistent-state";
-import { updateLiveDetection } from "@/lib/firestore-sync";
+import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
+import { updateLiveDetection, subscribeToStats } from "@/lib/firestore-sync";
 
 interface ClientViewProps {
     model: tmImage.CustomMobileNet | null;
@@ -43,22 +41,232 @@ export default function ClientView({
     confidenceThreshold = 0.8, // Default high for client
     autoSortEnabled = false,
 }: ClientViewProps) {
+    // --- 1. State & Refs ---
     const [viewState, setViewState] = useState<ViewState>("IDLE");
     const [isCameraOn, setIsCameraOn] = useState(false);
     const [hasCameraPermission, setHasCameraPermission] = useState(true);
     const [stablePrediction, setStablePrediction] = useState<Prediction | null>(null);
     const [detectedLabel, setDetectedLabel] = useState<string>("");
-
-    // Persistent stats
-    const [totalItemsSorted, setTotalItemsSorted] = usePersistentState<number>('totalItemsSorted', 0);
+    const [totalSorted, setTotalSorted] = useState<number>(0);
+    const [detectionId, setDetectionId] = useState<number>(0);
+    const [isBtConnected, setIsBtConnected] = useState(isConnected());
+    const [capturedImages, setCapturedImages] = useState<string[]>([]);
+    const [preCapturedImages, setPreCapturedImages] = useState<string[]>([]);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const predictionIntervalRef = useRef<NodeJS.Timeout>();
     const detectionTimer = useRef<NodeJS.Timeout | null>(null);
+    const isPredictingRef = useRef(false);
+    const viewStateRef = useRef(viewState);
+    const lastLivePushRef = useRef<number>(0);
+
     const { toast } = useToast();
 
-    // --- Camera Logic ---
+    // Update internal ref for async access
+    useEffect(() => {
+        viewStateRef.current = viewState;
+    }, [viewState]);
+
+    // --- 2. Shared Actions (Memoized) ---
+
+    const getArduinoCommand = useCallback((label: string): string => {
+        const l = label.toUpperCase();
+        if (l === "PAPER") return "BIODEGRADABLE";
+        if (l === "METAL") return "NON-BIODEGRADABLE";
+        if (l === "PLASTIC") return "RECYCLABLE";
+        return l;
+    }, []);
+
+    const handleManualReset = useCallback(() => {
+        setViewState("IDLE");
+        setStablePrediction(null);
+        setCapturedImages([]);
+        setPreCapturedImages([]);
+    }, []);
+
+    const captureFrame = useCallback(() => {
+        if (!videoRef.current) return null;
+        try {
+            const canvas = document.createElement('canvas');
+            canvas.width = videoRef.current.videoWidth;
+            canvas.height = videoRef.current.videoHeight;
+            const ctx = canvas.getContext('2d');
+            if (ctx) {
+                ctx.drawImage(videoRef.current, 0, 0);
+                return canvas.toDataURL('image/jpeg');
+            }
+        } catch (e) {
+            console.error("Capture frame error:", e);
+        }
+        return null;
+    }, []);
+
+    const handleCorrect = useCallback(async () => {
+        setPreCapturedImages([]);
+        try {
+            await incrementCategoryCount(detectedLabel, true);
+            await incrementDailyStat(true);
+        } catch (e) {
+            console.error("Failed to save stats:", e);
+        }
+        addLog(`User confirmed detection: ${detectedLabel}. Pre-captured images discarded.`);
+        setViewState("THANK_YOU");
+        setAppStatus("THANK_YOU");
+        setTimeout(() => {
+            setAppStatus("AWAITING_OBJECT");
+            setViewState("IDLE");
+            setStablePrediction(null);
+            setDetectedLabel("");
+        }, 2000);
+    }, [detectedLabel, addLog, setAppStatus]);
+
+    const handleIncorrect = useCallback(async () => {
+        setCapturedImages(preCapturedImages);
+        addLog(`Using ${preCapturedImages.length} pre-captured images for training.`);
+        setViewState("CORRECTION");
+    }, [preCapturedImages, addLog]);
+
+    const handleCorrectionSelect = useCallback(async (correctLabel: string) => {
+        if (capturedImages.length > 0) {
+            try {
+                await saveMultipleTrainingImages(detectedLabel, correctLabel, capturedImages);
+                addLog(`Saved ${capturedImages.length} training images locally for "${correctLabel}".`);
+                const zip = new JSZip();
+                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+                capturedImages.forEach((imgData, index) => {
+                    const base64Data = imgData.split(',')[1];
+                    zip.file(`${correctLabel}_${timestamp}_${index + 1}.jpg`, base64Data, { base64: true });
+                });
+                const content = await zip.generateAsync({ type: "blob" });
+                const url = URL.createObjectURL(content);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `training-${correctLabel}-${timestamp}.zip`;
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                document.body.removeChild(a);
+                addLog(`User corrected ${detectedLabel} to ${correctLabel} (${capturedImages.length} samples saved).`);
+                if (isConnected()) {
+                    await sendCommand(correctLabel.toUpperCase());
+                    addLog(`Sent corrected sort command for: ${correctLabel}`);
+                }
+            } catch (e: any) {
+                console.error(e);
+                toast({ variant: "destructive", title: "Save Error", description: "Failed to save training data." });
+            }
+        }
+        try {
+            await incrementCategoryCount(correctLabel, false);
+            await incrementDailyStat(false);
+        } catch (e) {
+            console.error("Failed to save stats:", e);
+        }
+        addLog("Correction recorded.");
+        setViewState("THANK_YOU");
+        setAppStatus("THANK_YOU");
+        setTimeout(() => {
+            setAppStatus("AWAITING_OBJECT");
+            setCapturedImages([]);
+            setPreCapturedImages([]);
+            setViewState("IDLE");
+            setStablePrediction(null);
+            setDetectedLabel("");
+        }, 2500);
+    }, [capturedImages, detectedLabel, addLog, setAppStatus, toast]);
+
+    const runClassification = useCallback(async () => {
+        if (isPredictingRef.current || !videoRef.current || !model || appStatus !== 'AWAITING_OBJECT') return;
+        if (viewState !== "IDLE" && viewState !== "DETECTED") return;
+        const video = videoRef.current;
+        if (video.readyState < video.HAVE_ENOUGH_DATA) return;
+        isPredictingRef.current = true;
+        try {
+            const predictions = await model.predict(video);
+            const filteredPredictions = predictions.filter(p => p.className.toLowerCase() !== "background");
+            const result = interpretDetectionsLocal(filteredPredictions, confidenceThreshold);
+            if (result.detectionState === 'SINGLE_OBJECT' && result.primaryObject) {
+                const pred = filteredPredictions.find(p => p.className === result.primaryObject);
+                if (pred) {
+                    if (!stablePrediction || stablePrediction.className !== pred.className) {
+                        setStablePrediction(pred);
+                        if (detectionTimer.current) clearTimeout(detectionTimer.current);
+                        detectionTimer.current = setTimeout(async () => {
+                            const currentViewState = viewStateRef.current;
+                            if (currentViewState === "IDLE" || currentViewState === "DETECTED") {
+                                const preImages: string[] = [];
+                                const burstCount = 10;
+                                const burstInterval = 50;
+                                for (let i = 0; i < burstCount; i++) {
+                                    const video = videoRef.current;
+                                    if (video && video.readyState >= video.HAVE_ENOUGH_DATA) {
+                                        try {
+                                            const canvas = document.createElement('canvas');
+                                            canvas.width = video.videoWidth;
+                                            canvas.height = video.videoHeight;
+                                            const ctx = canvas.getContext('2d');
+                                            if (ctx) {
+                                                ctx.drawImage(video, 0, 0);
+                                                const imgData = canvas.toDataURL('image/jpeg');
+                                                preImages.push(imgData);
+                                            }
+                                        } catch (e) {
+                                            console.error("Pre-capture frame error:", e);
+                                        }
+                                    }
+                                    await new Promise(r => setTimeout(r, burstInterval));
+                                }
+                                setPreCapturedImages(preImages);
+                                addLog(`Captured ${preImages.length} images before sorting. Reason: ${result.reason}`);
+                                setDetectedLabel(pred.className);
+                                setDetectionId(prev => prev + 1);
+                                setAppStatus("DETECTED");
+                                setViewState("DETECTED");
+                                if (autoSortEnabled) {
+                                    setAppStatus("SORTING");
+                                    if (isConnected()) {
+                                        const command = getArduinoCommand(pred.className);
+                                        sendCommand(command)
+                                            .then(() => {
+                                                addLog(`Auto-sorted: ${pred.className} (Sent: ${command}).`);
+                                            })
+                                            .catch((error: any) => {
+                                                console.error("Failed to send Bluetooth command:", error);
+                                                addLog(`Sort command error: ${error.message}`);
+                                            });
+                                    } else {
+                                        addLog(`Detected: ${pred.className}. Bluetooth not connected.`);
+                                    }
+                                } else {
+                                    addLog(`Manual confirmation required for: ${pred.className}`);
+                                }
+                            }
+                        }, DETECTION_SETTLE_DELAY);
+                    }
+                }
+            } else if (result.detectionState === 'MULTIPLE_OBJECTS') {
+                if (detectionTimer.current) {
+                    clearTimeout(detectionTimer.current);
+                    detectionTimer.current = null;
+                }
+                setStablePrediction(null);
+            } else {
+                if (detectionTimer.current && viewState === "IDLE") {
+                    clearTimeout(detectionTimer.current);
+                    detectionTimer.current = null;
+                }
+                setStablePrediction(null);
+            }
+        } catch (err: any) {
+            const msg = err.message || "";
+            if (msg.includes("stopTraining") || msg.includes("already be working") || msg.includes("compiled") || msg.includes("Sequential")) return;
+            console.error("Prediction error:", err);
+        } finally {
+            isPredictingRef.current = false;
+        }
+    }, [model, viewState, appStatus, confidenceThreshold, stablePrediction, detectedLabel, addLog, autoSortEnabled, setAppStatus, getArduinoCommand]);
+
     const stopCamera = useCallback(() => {
         if (streamRef.current) {
             streamRef.current.getTracks().forEach((track) => track.stop());
@@ -80,28 +288,19 @@ export default function ClientView({
             return;
         }
         try {
-            // Stop previous if exists
             if (streamRef.current) stopCamera();
-
             let stream: MediaStream;
             try {
-                // First try environment camera (back config)
                 stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
             } catch (err) {
-                console.warn("Environment camera failed, falling back to specific default", err);
-                // Fallback to any available video source
                 stream = await navigator.mediaDevices.getUserMedia({ video: true });
             }
-
             streamRef.current = stream;
             setHasCameraPermission(true);
-
             const video = videoRef.current;
             if (video) {
                 video.srcObject = stream;
-                // playsInline is already on the element, but good to ensure
                 video.setAttribute("playsinline", "true");
-
                 video.onloadedmetadata = () => {
                     video.play()
                         .then(() => {
@@ -120,40 +319,15 @@ export default function ClientView({
         } catch (error: any) {
             console.error("Camera Error:", error);
             setHasCameraPermission(false);
-
             let errorMessage = "Could not access camera.";
-            if (error.name === "NotReadableError") {
-                errorMessage = "Camera is in use by another app.";
-            } else if (error.name === "NotAllowedError") {
-                errorMessage = "Camera permission denied.";
-            } else if (error.name === "NotFoundError") {
-                errorMessage = "No camera found.";
-            }
-
+            if (error.name === "NotReadableError") errorMessage = "Camera is in use by another app.";
+            else if (error.name === "NotAllowedError") errorMessage = "Camera permission denied.";
+            else if (error.name === "NotFoundError") errorMessage = "No camera found.";
             toast({ variant: "destructive", title: "Camera Error", description: errorMessage });
         }
     }, [stopCamera, setAppStatus, toast]);
 
-    useEffect(() => {
-        // Auto-start camera on mount if model is loaded
-        if (model) {
-            startCamera();
-        }
-        return () => stopCamera();
-    }, [model, startCamera, stopCamera]);
-
-
-    const isPredictingRef = useRef(false);
-
-    const [detectionId, setDetectionId] = useState<number>(0);
-
-    // Keep a ref of viewState for async access in timeouts
-    const viewStateRef = useRef(viewState);
-    const [isBtConnected, setIsBtConnected] = useState(isConnected());
-
-    useEffect(() => {
-        viewStateRef.current = viewState;
-    }, [viewState]);
+    // --- 3. Effects ---
 
     useEffect(() => {
         const onConnected = () => setIsBtConnected(true);
@@ -166,129 +340,22 @@ export default function ClientView({
         }
     }, []);
 
-    // --- Prediction Loop ---
-    const runClassification = useCallback(async () => {
-        // Guard against overlapping predictions or invalid state
-        if (isPredictingRef.current || !videoRef.current || !model || appStatus !== 'AWAITING_OBJECT') return;
-
-        // Allow loop to run in IDLE and DETECTED states to enable "overwrite" logic
-        if (viewState !== "IDLE" && viewState !== "DETECTED") return;
-
-        const video = videoRef.current;
-        if (video.readyState < video.HAVE_ENOUGH_DATA) return;
-
-        isPredictingRef.current = true;
-
-        try {
-            const predictions = await model.predict(video);
-            const filteredPredictions = predictions.filter(p => p.className.toLowerCase() !== "background");
-            const result = interpretDetectionsLocal(filteredPredictions, confidenceThreshold);
-
-            if (result.detectionState === 'SINGLE_OBJECT' && result.primaryObject) {
-                const pred = filteredPredictions.find(p => p.className === result.primaryObject);
-                if (pred) {
-                    // Check if we need to update the stable prediction
-                    if (!stablePrediction || stablePrediction.className !== pred.className) {
-                        setStablePrediction(pred);
-
-                        // Debounce the actual state change
-                        if (detectionTimer.current) clearTimeout(detectionTimer.current);
-                        detectionTimer.current = setTimeout(async () => {
-                            // Check latest state via Ref to avoid closure staleness issues
-                            const currentViewState = viewStateRef.current;
-
-                            // If we are already detecting something, this "overwrites" it
-                            if (currentViewState === "IDLE" || currentViewState === "DETECTED") {
-                                // If we are overwriting an existing detection that hasn't been acted on, count it!
-                                if (currentViewState === "DETECTED") {
-                                    setTotalItemsSorted(prev => prev + 1);
-                                }
-
-                                // *** STEP 1: CAPTURE IMAGES BEFORE SORTING ***
-                                // This way we have valid images if the user says it was incorrect
-                                const preImages: string[] = [];
-                                const burstCount = 10;
-                                const burstInterval = 50; // Faster burst since we're capturing before sort
-
-                                for (let i = 0; i < burstCount; i++) {
-                                    const video = videoRef.current;
-                                    if (video && video.readyState >= video.HAVE_ENOUGH_DATA) {
-                                        try {
-                                            const canvas = document.createElement('canvas');
-                                            canvas.width = video.videoWidth;
-                                            canvas.height = video.videoHeight;
-                                            const ctx = canvas.getContext('2d');
-                                            if (ctx) {
-                                                ctx.drawImage(video, 0, 0);
-                                                const imgData = canvas.toDataURL('image/jpeg');
-                                                preImages.push(imgData);
-                                            }
-                                        } catch (e) {
-                                            console.error("Pre-capture frame error:", e);
-                                        }
-                                    }
-                                    await new Promise(r => setTimeout(r, burstInterval));
-                                }
-
-                                // Store the pre-captured images
-                                setPreCapturedImages(preImages);
-                                addLog(`Captured ${preImages.length} images before sorting.`);
-
-                                // *** STEP 2: UPDATE UI ***
-                                setDetectedLabel(pred.className);
-                                setDetectionId(prev => prev + 1); // Force UI refresh
-                                setTotalItemsSorted(prev => prev + 1); // Count this sort
-
-                                // Show the confirmation screen IMMEDIATELY (don't wait for BT)
-                                setViewState("DETECTED");
-
-                                // *** STEP 3: SORT (send command after capturing) ***
-                                if (isConnected()) {
-                                    sendCommand(pred.className.toUpperCase())
-                                        .then(() => addLog(`Auto-sorted: ${pred.className}.`))
-                                        .catch((error: any) => {
-                                            console.error("Failed to send Bluetooth command:", error);
-                                            addLog(`Sort command error: ${error.message}`);
-                                        });
-                                } else {
-                                    addLog(`Detected: ${pred.className}. Bluetooth not connected.`);
-                                }
-                            }
-                        }, DETECTION_SETTLE_DELAY);
-                    }
-                }
-            } else if (result.detectionState === 'MULTIPLE_OBJECTS') {
-                // Multiple objects - just ignore and keep detecting
-                // Clear any pending detection timer
-                if (detectionTimer.current) {
-                    clearTimeout(detectionTimer.current);
-                    detectionTimer.current = null;
-                }
-                setStablePrediction(null);
-            } else {
-                // If we lose detection, we don't necessarily want to reset immediately if we are in 'DETECTED' mode
-                // waiting for user input. We only reset the stable tracker.
-                if (detectionTimer.current && viewState === "IDLE") {
-                    clearTimeout(detectionTimer.current);
-                    detectionTimer.current = null;
-                }
-                setStablePrediction(null);
+    useEffect(() => {
+        getSummaryStats().then(s => setTotalSorted(s.totalSorted));
+        const unsubscribe = subscribeToStats((data) => {
+            if (data.categoryStats) {
+                const total = Object.values(data.categoryStats).reduce((sum, s) => sum + s.count, 0);
+                setTotalSorted(total);
             }
-        } catch (err: any) {
-            // Suppress specific TFJS errors that occur during fast reloads or uninitialization
-            const msg = err.message || "";
-            if (msg.includes("stopTraining") || msg.includes("already be working") || msg.includes("compiled") || msg.includes("Sequential")) {
-                return;
-            }
-            console.error("Prediction error:", err);
-        } finally {
-            isPredictingRef.current = false;
-        }
+        });
+        return () => unsubscribe();
+    }, []);
 
-    }, [model, viewState, appStatus, confidenceThreshold, stablePrediction, detectedLabel, addLog]);
+    useEffect(() => {
+        if (model) startCamera();
+        return () => stopCamera();
+    }, [model, startCamera, stopCamera]);
 
-    // Push live detection state to Firestore (throttled)
-    const lastLivePushRef = useRef<number>(0);
     useEffect(() => {
         if (!stablePrediction && viewState === "IDLE") {
             const now = Date.now();
@@ -326,145 +393,16 @@ export default function ClientView({
         }
     }, [isCameraOn, appStatus, runClassification]);
 
-    // --- Idle Timeout Logic ---
     useEffect(() => {
         let timeout: NodeJS.Timeout;
         if (viewState === "DETECTED") {
-            // If user takes no action for 2 minutes, reset to idle
             timeout = setTimeout(() => {
-                handleManualReset();
-                addLog("Idle timeout: Resetting to main screen.");
-            }, 120000); // 2 minutes
+                handleCorrect();
+                addLog("Auto-confirmation: Detection confirmed after 20s of inactivity.");
+            }, 20000);
         }
         return () => clearTimeout(timeout);
-    }, [viewState, detectedLabel]); // Reset timer if detected label changes (overwrite happened)
-
-
-    // --- Actions ---
-
-    const captureFrame = () => {
-        if (!videoRef.current) return null;
-        try {
-            const canvas = document.createElement('canvas');
-            canvas.width = videoRef.current.videoWidth;
-            canvas.height = videoRef.current.videoHeight;
-            const ctx = canvas.getContext('2d');
-            if (ctx) {
-                ctx.drawImage(videoRef.current, 0, 0);
-                return canvas.toDataURL('image/jpeg');
-            }
-        } catch (e) {
-            console.error("Capture frame error:", e);
-        }
-        return null;
-    };
-
-    const handleCorrect = async () => {
-        // Detection was correct! 
-        // Discard the pre-captured images (we don't need them for training)
-        setPreCapturedImages([]);
-
-        // Track stats: correct detection
-        try {
-            await incrementCategoryCount(detectedLabel, true);
-            await incrementDailyStat(true);
-        } catch (e) {
-            console.error("Failed to save stats:", e);
-        }
-
-        addLog(`User confirmed detection: ${detectedLabel}. Pre-captured images discarded.`);
-        setViewState("THANK_YOU");
-
-        setTimeout(() => {
-            setViewState("IDLE");
-            setStablePrediction(null);
-            setDetectedLabel("");
-        }, 2000);
-    };
-
-    const [capturedImages, setCapturedImages] = useState<string[]>([]);
-    // Pre-captured images: taken at detection time BEFORE sorting
-    const [preCapturedImages, setPreCapturedImages] = useState<string[]>([]);
-
-    const handleIncorrect = async () => {
-        // Detection was incorrect!
-        // Use the pre-captured images (taken BEFORE sorting, while trash was still visible)
-        setCapturedImages(preCapturedImages);
-        addLog(`Using ${preCapturedImages.length} pre-captured images for training.`);
-        setViewState("CORRECTION");
-    };
-
-    const handleCorrectionSelect = async (correctLabel: string) => {
-        if (capturedImages.length > 0) {
-            try {
-                // Save training images locally to IndexedDB for later export
-                await saveMultipleTrainingImages(detectedLabel, correctLabel, capturedImages);
-                addLog(`Saved ${capturedImages.length} training images locally for "${correctLabel}".`);
-
-                // Also download immediately as ZIP
-                const zip = new JSZip();
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-
-                capturedImages.forEach((imgData, index) => {
-                    const base64Data = imgData.split(',')[1];
-                    zip.file(`${correctLabel}_${timestamp}_${index + 1}.jpg`, base64Data, { base64: true });
-                });
-
-                const content = await zip.generateAsync({ type: "blob" });
-                const url = URL.createObjectURL(content);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `training-${correctLabel}-${timestamp}.zip`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-
-                addLog(`User corrected ${detectedLabel} to ${correctLabel} (${capturedImages.length} samples saved).`);
-
-                // Send corrected command to ESP32
-                try {
-                    if (isConnected()) {
-                        await sendCommand(correctLabel.toUpperCase());
-                        addLog(`Sent corrected sort command for: ${correctLabel}`);
-                    }
-                } catch (error: any) {
-                    console.error("Failed to send Bluetooth command:", error);
-                    addLog(`Error sending command: ${error.message}`);
-                }
-            } catch (e: any) {
-                console.error(e);
-                toast({ variant: "destructive", title: "Save Error", description: "Failed to save training data." });
-            }
-        }
-
-        // Track stats: incorrect detection (corrected from detectedLabel to correctLabel)
-        try {
-            await incrementCategoryCount(correctLabel, false);
-            await incrementDailyStat(false);
-        } catch (e) {
-            console.error("Failed to save stats:", e);
-        }
-
-        // Count correction as a sort too
-        setTotalItemsSorted(prev => prev + 1);
-
-        setViewState("THANK_YOU");
-        setTimeout(() => {
-            setCapturedImages([]);
-            setPreCapturedImages([]); // Clear pre-captured images too
-            setViewState("IDLE");
-            setStablePrediction(null);
-            setDetectedLabel("");
-        }, 2500);
-    };
-
-    const handleManualReset = () => {
-        setViewState("IDLE");
-        setStablePrediction(null);
-        setCapturedImages([]);
-        setPreCapturedImages([]);
-    };
+    }, [viewState, detectedLabel, handleCorrect, addLog]);
 
 
     // --- Rendering ---
@@ -532,7 +470,7 @@ export default function ClientView({
                         <p className="text-emerald-400/80 tracking-widest text-xs landscape:text-[10px] uppercase mt-4 landscape:mt-1">— Ways of Waste Sustainability —</p>
                         {/* Stats moved inline for landscape */}
                         <div className="hidden landscape:block pt-2">
-                            <div className="text-2xl font-bold text-white">{totalItemsSorted}</div>
+                            <div className="text-2xl font-bold text-white">{totalSorted}</div>
                             <div className="text-[10px] text-emerald-400 uppercase tracking-wider">Items</div>
                         </div>
                     </div>
@@ -551,10 +489,10 @@ export default function ClientView({
                         </div>
                     </div>
 
-                    {/* Stats - portrait only (landscape stats are inline above) */}
+                    {/* Stats - portrait only */}
                     <div className="absolute bottom-12 flex gap-8 landscape:hidden">
                         <div className="text-center">
-                            <div className="text-3xl font-bold text-white transition-all duration-300 transform key={totalItemsSorted}">{totalItemsSorted}</div>
+                            <div className="text-3xl font-bold text-white transition-all duration-300 transform key={totalSorted}">{totalSorted}</div>
                             <div className="text-xxs text-emerald-400 uppercase tracking-wider">Items</div>
                         </div>
                     </div>

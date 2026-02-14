@@ -13,6 +13,7 @@ import AdminDashboard from "@/components/admin-dashboard";
 import { AppStatus, LogEntry } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { usePersistentState } from "@/hooks/use-persistent-state";
+import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Loader2, ShieldAlert, Zap, BarChart3, LayoutDashboard, Settings } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
@@ -89,6 +90,28 @@ export default function AdminPage() {
         loadAiLibraries();
     }, [addLog, toast, user, userRole]);
 
+    const SettingsComponent = (
+        <SortVisionSettings
+            model={model}
+            setModel={setModel}
+            setAppStatus={setAppStatus}
+            tmImageRef={tmImageRef}
+            isTestMode={isTestMode}
+            setIsTestMode={setIsTestMode}
+            wakeLockEnabled={wakeLockEnabled}
+            setWakeLockEnabled={setWakeLockEnabled}
+            autoCaptureEnabled={autoCaptureEnabled}
+            setAutoCaptureEnabled={setAutoCaptureEnabled}
+            autoSortEnabled={autoSortEnabled}
+            setAutoSortEnabled={setAutoSortEnabled}
+            autoFlashEnabled={autoFlashEnabled}
+            setAutoFlashEnabled={setAutoFlashEnabled}
+            addLog={addLog}
+            confidenceThreshold={confidenceThreshold}
+            setConfidenceThreshold={setConfidenceThreshold}
+        />
+    );
+
     if (loading) {
         return (
             <div className="flex h-screen w-full flex-col items-center justify-center bg-background text-foreground">
@@ -125,67 +148,52 @@ export default function AdminPage() {
 
     return (
         <div className="flex h-screen w-full bg-background text-foreground overflow-hidden">
-            {/* Sidebar with Settings */}
-            <div className="w-80 h-full flex-shrink-0 border-r border-white/5">
-                <SortVisionSettings
-                    model={model}
-                    setModel={setModel}
-                    setAppStatus={setAppStatus}
-                    tmImageRef={tmImageRef}
-                    isTestMode={isTestMode}
-                    setIsTestMode={setIsTestMode}
-                    wakeLockEnabled={wakeLockEnabled}
-                    setWakeLockEnabled={setWakeLockEnabled}
-                    autoCaptureEnabled={autoCaptureEnabled}
-                    setAutoCaptureEnabled={setAutoCaptureEnabled}
-                    autoSortEnabled={autoSortEnabled}
-                    setAutoSortEnabled={setAutoSortEnabled}
-                    autoFlashEnabled={autoFlashEnabled}
-                    setAutoFlashEnabled={setAutoFlashEnabled}
-                    addLog={addLog}
-                    confidenceThreshold={confidenceThreshold}
-                    setConfidenceThreshold={setConfidenceThreshold}
-                />
-            </div>
+            {/* Responsive Sidebar (Handles both Mobile Sheet and Desktop Sidebar) */}
+            {SettingsComponent}
 
             {/* Main Area */}
             <div className="flex-1 flex flex-col min-w-0">
                 {/* Header with Tabs */}
-                <header className="h-16 border-b border-white/5 flex items-center justify-between px-6 bg-background/50 backdrop-blur-md z-10">
+                <header className="h-16 border-b border-white/5 flex items-center justify-between px-4 md:px-6 bg-background/50 backdrop-blur-md z-10 sticky top-0">
                     <div className="flex items-center gap-4">
+                        {/* Mobile Settings Trigger */}
+                        <div className="md:hidden">
+                            <SidebarTrigger />
+                        </div>
+
                         <h1 className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-400">
                             Admin Panel
                         </h1>
                     </div>
 
-                    <div className="flex bg-muted/30 p-1 rounded-lg">
+                    <div className="flex bg-muted/30 p-1 rounded-lg scale-90 md:scale-100 origin-right">
                         <button
                             onClick={() => setActiveTab("control")}
                             className={cn(
-                                "flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all",
+                                "flex items-center gap-2 px-3 md:px-4 py-1.5 rounded-md text-xs md:text-sm font-medium transition-all",
                                 activeTab === "control"
                                     ? "bg-background text-foreground shadow-sm"
                                     : "text-muted-foreground hover:text-foreground"
                             )}
                         >
-                            <Zap className="h-4 w-4" />
+                            <Zap className="h-3 w-3 md:h-4 md:w-4" />
                             Control
                         </button>
                         <button
                             onClick={() => setActiveTab("dashboard")}
                             className={cn(
-                                "flex items-center gap-2 px-4 py-1.5 rounded-md text-sm font-medium transition-all",
+                                "flex items-center gap-2 px-3 md:px-4 py-1.5 rounded-md text-xs md:text-sm font-medium transition-all",
                                 activeTab === "dashboard"
                                     ? "bg-background text-foreground shadow-sm"
                                     : "text-muted-foreground hover:text-foreground"
                             )}
                         >
-                            <BarChart3 className="h-4 w-4" />
+                            <BarChart3 className="h-3 w-3 md:h-4 md:w-4" />
                             Analytics
                         </button>
                     </div>
 
-                    <div className="flex items-center gap-2">
+                    <div className="hidden md:flex items-center gap-2">
                         <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
                         <span className="text-xs font-medium text-emerald-500 uppercase tracking-wider">System Live</span>
                     </div>
