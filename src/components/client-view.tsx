@@ -492,32 +492,36 @@ export default function ClientView({
 
             {/* 1. IDLE STATE: "Enter the Smart Bin Era" */}
             {viewState === "IDLE" && (
-                <div className="relative z-10 flex flex-col items-center justify-center h-full w-full animate-in fade-in zoom-in-95 duration-700">
-                    <div className="text-center space-y-2 mb-12">
-                        <h2 className="text-white font-medium tracking-widest uppercase text-sm">Enter the</h2>
-                        <h1 className="text-6xl md:text-8xl font-black text-transparent bg-clip-text bg-gradient-to-br from-emerald-400 to-cyan-500 drop-shadow-2xl">
-                            Smart<br />Bin<span className="text-2xl text-white font-normal ml-2">era!</span>
+                <div className="relative z-10 flex flex-col landscape:flex-row items-center justify-center landscape:justify-evenly h-full w-full animate-in fade-in zoom-in-95 duration-700 landscape:gap-4 landscape:px-6">
+                    <div className="text-center space-y-2 mb-12 landscape:mb-0 landscape:space-y-1">
+                        <h2 className="text-white font-medium tracking-widest uppercase text-sm landscape:text-xs">Enter the</h2>
+                        <h1 className="text-6xl md:text-8xl landscape:text-4xl font-black text-transparent bg-clip-text bg-gradient-to-br from-emerald-400 to-cyan-500 drop-shadow-2xl">
+                            Smart<br className="landscape:hidden" /> Bin<span className="text-2xl landscape:text-lg text-white font-normal ml-2">era!</span>
                         </h1>
-                        <p className="text-emerald-400/80 tracking-widest text-xs uppercase mt-4">— Ways of Waste Sustainability —</p>
+                        <p className="text-emerald-400/80 tracking-widest text-xs landscape:text-[10px] uppercase mt-4 landscape:mt-1">— Ways of Waste Sustainability —</p>
+                        {/* Stats moved inline for landscape */}
+                        <div className="hidden landscape:block pt-2">
+                            <div className="text-2xl font-bold text-white">{totalItemsSorted}</div>
+                            <div className="text-[10px] text-emerald-400 uppercase tracking-wider">Items</div>
+                        </div>
                     </div>
 
                     {/* Glowing Reticle */}
                     <div className="relative group">
                         <div className="absolute -inset-4 bg-emerald-500/20 rounded-full blur-xl animate-pulse group-hover:bg-emerald-500/30 transition-all duration-1000" />
-                        <div className="w-64 h-64 border-[3px] border-emerald-500/50 rounded-full flex items-center justify-center relative shadow-[0_0_30px_rgba(16,185,129,0.3)] backdrop-blur-sm">
-                            <div className="absolute top-0 w-4 h-4 bg-white rounded-full shadow-[0_0_10px_white] animate-ping" />
+                        <div className="w-64 h-64 landscape:w-36 landscape:h-36 border-[3px] border-emerald-500/50 rounded-full flex items-center justify-center relative shadow-[0_0_30px_rgba(16,185,129,0.3)] backdrop-blur-sm">
+                            <div className="absolute top-0 w-4 h-4 landscape:w-3 landscape:h-3 bg-white rounded-full shadow-[0_0_10px_white] animate-ping" />
 
                             <div className="text-center">
-                                <ArrowDown className="mx-auto h-8 w-8 text-white mb-2 animate-bounce" />
-                                <p className="text-white font-bold text-xl uppercase">Place Item</p>
-                                <p className="text-white/60 text-xs">Waiting for object...</p>
+                                <ArrowDown className="mx-auto h-8 w-8 landscape:h-5 landscape:w-5 text-white mb-2 landscape:mb-1 animate-bounce" />
+                                <p className="text-white font-bold text-xl landscape:text-sm uppercase">Place Item</p>
+                                <p className="text-white/60 text-xs landscape:text-[10px]">Waiting for object...</p>
                             </div>
                         </div>
                     </div>
 
-                    {/* Mock Stats/Decorations */}
-                    <div className="absolute bottom-12 flex gap-8">
-                        {/* Points removed as requested */}
+                    {/* Stats - portrait only (landscape stats are inline above) */}
+                    <div className="absolute bottom-12 flex gap-8 landscape:hidden">
                         <div className="text-center">
                             <div className="text-3xl font-bold text-white transition-all duration-300 transform key={totalItemsSorted}">{totalItemsSorted}</div>
                             <div className="text-xxs text-emerald-400 uppercase tracking-wider">Items</div>
@@ -532,27 +536,27 @@ export default function ClientView({
                 const recyclableLabel = getRecyclableLabel(detectedLabel);
                 return (
                     <div key={`${detectedLabel}-${detectionId}`} className="relative z-20 flex h-full w-full animate-in slide-in-from-bottom-10 fade-in duration-300 overflow-y-auto">
-                        <div className="flex flex-col md:flex-row w-full h-full max-w-6xl mx-auto items-center p-4 md:p-12 gap-4 md:gap-6">
+                        <div className="flex flex-col landscape:flex-row md:flex-row w-full h-full max-w-6xl mx-auto items-center p-4 landscape:p-3 md:p-12 gap-4 landscape:gap-3 md:gap-6">
 
                             {/* Left: Product Card */}
-                            <div className="flex-shrink-0 md:flex-1 w-full md:h-full flex items-center justify-center">
-                                <Card className="w-full max-w-[320px] md:max-w-none md:w-full h-auto md:h-full md:max-h-[600px] bg-[#f0f4f8] border-none shadow-2xl rounded-[2rem] md:rounded-[3rem] flex flex-col items-center justify-center relative overflow-hidden p-4 md:p-8 py-6 md:py-8">
-                                    <div className={cn("absolute top-0 w-full h-20 md:h-32", materialConfig.color, "opacity-20")} />
+                            <div className="flex-shrink-0 landscape:flex-1 md:flex-1 w-full landscape:h-full md:h-full flex items-center justify-center">
+                                <Card className="w-full max-w-[320px] landscape:max-w-none md:max-w-none landscape:w-full md:w-full h-auto landscape:h-full md:h-full landscape:max-h-full md:max-h-[600px] bg-[#f0f4f8] border-none shadow-2xl rounded-[2rem] landscape:rounded-2xl md:rounded-[3rem] flex flex-col items-center justify-center relative overflow-hidden p-4 landscape:p-3 md:p-8 py-6 landscape:py-3 md:py-8">
+                                    <div className={cn("absolute top-0 w-full h-20 landscape:h-12 md:h-32", materialConfig.color, "opacity-20")} />
 
-                                    <h2 className="text-2xl md:text-4xl font-extrabold text-slate-800 uppercase tracking-tight mb-4 md:mb-8 z-10">{detectedLabel}</h2>
+                                    <h2 className="text-2xl landscape:text-lg md:text-4xl font-extrabold text-slate-800 uppercase tracking-tight mb-4 landscape:mb-2 md:mb-8 z-10">{detectedLabel}</h2>
 
                                     {/* Material Icon with Dynamic Color */}
-                                    <div className="w-36 h-36 md:w-64 md:h-64 relative z-10">
+                                    <div className="w-36 h-36 landscape:w-20 landscape:h-20 md:w-64 md:h-64 relative z-10">
                                         <div className={cn(
-                                            "w-full h-full bg-gradient-to-br rounded-2xl md:rounded-3xl transform rotate-3 shadow-xl flex items-center justify-center border-4 border-white/50",
+                                            "w-full h-full bg-gradient-to-br rounded-2xl landscape:rounded-xl md:rounded-3xl transform rotate-3 shadow-xl flex items-center justify-center border-4 landscape:border-2 border-white/50",
                                             materialConfig.gradient
                                         )}>
-                                            <span className="text-6xl md:text-8xl">{materialConfig.icon}</span>
+                                            <span className="text-6xl landscape:text-3xl md:text-8xl">{materialConfig.icon}</span>
                                         </div>
                                     </div>
 
                                     <div className={cn(
-                                        "mt-6 md:mt-12 font-bold px-4 md:px-8 py-2 md:py-3 rounded-full text-sm md:text-xl uppercase tracking-widest shadow-lg z-10",
+                                        "mt-6 landscape:mt-2 md:mt-12 font-bold px-4 landscape:px-3 md:px-8 py-2 landscape:py-1 md:py-3 rounded-full text-sm landscape:text-xs md:text-xl uppercase tracking-widest shadow-lg z-10",
                                         materialConfig.color, "text-white"
                                     )}>
                                         {recyclableLabel}
@@ -561,28 +565,28 @@ export default function ClientView({
                             </div>
 
                             {/* Right: Feedback */}
-                            <div className="flex-shrink-0 md:flex-1 w-full md:h-full flex flex-col items-center justify-center bg-white/5 backdrop-blur-md rounded-[2rem] md:rounded-[3rem] border border-white/10 p-4 md:p-8 py-6 md:py-8 shadow-2xl">
-                                <h3 className="text-3xl md:text-5xl font-bold text-white mb-6 md:mb-12 text-center leading-tight drop-shadow-md">
-                                    Was it <br /><span className="text-blue-400">Correct?</span>
+                            <div className="flex-shrink-0 landscape:flex-1 md:flex-1 w-full landscape:h-full md:h-full flex flex-col items-center justify-center bg-white/5 backdrop-blur-md rounded-[2rem] landscape:rounded-2xl md:rounded-[3rem] border border-white/10 p-4 landscape:p-3 md:p-8 py-6 landscape:py-3 md:py-8 shadow-2xl">
+                                <h3 className="text-3xl landscape:text-xl md:text-5xl font-bold text-white mb-6 landscape:mb-3 md:mb-12 text-center leading-tight drop-shadow-md">
+                                    Was it <br className="landscape:hidden" /><span className="text-blue-400"> Correct?</span>
                                 </h3>
 
-                                <div className="flex gap-4 md:gap-8 items-center">
+                                <div className="flex gap-4 landscape:gap-3 md:gap-8 items-center">
                                     <Button
                                         onClick={handleIncorrect}
-                                        className="h-24 w-24 md:h-40 md:w-40 rounded-full bg-rose-500 hover:bg-rose-600 border-4 border-white/20 shadow-xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95"
+                                        className="h-24 w-24 landscape:h-16 landscape:w-16 md:h-40 md:w-40 rounded-full bg-rose-500 hover:bg-rose-600 border-4 landscape:border-2 border-white/20 shadow-xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95"
                                     >
-                                        <ThumbsDown className="h-12 w-12 md:h-20 md:w-20 text-white fill-white" />
+                                        <ThumbsDown className="h-12 w-12 landscape:h-8 landscape:w-8 md:h-20 md:w-20 text-white fill-white" />
                                     </Button>
 
                                     <Button
                                         onClick={handleCorrect}
-                                        className="h-24 w-24 md:h-40 md:w-40 rounded-full bg-emerald-500 hover:bg-emerald-600 border-4 border-white/20 shadow-xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95"
+                                        className="h-24 w-24 landscape:h-16 landscape:w-16 md:h-40 md:w-40 rounded-full bg-emerald-500 hover:bg-emerald-600 border-4 landscape:border-2 border-white/20 shadow-xl flex items-center justify-center transition-transform hover:scale-110 active:scale-95"
                                     >
-                                        <ThumbsUp className="h-12 w-12 md:h-20 md:w-20 text-white fill-white" />
+                                        <ThumbsUp className="h-12 w-12 landscape:h-8 landscape:w-8 md:h-20 md:w-20 text-white fill-white" />
                                     </Button>
                                 </div>
 
-                                <p className="mt-6 md:mt-12 text-white/40 text-xs md:text-sm">Item already sorted! Was it correct?</p>
+                                <p className="mt-6 landscape:mt-3 md:mt-12 text-white/40 text-xs landscape:text-[10px] md:text-sm">Item already sorted! Was it correct?</p>
                             </div>
                         </div>
                     </div>
@@ -591,29 +595,29 @@ export default function ClientView({
 
             {/* 3. CORRECTION STATE */}
             {viewState === "CORRECTION" && (
-                <div className="relative z-20 h-full w-full flex items-center justify-center p-4 bg-black/80">
-                    <Card className="w-full max-w-4xl bg-zinc-900 border-white/10 text-white p-8 rounded-3xl shadow-2xl animate-in fade-in zoom-in-95">
-                        <h2 className="text-3xl font-bold mb-6 text-center">Correction Mode</h2>
-                        <p className="text-zinc-400 text-center mb-8">What object is this actually?</p>
+                <div className="relative z-20 h-full w-full flex items-center justify-center p-4 landscape:p-2 bg-black/80 overflow-y-auto">
+                    <Card className="w-full max-w-4xl bg-zinc-900 border-white/10 text-white p-8 landscape:p-4 rounded-3xl landscape:rounded-2xl shadow-2xl animate-in fade-in zoom-in-95">
+                        <h2 className="text-3xl landscape:text-xl font-bold mb-6 landscape:mb-2 text-center">Correction Mode</h2>
+                        <p className="text-zinc-400 text-center mb-8 landscape:mb-3 landscape:text-sm">What object is this actually?</p>
 
-                        <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                        <div className="grid grid-cols-2 md:grid-cols-3 landscape:grid-cols-3 gap-4 landscape:gap-2">
                             {model.getClassLabels().filter(l => l.toLowerCase() !== 'background').map(label => (
                                 <Button
                                     key={label}
                                     onClick={() => handleCorrectionSelect(label)}
-                                    className="h-20 text-xl font-semibold bg-zinc-800 hover:bg-emerald-600 hover:text-white border border-white/5 transition-all"
+                                    className="h-20 landscape:h-12 text-xl landscape:text-base font-semibold bg-zinc-800 hover:bg-emerald-600 hover:text-white border border-white/5 transition-all"
                                 >
                                     {label}
                                 </Button>
                             ))}
                             <Button
                                 onClick={() => handleCorrectionSelect('background')}
-                                className="h-20 text-xl font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border border-white/5 col-span-2 md:col-span-3"
+                                className="h-20 landscape:h-12 text-xl landscape:text-base font-semibold bg-zinc-800 hover:bg-zinc-700 text-zinc-400 border border-white/5 col-span-2 md:col-span-3 landscape:col-span-3"
                             >
                                 Nothing / Background
                             </Button>
                         </div>
-                        <Button variant="ghost" className="w-full mt-8 text-white/50 hover:text-white" onClick={handleManualReset}>Cancel</Button>
+                        <Button variant="ghost" className="w-full mt-8 landscape:mt-3 text-white/50 hover:text-white" onClick={handleManualReset}>Cancel</Button>
                     </Card>
                 </div>
             )}
@@ -621,11 +625,11 @@ export default function ClientView({
             {/* 4. THANK YOU STATE */}
             {viewState === "THANK_YOU" && (
                 <div className="relative z-20 h-full w-full flex flex-col items-center justify-center bg-emerald-500/90 animate-in fade-in duration-300">
-                    <div className="bg-white rounded-full p-8 shadow-2xl mb-6 animate-bounce">
-                        <Check className="h-32 w-32 text-emerald-500" />
+                    <div className="bg-white rounded-full p-8 landscape:p-4 shadow-2xl mb-6 landscape:mb-3 animate-bounce">
+                        <Check className="h-32 w-32 landscape:h-16 landscape:w-16 text-emerald-500" />
                     </div>
-                    <h1 className="text-6xl font-black text-white uppercase tracking-tighter">Thank You!</h1>
-                    <p className="text-emerald-100 text-xl mt-4 max-w-md text-center">Sorting smarter, one item at a time.</p>
+                    <h1 className="text-6xl landscape:text-3xl font-black text-white uppercase tracking-tighter">Thank You!</h1>
+                    <p className="text-emerald-100 text-xl landscape:text-sm mt-4 landscape:mt-2 max-w-md text-center">Sorting smarter, one item at a time.</p>
                 </div>
             )}
 
