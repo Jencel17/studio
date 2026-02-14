@@ -14,14 +14,17 @@ import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, Music, BarChart3 } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, Music, BarChart3, LogOut, Home, Download } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus } from "@/lib/types";
 import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected } from "@/lib/bluetooth";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { playConnectedSound, playDisconnectedSound } from "@/lib/audio";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import AdminDashboard from "@/components/admin-dashboard";
+import { uploadModelToCloud, subscribeToCloudModels, deleteModelFromCloud, type CloudModel } from "@/lib/firestore-sync";
+import { useAuth } from "@/contexts/auth-context";
 
 
 interface SortVisionSettingsProps {
@@ -70,9 +73,13 @@ export default function SortVisionSettings({
   const [modelFiles, setModelFiles] = useState<{ model: File; metadata: File; weights: File } | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isBtConnected, setIsBtConnected] = useState(isConnected());
+  const [cloudModels, setCloudModels] = useState<CloudModel[]>([]);
+  const [isUploadingToCloud, setIsUploadingToCloud] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
+  const { signOut, user } = useAuth();
+  const router = useRouter();
 
   const loadModelFromFiles = useCallback(async (modelFile: File, metadataFile: File, weightsFile: File) => {
     setIsModelLoading(true);
@@ -268,6 +275,13 @@ export default function SortVisionSettings({
     refreshModelsFromDb();
   }, [refreshModelsFromDb]);
 
+  useEffect(() => {
+    const unsubscribe = subscribeToCloudModels((models) => {
+      setCloudModels(models);
+    });
+    return () => unsubscribe();
+  }, []);
+
   const handleSaveModel = async () => {
     if (!modelFiles || !newModelName) {
       toast({ variant: "destructive", title: "Cannot Save", description: "No model is loaded or name is empty." });
@@ -276,6 +290,22 @@ export default function SortVisionSettings({
     try {
       addLog(`Saving model "${newModelName}" to library.`);
       await saveModelToDb(newModelName, modelFiles.model, modelFiles.metadata, modelFiles.weights);
+
+      // Also try to upload to cloud if online
+      if (navigator.onLine) {
+        setIsUploadingToCloud(true);
+        try {
+          await uploadModelToCloud(newModelName, modelFiles.model, modelFiles.metadata, modelFiles.weights);
+          addLog(`Model "${newModelName}" synced to cloud.`);
+          toast({ title: "Synced to Cloud", description: `"${newModelName}" is now available on all your devices.` });
+        } catch (cloudErr) {
+          console.error("Cloud upload failed:", cloudErr);
+          addLog("Cloud sync failed, saved locally only.");
+        } finally {
+          setIsUploadingToCloud(false);
+        }
+      }
+
       toast({ title: "Model Saved", description: `"${newModelName}" has been saved to your library.` });
       setNewModelName("");
       setModelFiles(null);
@@ -284,6 +314,55 @@ export default function SortVisionSettings({
       console.error("Failed to save model:", error);
       addLog(`Failed to save model: ${error.message}`);
       toast({ variant: "destructive", title: "Save Error", description: "Could not save the model to the local library." });
+    }
+  };
+
+  const handleSyncToCloud = async (name: string) => {
+    const modelData = await getModelFromDb(name);
+    if (!modelData) return;
+
+    setIsUploadingToCloud(true);
+    try {
+      await uploadModelToCloud(name, modelData.model, modelData.metadata, modelData.weights);
+      toast({ title: "Cloud Sync Complete", description: `"${name}" is now backed up in the cloud.` });
+    } catch (e) {
+      toast({ variant: "destructive", title: "Sync Failed", description: "Could not upload model to cloud." });
+    } finally {
+      setIsUploadingToCloud(false);
+    }
+  };
+
+  const handleDownloadFromCloud = async (cloudModel: CloudModel) => {
+    setIsModelLoading(true);
+    try {
+      addLog(`Downloading cloud model "${cloudModel.name}"...`);
+      const [modelRes, metadataRes, weightsRes] = await Promise.all([
+        fetch(cloudModel.modelUrl),
+        fetch(cloudModel.metadataUrl),
+        fetch(cloudModel.weightsUrl)
+      ]);
+
+      const modelBlob = await modelRes.blob();
+      const metadataBlob = await metadataRes.blob();
+      const weightsBlob = await weightsRes.blob();
+
+      const modelFile = new File([modelBlob], "model.json", { type: "application/json" });
+      const metadataFile = new File([metadataBlob], "metadata.json", { type: "application/json" });
+      const weightsFile = new File([weightsBlob], "weights.bin", { type: "application/octet-stream" });
+
+      // Save to local IndexedDB library first
+      await saveModelToDb(cloudModel.name, modelFile, metadataFile, weightsFile);
+      await refreshModelsFromDb();
+
+      // Then load it
+      await loadModelFromFiles(modelFile, metadataFile, weightsFile);
+
+      toast({ title: "Downloaded & Sorted", description: `"${cloudModel.name}" ready for use.` });
+    } catch (e) {
+      console.error("Cloud download failed:", e);
+      toast({ variant: "destructive", title: "Download Failed", description: "Could not download model from cloud." });
+    } finally {
+      setIsModelLoading(false);
     }
   };
 
@@ -497,36 +576,99 @@ export default function SortVisionSettings({
               <div className="p-4 pt-0">
                 {savedModels.length > 0 ? (
                   <div className="space-y-2">
-                    {savedModels.map(m => (
-                      <div key={m.name} className="flex items-center justify-between p-3 bg-black/20 border border-white/5 rounded-lg hover:bg-white/5 transition-colors">
-                        <p className="text-sm font-medium truncate" title={m.name}>{m.name}</p>
-                        <div className="flex gap-1">
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !tmImageRef.current}>
-                                {isModelLoading ? <Loader2 className="animate-spin" /> : <BrainCircuit />}
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>Load model</p>
-                            </TooltipContent>
-                          </Tooltip>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
-                                <Trash2 />
-                              </Button>
-                            </TooltipTrigger>
-                            <TooltipContent>
-                              <p>Delete model</p>
-                            </TooltipContent>
-                          </Tooltip>
+                    {savedModels.map(m => {
+                      const isSynced = cloudModels.some(cm => cm.name === m.name);
+                      return (
+                        <div key={m.name} className="flex items-center justify-between p-3 bg-black/20 border border-white/5 rounded-lg hover:bg-white/5 transition-colors">
+                          <div className="min-w-0">
+                            <p className="text-sm font-medium truncate" title={m.name}>{m.name}</p>
+                            <div className="flex items-center gap-1.5">
+                              <span className={cn("h-1.5 w-1.5 rounded-full", isSynced ? "bg-emerald-500" : "bg-amber-500")} />
+                              <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">
+                                {isSynced ? "Cloud Synced" : "Local Only"}
+                              </span>
+                            </div>
+                          </div>
+                          <div className="flex gap-1">
+                            {!isSynced && (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <Button size="icon" variant="ghost" className="h-8 w-8 text-amber-500" onClick={() => handleSyncToCloud(m.name)} disabled={isUploadingToCloud}>
+                                    {isUploadingToCloud ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                  </Button>
+                                </TooltipTrigger>
+                                <TooltipContent>
+                                  <p>Sync to cloud</p>
+                                </TooltipContent>
+                              </Tooltip>
+                            )}
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !tmImageRef.current}>
+                                  {isModelLoading ? <Loader2 className="animate-spin" /> : <BrainCircuit />}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Load model</p>
+                              </TooltipContent>
+                            </Tooltip>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
+                                  <Trash2 />
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Delete model</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      );
+                    })}
                   </div>
                 ) : (
                   <p className="text-xs text-muted-foreground text-center p-4">No models saved locally.</p>
+                )}
+              </div>
+            </SidebarGroup>
+
+            <SidebarGroup>
+              <SidebarGroupLabel className="flex items-center justify-between text-primary font-bold uppercase tracking-wider text-xs">
+                Cloud Models Library
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded ml-2">Experimental</span>
+                  </TooltipTrigger>
+                  <TooltipContent><p>Models synced from other devices</p></TooltipContent>
+                </Tooltip>
+              </SidebarGroupLabel>
+              <div className="p-4 pt-0">
+                {cloudModels.length > 0 ? (
+                  <div className="space-y-2">
+                    {cloudModels
+                      .filter(cm => !savedModels.some(sm => sm.name === cm.name))
+                      .map(cm => (
+                        <div key={cm.name} className="flex items-center justify-between p-3 bg-primary/5 border border-primary/10 rounded-lg hover:bg-primary/10 transition-colors">
+                          <p className="text-sm font-medium truncate" title={cm.name}>{cm.name}</p>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" onClick={() => handleDownloadFromCloud(cm)} disabled={isModelLoading}>
+                                {isModelLoading ? <Loader2 className="animate-spin" /> : <Download />}
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Download to local library</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
+                      ))}
+                    {cloudModels.filter(cm => !savedModels.some(sm => sm.name === cm.name)).length === 0 && (
+                      <p className="text-xs text-muted-foreground text-center p-4">All cloud models are synced locally.</p>
+                    )}
+                  </div>
+                ) : (
+                  <p className="text-xs text-muted-foreground text-center p-4">No models in cloud yet.</p>
                 )}
               </div>
             </SidebarGroup>
@@ -630,30 +772,44 @@ export default function SortVisionSettings({
               </div>
             </SidebarGroup>
 
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs flex items-center gap-2">
-                <BarChart3 className="h-4 w-4" />
-                Statistics & Training
-              </SidebarGroupLabel>
-              <div className="p-4">
-                <AdminDashboard addLog={addLog} />
-              </div>
-            </SidebarGroup>
+            {/* Dashboard removed from here, moving to main area tabs */}
+
 
           </ScrollArea>
         </TooltipProvider>
       </SidebarContent>
       <SidebarFooter>
-        <div className="p-4 pt-0">
+        <div className="p-4 pt-0 space-y-2">
           <Button
             variant="outline"
-            className="w-full justify-start text-muted-foreground hover:text-primary mb-2"
+            className="w-full justify-start text-muted-foreground hover:text-primary"
+            asChild
+          >
+            <Link href="/" className="flex items-center w-full">
+              <Home className="mr-2 h-4 w-4" />
+              Home
+            </Link>
+          </Button>
+          <Button
+            variant="outline"
+            className="w-full justify-start text-muted-foreground hover:text-primary"
             asChild
           >
             <Link href="/client" className="flex items-center w-full">
               <Zap className="mr-2 h-4 w-4" />
               Switch to Client View
             </Link>
+          </Button>
+          <Button
+            variant="ghost"
+            className="w-full justify-start text-muted-foreground hover:text-destructive"
+            onClick={async () => {
+              await signOut();
+              router.push('/login');
+            }}
+          >
+            <LogOut className="mr-2 h-4 w-4" />
+            Sign Out
           </Button>
         </div>
         <ThemeToggle />

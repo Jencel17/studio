@@ -1,12 +1,14 @@
-
 import {
     doc,
     setDoc,
     onSnapshot,
     Unsubscribe,
     serverTimestamp,
+    collection,
+    query,
 } from "firebase/firestore";
-import { db } from "./firebase";
+import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
+import { db, storage } from "./firebase";
 
 // ===================== SETTINGS SYNC =====================
 
@@ -145,4 +147,83 @@ export const subscribeToLiveDetection = (
             callback(null);
         }
     });
+};
+
+// ===================== MODEL SYNC =====================
+
+export interface CloudModel {
+    name: string;
+    createdAt: any;
+    modelUrl: string;
+    metadataUrl: string;
+    weightsUrl: string;
+    fileName: string;
+}
+
+const MODELS_COLLECTION = collection(db, "models");
+
+export const uploadModelToCloud = async (
+    name: string,
+    model: File,
+    metadata: File,
+    weights: File
+): Promise<void> => {
+    try {
+        const timestamp = Date.now();
+        const baseDir = `models/${name}_${timestamp}`;
+
+        const modelRef = ref(storage, `${baseDir}/model.json`);
+        const metadataRef = ref(storage, `${baseDir}/metadata.json`);
+        const weightsRef = ref(storage, `${baseDir}/weights.bin`);
+
+        // Upload files in parallel
+        const [modelSnap, metadataSnap, weightsSnap] = await Promise.all([
+            uploadBytes(modelRef, model),
+            uploadBytes(metadataRef, metadata),
+            uploadBytes(weightsRef, weights)
+        ]);
+
+        // Get download URLs
+        const [modelUrl, metadataUrl, weightsUrl] = await Promise.all([
+            getDownloadURL(modelSnap.ref),
+            getDownloadURL(metadataSnap.ref),
+            getDownloadURL(weightsSnap.ref)
+        ]);
+
+        // Save metadata to Firestore
+        await setDoc(doc(MODELS_COLLECTION, name), {
+            name,
+            modelUrl,
+            metadataUrl,
+            weightsUrl,
+            fileName: name,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp(),
+        });
+
+    } catch (error) {
+        console.error("Error uploading model to cloud:", error);
+        throw error;
+    }
+};
+
+export const subscribeToCloudModels = (
+    callback: (models: CloudModel[]) => void
+): Unsubscribe => {
+    return onSnapshot(query(MODELS_COLLECTION), (snapshot) => {
+        const models = snapshot.docs.map(doc => doc.data() as CloudModel);
+        callback(models);
+    });
+};
+
+export const deleteModelFromCloud = async (name: string): Promise<void> => {
+    try {
+        // Delete metadata from Firestore
+        await setDoc(doc(MODELS_COLLECTION, name), { deleted: true }, { merge: true });
+        // Normally we'd also delete from Storage, but for simplicity let's just mark as deleted in DB
+        // or delete the doc entirely if we don't need history
+        // await deleteDoc(doc(MODELS_COLLECTION, name));
+    } catch (error) {
+        console.error("Error deleting model from cloud:", error);
+    }
 };
