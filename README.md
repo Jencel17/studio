@@ -79,3 +79,4 @@ Ensure the `public/` directory contains:
 - `connect.mp3` & `disconnect.mp3`: Status change audit cues.
 - `manifest.json`: PWA configuration.
 - `icon-192x192.png` & `icon-512x512.png`: App icons for mobile installation.
+<!-- Updated author metadata: Jencel17 / temporado.jencel123@gmail.com -->
