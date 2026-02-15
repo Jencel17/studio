@@ -176,6 +176,9 @@ export const uploadModelToCloud = async (
         const metadataRef = ref(storage, `${baseDir}/metadata.json`);
         const weightsRef = ref(storage, `${baseDir}/weights.bin`);
 
+        console.log(`[uploadModelToCloud] Starting upload for model: ${name}`);
+        console.log(`[uploadModelToCloud] Model file size: ${model.size} bytes, Metadata size: ${metadata.size} bytes, Weights size: ${weights.size} bytes`);
+
         // Upload files in parallel
         const [modelSnap, metadataSnap, weightsSnap] = await Promise.all([
             uploadBytes(modelRef, model),
@@ -183,12 +186,16 @@ export const uploadModelToCloud = async (
             uploadBytes(weightsRef, weights)
         ]);
 
+        console.log(`[uploadModelToCloud] Files uploaded successfully to Storage`);
+
         // Get download URLs
         const [modelUrl, metadataUrl, weightsUrl] = await Promise.all([
             getDownloadURL(modelSnap.ref),
             getDownloadURL(metadataSnap.ref),
             getDownloadURL(weightsSnap.ref)
         ]);
+
+        console.log(`[uploadModelToCloud] Download URLs obtained, saving metadata to Firestore`);
 
         // Save metadata to Firestore
         await setDoc(doc(MODELS_COLLECTION, name), {
@@ -201,8 +208,17 @@ export const uploadModelToCloud = async (
             updatedAt: serverTimestamp(),
         });
 
+        console.log(`[uploadModelToCloud] Model "${name}" successfully uploaded to cloud`);
+
     } catch (error) {
         console.error("Error uploading model to cloud:", error);
+        if (error instanceof Error) {
+            console.error("Error details:", {
+                message: error.message,
+                code: (error as any).code,
+                name: error.name
+            });
+        }
         throw error;
     }
 };

@@ -4,7 +4,7 @@
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import JSZip from "jszip";
-import { Download, Camera, Check, X, Undo2, Loader2, AlertTriangle, ThumbsUp, ThumbsDown, ArrowDown } from "lucide-react";
+import { Download, Camera, Check, X, Undo2, Loader2, AlertTriangle, ThumbsUp, ThumbsDown, ArrowDown, Recycle, Leaf, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -520,7 +520,13 @@ export default function ClientView({
                                             "w-full h-full bg-gradient-to-br rounded-2xl landscape:rounded-xl md:rounded-3xl transform rotate-3 shadow-xl flex items-center justify-center border-4 landscape:border-2 border-white/50",
                                             materialConfig.gradient
                                         )}>
-                                            <span className="text-6xl landscape:text-3xl md:text-8xl">{materialConfig.icon}</span>
+                                            {recyclableLabel === "Recyclable" && <Recycle className="w-24 h-24 landscape:w-12 landscape:h-12 md:w-48 md:h-48 text-white drop-shadow-md" />}
+                                            {recyclableLabel === "Biodegradable" && <Leaf className="w-24 h-24 landscape:w-12 landscape:h-12 md:w-48 md:h-48 text-white drop-shadow-md" />}
+                                            {recyclableLabel === "Non-Biodegradable" && <Trash2 className="w-24 h-24 landscape:w-12 landscape:h-12 md:w-48 md:h-48 text-white drop-shadow-md" />}
+                                            {/* Fallback for unknown/other */}
+                                            {!["Recyclable", "Biodegradable", "Non-Biodegradable"].includes(recyclableLabel) && (
+                                                <span className="text-6xl landscape:text-3xl md:text-8xl">{materialConfig.icon}</span>
+                                            )}
                                         </div>
                                     </div>
 

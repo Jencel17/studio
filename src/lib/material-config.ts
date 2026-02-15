@@ -11,7 +11,7 @@ export interface MaterialConfig {
 }
 
 export const materialConfigs: Record<string, MaterialConfig> = {
-    paper: {
+    biodegradable: {
         label: "BIODEGRADABLE",
         color: "bg-amber-500",
         textColor: "text-amber-500",
@@ -19,7 +19,7 @@ export const materialConfigs: Record<string, MaterialConfig> = {
         icon: "📄",
         gradient: "from-amber-400 to-orange-500",
     },
-    plastic: {
+    recyclable: {
         label: "RECYCLABLE",
         color: "bg-blue-500",
         textColor: "text-blue-500",
@@ -27,53 +27,13 @@ export const materialConfigs: Record<string, MaterialConfig> = {
         icon: "🧴",
         gradient: "from-blue-400 to-cyan-500",
     },
-    metal: {
+    "non-biodegradable": {
         label: "NON-BIODEGRADABLE",
         color: "bg-slate-400",
         textColor: "text-slate-400",
         borderColor: "border-slate-400",
         icon: "🥫",
         gradient: "from-slate-400 to-zinc-500",
-    },
-    glass: {
-        label: "Glass",
-        color: "bg-emerald-500",
-        textColor: "text-emerald-500",
-        borderColor: "border-emerald-500",
-        icon: "🫙",
-        gradient: "from-emerald-400 to-teal-500",
-    },
-    organic: {
-        label: "Organic",
-        color: "bg-green-600",
-        textColor: "text-green-600",
-        borderColor: "border-green-600",
-        icon: "🍂",
-        gradient: "from-green-500 to-lime-500",
-    },
-    ewaste: {
-        label: "E-Waste",
-        color: "bg-purple-500",
-        textColor: "text-purple-500",
-        borderColor: "border-purple-500",
-        icon: "🔌",
-        gradient: "from-purple-400 to-violet-500",
-    },
-    hazardous: {
-        label: "Hazardous",
-        color: "bg-red-500",
-        textColor: "text-red-500",
-        borderColor: "border-red-500",
-        icon: "☣️",
-        gradient: "from-red-500 to-rose-600",
-    },
-    textile: {
-        label: "Textile",
-        color: "bg-pink-500",
-        textColor: "text-pink-500",
-        borderColor: "border-pink-500",
-        icon: "👕",
-        gradient: "from-pink-400 to-rose-500",
     },
     // Default fallback for unknown materials
     default: {
@@ -93,14 +53,11 @@ export function getMaterialConfig(materialName: string): MaterialConfig {
 
 // Get the recyclable status label
 export function getRecyclableLabel(materialName: string): string {
-    const recyclable = ["paper", "plastic", "metal", "glass"];
-    const organic = ["organic"];
-    const special = ["ewaste", "hazardous"];
-
     const key = materialName.toLowerCase().trim();
 
-    if (recyclable.includes(key)) return "Recyclable";
-    if (organic.includes(key)) return "Compostable";
-    if (special.includes(key)) return "Special Disposal";
-    return "General Waste";
+    if (key === "biodegradable") return "Biodegradable";
+    if (key === "recyclable") return "Recyclable";
+    if (key === "non-biodegradable") return "Non-Biodegradable";
+
+    return "Unknown Category";
 }

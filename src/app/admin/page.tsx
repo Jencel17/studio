@@ -166,30 +166,32 @@ export default function AdminPage() {
                         </h1>
                     </div>
 
-                    <div className="flex bg-muted/30 p-1 rounded-lg scale-90 md:scale-100 origin-right">
+                    <div className="flex bg-muted/30 p-0.5 sm:p-1 rounded-lg gap-1">
                         <button
                             onClick={() => setActiveTab("control")}
                             className={cn(
-                                "flex items-center gap-2 px-3 md:px-4 py-1.5 rounded-md text-xs md:text-sm font-medium transition-all",
+                                "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
                                 activeTab === "control"
                                     ? "bg-background text-foreground shadow-sm"
                                     : "text-muted-foreground hover:text-foreground"
                             )}
                         >
-                            <Zap className="h-3 w-3 md:h-4 md:w-4" />
-                            Control
+                            <Zap className="h-3 w-3 sm:h-4 sm:w-4" />
+                            <span className="hidden sm:inline">Control</span>
+                            <span className="sm:hidden">Control</span>
                         </button>
                         <button
                             onClick={() => setActiveTab("dashboard")}
                             className={cn(
-                                "flex items-center gap-2 px-3 md:px-4 py-1.5 rounded-md text-xs md:text-sm font-medium transition-all",
+                                "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
                                 activeTab === "dashboard"
                                     ? "bg-background text-foreground shadow-sm"
                                     : "text-muted-foreground hover:text-foreground"
                             )}
                         >
-                            <BarChart3 className="h-3 w-3 md:h-4 md:w-4" />
-                            Analytics
+                            <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4" />
+                            <span className="hidden sm:inline">Analytics</span>
+                            <span className="sm:hidden">Analytics</span>
                         </button>
                     </div>
 

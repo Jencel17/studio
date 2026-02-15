@@ -101,12 +101,28 @@ export default function SortVisionSettings({
       const labels = loadedModel.getClassLabels();
       addLog(`Model loaded with labels: ${labels.join(", ")}`);
 
-      if (!labels.some(label => label.toLowerCase() === 'background')) {
-        addLog("Model validation failed: Missing 'background' category.");
+      // Validate that model has exactly the required classes
+      const requiredClasses = ["background", "biodegradable", "recyclable", "non-biodegradable"];
+      const normalizedLabels = labels.map(l => l.toLowerCase());
+      const hasAllRequiredClasses = requiredClasses.every(cls => normalizedLabels.includes(cls));
+      const hasOnlyRequiredClasses = normalizedLabels.every(cls => requiredClasses.includes(cls));
+
+      if (!hasAllRequiredClasses) {
+        addLog("Model validation failed: Model must have exactly these classes: background, biodegradable, recyclable, non-biodegradable");
         toast({
           variant: "destructive",
-          title: "Invalid Model: Missing 'background' category",
-          description: "The loaded model must include a class named 'background' to work correctly. Please train and export a new model.",
+          title: "Invalid Model Classes",
+          description: "Your model must have exactly these class names: BACKGROUND, BIODEGRADABLE, RECYCLABLE, NON-BIODEGRADABLE (case-insensitive). No more, no less.",
+          duration: 9000,
+        });
+        setModel(null);
+        setAppStatus("AWAITING_MODEL");
+      } else if (!hasOnlyRequiredClasses) {
+        addLog("Model validation failed: Model has extra classes. Only background, biodegradable, recyclable, non-biodegradable are allowed.");
+        toast({
+          variant: "destructive",
+          title: "Invalid Model Classes",
+          description: "Your model has extra classes. Only BACKGROUND, BIODEGRADABLE, RECYCLABLE, and NON-BIODEGRADABLE are allowed.",
           duration: 9000,
         });
         setModel(null);
@@ -115,7 +131,7 @@ export default function SortVisionSettings({
         setModel(loadedModel);
         setModelFiles({ model: modelFile, metadata: metadataFile, weights: weightsFile });
         setNewModelName(modelFile.name.replace('.json', ''));
-        addLog("Model successfully loaded and validated.");
+        addLog("Model successfully loaded and validated with correct classes.");
         toast({ title: "Model Loaded", description: "Teachable Machine model is ready." });
         setAppStatus("AWAITING_OBJECT");
       }
@@ -319,13 +335,21 @@ export default function SortVisionSettings({
 
   const handleSyncToCloud = async (name: string) => {
     const modelData = await getModelFromDb(name);
-    if (!modelData) return;
+    if (!modelData) {
+      console.error(`Model "${name}" not found in local database`);
+      toast({ variant: "destructive", title: "Sync Failed", description: `Model "${name}" not found in local database.` });
+      return;
+    }
 
     setIsUploadingToCloud(true);
     try {
+      addLog(`Syncing model "${name}" to cloud...`);
       await uploadModelToCloud(name, modelData.model, modelData.metadata, modelData.weights);
+      addLog(`Model "${name}" successfully synced to cloud.`);
       toast({ title: "Cloud Sync Complete", description: `"${name}" is now backed up in the cloud.` });
     } catch (e) {
+      console.error("Cloud sync error:", e);
+      addLog(`Cloud sync failed for "${name}": ${e instanceof Error ? e.message : "Unknown error"}`);
       toast({ variant: "destructive", title: "Sync Failed", description: "Could not upload model to cloud." });
     } finally {
       setIsUploadingToCloud(false);
@@ -467,14 +491,14 @@ export default function SortVisionSettings({
           <ScrollArea className="h-full">
             <SidebarGroup>
               <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Sorter Connection</SidebarGroupLabel>
-              <div className="p-4 space-y-4">
+              <div className="px-3 sm:p-4 landscape:px-2 landscape:space-y-2 space-y-3 sm:space-y-4">
                 {isBtConnected ? (
-                  <Button onClick={handleBluetoothDisconnect} className="w-full shadow-lg hover:shadow-red-500/20" variant="destructive">
+                  <Button onClick={handleBluetoothDisconnect} className="w-full shadow-lg hover:shadow-red-500/20 landscape:py-1 landscape:text-xs" variant="destructive">
                     <BluetoothConnected className="mr-2 h-4 w-4" />
                     Disconnect Sorter
                   </Button>
                 ) : (
-                  <Button onClick={handleBluetoothConnect} className="w-full shadow-lg hover:shadow-primary/20" disabled={isConnecting}>
+                  <Button onClick={handleBluetoothConnect} className="w-full shadow-lg hover:shadow-primary/20 landscape:py-1 landscape:text-xs" disabled={isConnecting}>
                     {isConnecting ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                     ) : (
@@ -493,7 +517,7 @@ export default function SortVisionSettings({
                 onDragOver={handleDragOver}
                 onDragLeave={handleDragLeave}
                 className={cn(
-                  "m-4 mt-0 p-6 border-2 border-dashed rounded-xl text-center transition-all duration-300",
+                  "mx-3 sm:m-4 sm:mt-0 landscape:m-2 landscape:mt-0 p-4 sm:p-6 landscape:p-3 border-2 border-dashed rounded-xl text-center transition-all duration-300",
                   isDragging ? "border-primary bg-primary/10 scale-105" : "border-white/10 hover:border-primary/50 hover:bg-white/5",
                   (isModelLoading || !tmImageRef.current) && "pointer-events-none opacity-50"
                 )}
@@ -535,7 +559,7 @@ export default function SortVisionSettings({
                 />
               </div>
               {modelFiles && (
-                <div className="mx-4 mb-4 p-4 border border-white/10 rounded-xl bg-black/20 space-y-3">
+                <div className="mx-3 sm:m-4 sm:mb-4 landscape:m-2 landscape:mb-2 p-3 sm:p-4 landscape:p-2 border border-white/10 rounded-xl bg-black/20 space-y-3">
                   <Label htmlFor="model-name" className="text-xs font-medium text-muted-foreground">Save to Library</Label>
                   <div className="flex gap-2">
                     <Input
@@ -573,9 +597,9 @@ export default function SortVisionSettings({
                   </TooltipContent>
                 </Tooltip>
               </SidebarGroupLabel>
-              <div className="p-4 pt-0">
+              <div className="px-3 sm:p-4 landscape:px-2 sm:pt-0 landscape:pt-0">
                 {savedModels.length > 0 ? (
-                  <div className="space-y-2">
+                  <div className="space-y-2 landscape:space-y-1">
                     {savedModels.map(m => {
                       const isSynced = cloudModels.some(cm => cm.name === m.name);
                       return (
@@ -643,9 +667,9 @@ export default function SortVisionSettings({
                   <TooltipContent><p>Models synced from other devices</p></TooltipContent>
                 </Tooltip>
               </SidebarGroupLabel>
-              <div className="p-4 pt-0">
+              <div className="px-3 sm:p-4 landscape:px-2 sm:pt-0 landscape:pt-0">
                 {cloudModels.length > 0 ? (
-                  <div className="space-y-2">
+                  <div className="space-y-2 landscape:space-y-1">
                     {cloudModels
                       .filter(cm => !savedModels.some(sm => sm.name === cm.name))
                       .map(cm => (
@@ -674,7 +698,7 @@ export default function SortVisionSettings({
             </SidebarGroup>
             <SidebarGroup>
               <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Automation Settings</SidebarGroupLabel>
-              <div className="space-y-4 p-4">
+              <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="auto-sort" className="flex items-center gap-2">
                     <Zap className="h-4 w-4" />
@@ -721,7 +745,7 @@ export default function SortVisionSettings({
 
             <SidebarGroup>
               <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Device Settings</SidebarGroupLabel>
-              <div className="space-y-4 p-4">
+              <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">
                 <div className="flex items-center justify-between">
                   <Label htmlFor="keep-awake" className="flex items-center gap-2">
                     <Smartphone className="h-4 w-4" />
@@ -760,12 +784,12 @@ export default function SortVisionSettings({
 
             <SidebarGroup>
               <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Audio Tests</SidebarGroupLabel>
-              <div className="space-y-2 p-4">
-                <Button onClick={playConnectedSound} variant="outline" className="w-full">
+              <div className="space-y-2 px-3 sm:p-4 landscape:px-2 landscape:space-y-1">
+                <Button onClick={playConnectedSound} variant="outline" className="w-full landscape:py-1 landscape:text-xs">
                   <Music className="mr-2 h-4 w-4" />
                   Test Connect Sound
                 </Button>
-                <Button onClick={playDisconnectedSound} variant="outline" className="w-full">
+                <Button onClick={playDisconnectedSound} variant="outline" className="w-full landscape:py-1 landscape:text-xs">
                   <Music className="mr-2 h-4 w-4" />
                   Test Disconnect Sound
                 </Button>
@@ -779,10 +803,10 @@ export default function SortVisionSettings({
         </TooltipProvider>
       </SidebarContent>
       <SidebarFooter>
-        <div className="p-4 pt-0 space-y-2">
+        <div className="px-3 sm:p-4 landscape:px-2 landscape:gap-1 sm:pt-0 landscape:pt-0 space-y-2">
           <Button
             variant="outline"
-            className="w-full justify-start text-muted-foreground hover:text-primary"
+            className="w-full justify-start text-muted-foreground hover:text-primary landscape:py-1 landscape:text-xs landscape:px-2"
             asChild
           >
             <Link href="/" className="flex items-center w-full">
@@ -792,7 +816,7 @@ export default function SortVisionSettings({
           </Button>
           <Button
             variant="outline"
-            className="w-full justify-start text-muted-foreground hover:text-primary"
+            className="w-full justify-start text-muted-foreground hover:text-primary landscape:py-1 landscape:text-xs landscape:px-2"
             asChild
           >
             <Link href="/client" className="flex items-center w-full">
@@ -802,7 +826,7 @@ export default function SortVisionSettings({
           </Button>
           <Button
             variant="ghost"
-            className="w-full justify-start text-muted-foreground hover:text-destructive"
+            className="w-full justify-start text-muted-foreground hover:text-destructive landscape:py-1 landscape:text-xs landscape:px-2"
             onClick={async () => {
               await signOut();
               router.push('/login');
