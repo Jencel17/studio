@@ -61,8 +61,10 @@ export const incrementCategoryCount = async (
 
     await tx.done;
 
-    // Sync to Firestore
-    syncCategoryStatsAfterUpdate().catch(console.error);
+    // Sync to Firestore (fire-and-forget, local-first)
+    syncCategoryStatsAfterUpdate().catch((err) => {
+        console.warn('[SortVision] Firestore sync failed for category stats — data saved locally, will retry on next update:', err);
+    });
 };
 
 export const getAllCategoryStats = async (): Promise<CategoryStats[]> => {
@@ -199,8 +201,10 @@ export const incrementDailyStat = async (isCorrect: boolean): Promise<void> => {
     await tx.store.put(stats);
     await tx.done;
 
-    // Sync to Firestore
-    syncDailyStatsAfterUpdate().catch(console.error);
+    // Sync to Firestore (fire-and-forget, local-first)
+    syncDailyStatsAfterUpdate().catch((err) => {
+        console.warn('[SortVision] Firestore sync failed for daily stats — data saved locally, will retry on next update:', err);
+    });
 };
 
 export const getDailyStats = async (days: number = 7): Promise<DailyStats[]> => {

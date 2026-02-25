@@ -28,21 +28,22 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     const { toast } = useToast();
     const { getAllUsers, setUserRole, user: currentUser } = useAuth();
 
-    const refreshStats = useCallback(async () => {
-        setIsLoading(true);
+    // Load only training image count from local IndexedDB (images are always local)
+    const refreshTrainingImageCount = useCallback(async () => {
         try {
             const summaryStats = await getSummaryStats();
-            setStats(summaryStats);
+            setStats(prev => prev
+                ? { ...prev, trainingImagesCount: summaryStats.trainingImagesCount }
+                : summaryStats
+            );
         } catch (e) {
-            console.error("Failed to load stats:", e);
-        } finally {
-            setIsLoading(false);
+            console.error("Failed to load training image count:", e);
         }
     }, []);
 
     useEffect(() => {
-        refreshStats();
-    }, [refreshStats]);
+        refreshTrainingImageCount();
+    }, [refreshTrainingImageCount]);
 
     // Load users
     const loadUsers = useCallback(async () => {
@@ -69,12 +70,10 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
         return () => unsubscribe();
     }, []);
 
-    // Subscribe to real-time stats from Firestore
+    // Subscribe to real-time stats from Firestore (primary source for admin)
     useEffect(() => {
         const unsubscribe = subscribeToStats((data) => {
             if (data.categoryStats || data.dailyStats) {
-                // When we get real-time data from Firestore, recalculate the summary
-                // We use the same logic as getSummaryStats but on the synced data
                 const categoryBreakdown = data.categoryStats
                     ? Object.entries(data.categoryStats).map(([category, s]) => ({
                         category,
@@ -96,9 +95,10 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
                     totalIncorrect,
                     accuracyRate,
                     categoryBreakdown,
-                    trainingImagesCount: prev?.trainingImagesCount || 0 // Keep the image count from local IndexedDB
+                    trainingImagesCount: prev?.trainingImagesCount || 0
                 }));
             }
+            setIsLoading(false);
         });
         return () => unsubscribe();
     }, []);
@@ -169,7 +169,7 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
             await clearAllTrainingImages();
             addLog("Cleared all training images from local storage.");
             toast({ title: "Cleared", description: "All training images have been deleted." });
-            refreshStats();
+            refreshTrainingImageCount();
         } catch (e: any) {
             console.error("Clear failed:", e);
             toast({ variant: "destructive", title: "Clear Failed", description: e.message });
@@ -182,7 +182,7 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
             localStorage.setItem('totalItemsSorted', '0');
             addLog("Reset all statistics.");
             toast({ title: "Stats Reset", description: "All statistics have been reset to zero." });
-            refreshStats();
+            refreshTrainingImageCount();
         } catch (e: any) {
             console.error("Reset failed:", e);
             toast({ variant: "destructive", title: "Reset Failed", description: e.message });
@@ -314,7 +314,7 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
 
                 {/* Global Actions */}
                 <div className="flex gap-4">
-                    <Button onClick={refreshStats} variant="outline" className="flex-1">
+                    <Button onClick={refreshTrainingImageCount} variant="outline" className="flex-1">
                         <RefreshCw className="h-4 w-4 mr-2" /> Refresh All Data
                     </Button>
                     <Button
