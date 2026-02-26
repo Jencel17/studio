@@ -26,7 +26,8 @@ import { SidebarTrigger } from "@/components/ui/sidebar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
-import { AppStatus, LogEntry, Prediction } from "@/lib/types";
+import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
+import { cropVideoFrame, cropCanvasCapture } from "@/lib/roi";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { sendCommand as sendBluetoothCommand } from "@/lib/bluetooth";
@@ -56,6 +57,7 @@ interface SortVisionClientProps {
   addLog: (message: string) => void;
   confidenceThreshold: number;
   setConfidenceThreshold: (value: number) => void;
+  roi: ROI;
 }
 
 
@@ -84,6 +86,7 @@ export default function SortVisionClient({
   addLog,
   confidenceThreshold,
   setConfidenceThreshold,
+  roi,
 }: SortVisionClientProps) {
   const [isCameraOn, setIsCameraOn] = useState(false);
   const [hasCameraPermission, setHasCameraPermission] = useState(true);
@@ -478,7 +481,9 @@ export default function SortVisionClient({
     isPredictingRef.current = true;
 
     try {
-      const predictions = await model.predict(video);
+      const croppedCanvas = cropVideoFrame(video, roi);
+      const predictionSource = croppedCanvas || video;
+      const predictions = await model.predict(predictionSource as any);
       setCurrentPredictions(predictions);
 
       const filteredPredictions = predictions.filter(
@@ -525,7 +530,9 @@ export default function SortVisionClient({
                       }
                       addLog("Re-classifying with light on...");
                       try {
-                        const finalPredictions = await model.predict(videoRef.current);
+                        const finalCropped = cropVideoFrame(videoRef.current, roi);
+                        const finalSource = finalCropped || videoRef.current;
+                        const finalPredictions = await model.predict(finalSource as any);
                         const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
                         const finalResult = interpretDetectionsLocal(finalFiltered, confidenceThreshold);
                         if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
@@ -599,7 +606,7 @@ export default function SortVisionClient({
       clearTimeout(ambiguousDetectionTimer.current);
       ambiguousDetectionTimer.current = null;
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction, confidenceThreshold, detectionState, currentPredictions]);
+  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction, confidenceThreshold, detectionState, currentPredictions, roi]);
 
   useEffect(() => {
     return () => {
@@ -654,13 +661,9 @@ export default function SortVisionClient({
           clearInterval(captureInterval);
           return;
         }
-        const canvas = document.createElement('canvas');
-        canvas.width = videoRef.current.videoWidth;
-        canvas.height = videoRef.current.videoHeight;
-        const ctx = canvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(videoRef.current, 0, 0, canvas.width, canvas.height);
-          const dataUri = canvas.toDataURL('image/jpeg');
+        const dataUri = cropCanvasCapture(videoRef.current, roi);
+        if (dataUri) {
+          // dataUri already obtained from cropCanvasCapture
           setCollectedImages(prev => {
             const newImages = [...prev, dataUri];
             if (newImages.length >= IMAGE_CAPTURE_COUNT) {
@@ -871,6 +874,39 @@ export default function SortVisionClient({
               muted
               autoPlay
             />
+            {/* ROI Overlay */}
+            {roi.enabled && isCameraOn && (
+              <>
+                {/* Darkened regions outside ROI */}
+                <div className="absolute inset-0 pointer-events-none" style={{ background: 'rgba(0,0,0,0.5)' }}>
+                  <div
+                    style={{
+                      position: 'absolute',
+                      left: `${roi.x * 100}%`,
+                      top: `${roi.y * 100}%`,
+                      width: `${roi.width * 100}%`,
+                      height: `${roi.height * 100}%`,
+                      background: 'transparent',
+                      boxShadow: '0 0 0 9999px rgba(0,0,0,0.5)',
+                    }}
+                  />
+                </div>
+                {/* ROI border */}
+                <div
+                  className="absolute pointer-events-none border-2 border-dashed border-emerald-400/80 rounded-sm"
+                  style={{
+                    left: `${roi.x * 100}%`,
+                    top: `${roi.y * 100}%`,
+                    width: `${roi.width * 100}%`,
+                    height: `${roi.height * 100}%`,
+                  }}
+                >
+                  <span className="absolute -top-5 left-1 text-[10px] font-mono text-emerald-400 bg-black/60 px-1 rounded">
+                    ROI
+                  </span>
+                </div>
+              </>
+            )}
             <PredictionDisplay
               isCameraOn={isCameraOn}
               hasCameraPermission={hasCameraPermission}

@@ -10,7 +10,7 @@ import SortVisionSettings from "@/components/sort-vision-settings";
 import SplashScreen from "@/components/splash-screen";
 import ErrorBoundary from "@/components/error-boundary";
 import AdminDashboard from "@/components/admin-dashboard";
-import { AppStatus, LogEntry } from "@/lib/types";
+import { AppStatus, LogEntry, ROI, DEFAULT_ROI } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { usePersistentState } from "@/hooks/use-persistent-state";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -33,6 +33,7 @@ export default function AdminPage() {
     const [autoSortEnabled, setAutoSortEnabled] = usePersistentState('autoSortEnabled', false);
     const [autoFlashEnabled, setAutoFlashEnabled] = usePersistentState('autoFlashEnabled', false);
     const [confidenceThreshold, setConfidenceThreshold] = usePersistentState('confidenceThreshold', 0.8);
+    const [roi, setRoi] = usePersistentState<ROI>('roi', DEFAULT_ROI);
 
     const [logs, setLogs] = useState<LogEntry[]>([]);
 
@@ -109,6 +110,8 @@ export default function AdminPage() {
             addLog={addLog}
             confidenceThreshold={confidenceThreshold}
             setConfidenceThreshold={setConfidenceThreshold}
+            roi={roi}
+            setRoi={setRoi}
         />
     );
 
@@ -221,6 +224,7 @@ export default function AdminPage() {
                                     logs={logs}
                                     setLogs={setLogs}
                                     addLog={addLog}
+                                    roi={roi}
                                 />
                             </ErrorBoundary>
                         </div>

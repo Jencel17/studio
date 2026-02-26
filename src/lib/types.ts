@@ -11,3 +11,19 @@ export type Prediction = {
   className: string;
   probability: number;
 };
+
+export type ROI = {
+  enabled: boolean;
+  x: number;      // 0–1, percentage offset from left
+  y: number;      // 0–1, percentage offset from top
+  width: number;  // 0–1, percentage of video width
+  height: number; // 0–1, percentage of video height
+};
+
+export const DEFAULT_ROI: ROI = {
+  enabled: false,
+  x: 0.1,
+  y: 0.1,
+  width: 0.8,
+  height: 0.8,
+};

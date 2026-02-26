@@ -14,9 +14,9 @@ import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type StoredModel } from "@/lib/model-db";
-import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, Music, BarChart3, LogOut, Home, Download } from 'lucide-react';
+import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, Music, BarChart3, LogOut, Home, Download, Crop } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
-import { AppStatus } from "@/lib/types";
+import { AppStatus, ROI } from "@/lib/types";
 import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected } from "@/lib/bluetooth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -45,6 +45,8 @@ interface SortVisionSettingsProps {
   confidenceThreshold: number;
   setConfidenceThreshold: (value: number) => void;
   addLog: (message: string) => void;
+  roi: ROI;
+  setRoi: (roi: ROI) => void;
 }
 
 export default function SortVisionSettings({
@@ -65,6 +67,8 @@ export default function SortVisionSettings({
   confidenceThreshold,
   setConfidenceThreshold,
   addLog,
+  roi,
+  setRoi,
 }: SortVisionSettingsProps) {
   const [isModelLoading, setIsModelLoading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
@@ -696,6 +700,86 @@ export default function SortVisionSettings({
                 )}
               </div>
             </SidebarGroup>
+            <SidebarGroup>
+              <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Camera ROI Crop</SidebarGroupLabel>
+              <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">
+                <div className="flex items-center justify-between">
+                  <Label htmlFor="roi-enabled" className="flex items-center gap-2">
+                    <Crop className="h-4 w-4" />
+                    Enable ROI Crop
+                  </Label>
+                  <Switch
+                    id="roi-enabled"
+                    checked={roi.enabled}
+                    onCheckedChange={(checked) => setRoi({ ...roi, enabled: checked })}
+                  />
+                </div>
+                {roi.enabled && (
+                  <div className="space-y-4 pt-1">
+                    <p className="text-xs text-muted-foreground">
+                      Crop the camera feed so the model only sees a specific area (e.g. the chute).
+                    </p>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <Label className="text-sm">X Offset</Label>
+                        <span className="text-sm font-bold text-primary">{(roi.x * 100).toFixed(0)}%</span>
+                      </div>
+                      <Slider
+                        value={[roi.x]}
+                        onValueChange={(vals) => setRoi({ ...roi, x: vals[0] })}
+                        max={0.9}
+                        min={0}
+                        step={0.01}
+                        className="py-1"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <Label className="text-sm">Y Offset</Label>
+                        <span className="text-sm font-bold text-primary">{(roi.y * 100).toFixed(0)}%</span>
+                      </div>
+                      <Slider
+                        value={[roi.y]}
+                        onValueChange={(vals) => setRoi({ ...roi, y: vals[0] })}
+                        max={0.9}
+                        min={0}
+                        step={0.01}
+                        className="py-1"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <Label className="text-sm">Width</Label>
+                        <span className="text-sm font-bold text-primary">{(roi.width * 100).toFixed(0)}%</span>
+                      </div>
+                      <Slider
+                        value={[roi.width]}
+                        onValueChange={(vals) => setRoi({ ...roi, width: vals[0] })}
+                        max={1}
+                        min={0.1}
+                        step={0.01}
+                        className="py-1"
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex justify-between">
+                        <Label className="text-sm">Height</Label>
+                        <span className="text-sm font-bold text-primary">{(roi.height * 100).toFixed(0)}%</span>
+                      </div>
+                      <Slider
+                        value={[roi.height]}
+                        onValueChange={(vals) => setRoi({ ...roi, height: vals[0] })}
+                        max={1}
+                        min={0.1}
+                        step={0.01}
+                        className="py-1"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            </SidebarGroup>
+
             <SidebarGroup>
               <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Automation Settings</SidebarGroupLabel>
               <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">

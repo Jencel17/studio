@@ -45,5 +45,14 @@ next-env.d.ts
 /public/workbox-*.js
 /public/workbox-*.js.map
 
+# testing files
+src/__tests__/
+vitest.config.ts
+
 # temporary files
 tmp*
+errs2.txt
+tsc_errors.txt
+tsc_errs.txt
+tsc_output.txt
+tsc_output_ascii.txt

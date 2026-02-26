@@ -9,7 +9,7 @@ import { useRouter } from 'next/navigation';
 import ClientView from "@/components/client-view";
 import SplashScreen from "@/components/splash-screen";
 import ErrorBoundary from "@/components/error-boundary";
-import { AppStatus, LogEntry } from "@/lib/types";
+import { AppStatus, LogEntry, ROI, DEFAULT_ROI } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 
 import { usePersistentState } from "@/hooks/use-persistent-state";
@@ -26,6 +26,7 @@ export default function ClientPage() {
     // Shared state
     const [confidenceThreshold] = usePersistentState('confidenceThreshold', 0.8);
     const [autoSortEnabled] = usePersistentState('autoSortEnabled', false);
+    const [roi] = usePersistentState<ROI>('roi', DEFAULT_ROI);
 
     const tmImageRef = useRef<typeof tmImage | null>(null);
     const tfRef = useRef<typeof tf | null>(null);
@@ -104,6 +105,7 @@ export default function ClientPage() {
                                 addLog={addLog}
                                 confidenceThreshold={confidenceThreshold}
                                 autoSortEnabled={autoSortEnabled}
+                                roi={roi}
                             />
                         </ErrorBoundary>
                     </ClientLoader>
