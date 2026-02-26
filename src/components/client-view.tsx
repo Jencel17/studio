@@ -14,7 +14,7 @@ import { Card } from "@/components/ui/card";
 import { sendCommand, isConnected } from "@/lib/bluetooth";
 import { getMaterialConfig, getRecyclableLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
-import { updateLiveDetection, subscribeToStats } from "@/lib/firestore-sync";
+import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
 
 interface ClientViewProps {
     model: tmImage.CustomMobileNet | null;
@@ -60,6 +60,7 @@ export default function ClientView({
     const isPredictingRef = useRef(false);
     const viewStateRef = useRef(viewState);
     const lastLivePushRef = useRef<number>(0);
+    const lastProcessedSortTimestamp = useRef<number>(0);
 
     const { toast } = useToast();
 
@@ -403,6 +404,35 @@ export default function ClientView({
         }
         return () => clearTimeout(timeout);
     }, [viewState, detectedLabel, handleCorrect, addLog]);
+
+    // Subscribe to manual sort commands from admin
+    useEffect(() => {
+        const unsubscribe = subscribeToManualSortCommand((cmd) => {
+            if (
+                cmd &&
+                cmd.status === 'pending' &&
+                cmd.timestamp > lastProcessedSortTimestamp.current
+            ) {
+                lastProcessedSortTimestamp.current = cmd.timestamp;
+                addLog(`Manual sort received from admin: ${cmd.command}`);
+                if (isConnected()) {
+                    sendCommand(cmd.command)
+                        .then(() => {
+                            addLog(`Manual sort executed via Bluetooth: ${cmd.command}`);
+                            ackManualSortCommand().catch(console.error);
+                        })
+                        .catch((error: any) => {
+                            console.error("Manual sort Bluetooth error:", error);
+                            addLog(`Manual sort failed: ${error.message}`);
+                        });
+                } else {
+                    addLog(`Manual sort received but Bluetooth not connected.`);
+                    ackManualSortCommand().catch(console.error);
+                }
+            }
+        });
+        return () => unsubscribe();
+    }, [addLog]);
 
 
     // --- Rendering ---

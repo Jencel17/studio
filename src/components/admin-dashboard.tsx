@@ -8,11 +8,11 @@ import { Progress } from "@/components/ui/progress";
 import { getSummaryStats, getAllTrainingImages, clearAllTrainingImages, resetAllStats, type SummaryStats, type TrainingImage } from "@/lib/stats-db";
 import { getMaterialConfig } from "@/lib/material-config";
 import { cn } from "@/lib/utils";
-import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, TrendingUp, Users, ShieldCheck, User, Radio, Activity } from "lucide-react";
+import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, TrendingUp, Users, ShieldCheck, User, Radio, Activity, ArrowRightLeft, Leaf, Recycle, Ban, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import JSZip from "jszip";
 import { useAuth, type UserRole } from "@/contexts/auth-context";
-import { subscribeToLiveDetection, subscribeToStats, type LiveDetectionState } from "@/lib/firestore-sync";
+import { subscribeToLiveDetection, subscribeToStats, type LiveDetectionState, sendManualSortCommand, subscribeToManualSortCommand, type ManualSortCommand } from "@/lib/firestore-sync";
 
 interface AdminDashboardProps {
     addLog: (message: string) => void;
@@ -25,6 +25,8 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     const [users, setUsers] = useState<{ uid: string; email: string; role: UserRole; createdAt: Date }[]>([]);
     const [isLoadingUsers, setIsLoadingUsers] = useState(false);
     const [liveDetection, setLiveDetection] = useState<LiveDetectionState | null>(null);
+    const [lastSortCommand, setLastSortCommand] = useState<ManualSortCommand | null>(null);
+    const [isSendingSort, setIsSendingSort] = useState(false);
     const { toast } = useToast();
     const { getAllUsers, setUserRole, user: currentUser } = useAuth();
 
@@ -66,6 +68,14 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     useEffect(() => {
         const unsubscribe = subscribeToLiveDetection((state) => {
             setLiveDetection(state);
+        });
+        return () => unsubscribe();
+    }, []);
+
+    // Subscribe to manual sort command status
+    useEffect(() => {
+        const unsubscribe = subscribeToManualSortCommand((cmd) => {
+            setLastSortCommand(cmd);
         });
         return () => unsubscribe();
     }, []);
@@ -189,6 +199,20 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
         }
     };
 
+    const handleManualSort = async (category: string) => {
+        setIsSendingSort(true);
+        try {
+            await sendManualSortCommand(category);
+            addLog(`Manual sort command sent: ${category.toUpperCase()}`);
+            toast({ title: "Command Sent", description: `Manual sort: ${category}` });
+        } catch (e: any) {
+            console.error("Manual sort failed:", e);
+            toast({ variant: "destructive", title: "Sort Failed", description: e.message });
+        } finally {
+            setIsSendingSort(false);
+        }
+    };
+
     if (isLoading || !stats) {
         return (
             <div className="flex items-center justify-center p-12">
@@ -309,6 +333,62 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
                         <p className="text-xs text-muted-foreground mt-3 text-center">
                             Training images are stored locally and should be exported periodically.
                         </p>
+                    </CardContent>
+                </Card>
+
+                {/* Manual Sort Control */}
+                <Card className="border-white/5 bg-background/50">
+                    <CardHeader>
+                        <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                            <ArrowRightLeft className="h-4 w-4 text-primary" /> Manual Sort
+                        </CardTitle>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        <p className="text-xs text-muted-foreground">
+                            Send a sort command directly to the client device.
+                        </p>
+                        <div className="grid grid-cols-3 gap-3">
+                            <Button
+                                onClick={() => handleManualSort('biodegradable')}
+                                disabled={isSendingSort}
+                                className="flex flex-col items-center gap-1.5 h-auto py-3 bg-amber-600/10 hover:bg-amber-600/30 border border-amber-600/20 text-amber-500"
+                                variant="outline"
+                            >
+                                {isSendingSort ? <Loader2 className="h-5 w-5 animate-spin" /> : <Leaf className="h-5 w-5" />}
+                                <span className="text-[10px] font-bold uppercase">Bio</span>
+                            </Button>
+                            <Button
+                                onClick={() => handleManualSort('recyclable')}
+                                disabled={isSendingSort}
+                                className="flex flex-col items-center gap-1.5 h-auto py-3 bg-blue-600/10 hover:bg-blue-600/30 border border-blue-600/20 text-blue-500"
+                                variant="outline"
+                            >
+                                {isSendingSort ? <Loader2 className="h-5 w-5 animate-spin" /> : <Recycle className="h-5 w-5" />}
+                                <span className="text-[10px] font-bold uppercase">Recycle</span>
+                            </Button>
+                            <Button
+                                onClick={() => handleManualSort('non-biodegradable')}
+                                disabled={isSendingSort}
+                                className="flex flex-col items-center gap-1.5 h-auto py-3 bg-slate-600/10 hover:bg-slate-600/30 border border-slate-600/20 text-slate-400"
+                                variant="outline"
+                            >
+                                {isSendingSort ? <Loader2 className="h-5 w-5 animate-spin" /> : <Ban className="h-5 w-5" />}
+                                <span className="text-[10px] font-bold uppercase">Non-Bio</span>
+                            </Button>
+                        </div>
+                        {lastSortCommand && (
+                            <div className="flex items-center justify-between text-xs px-1 pt-1">
+                                <span className="text-muted-foreground">Last: <span className="font-mono capitalize">{lastSortCommand.command}</span></span>
+                                <span className={cn(
+                                    "px-2 py-0.5 rounded-full font-bold uppercase text-[10px]",
+                                    lastSortCommand.status === 'acknowledged'
+                                        ? "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+                                        : "bg-amber-500/10 text-amber-500 border border-amber-500/20 animate-pulse"
+                                )}>
+                                    {lastSortCommand.status}
+                                </span>
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
 

@@ -250,3 +250,53 @@ export const deleteModelFromCloud = async (name: string): Promise<void> => {
         console.error("Error deleting model from cloud:", error);
     }
 };
+
+// ===================== MANUAL SORT COMMAND =====================
+
+export interface ManualSortCommand {
+    command: string;
+    timestamp: number;
+    status: "pending" | "acknowledged";
+}
+
+const MANUAL_SORT_DOC = doc(db, "app", "manualSortCommand");
+
+export const sendManualSortCommand = async (
+    command: string
+): Promise<void> => {
+    try {
+        await setDoc(MANUAL_SORT_DOC, {
+            command: command.toUpperCase(),
+            timestamp: Date.now(),
+            status: "pending",
+            updatedAt: serverTimestamp(),
+        });
+    } catch (error) {
+        console.error("Error sending manual sort command:", error);
+        throw error;
+    }
+};
+
+export const subscribeToManualSortCommand = (
+    callback: (cmd: ManualSortCommand | null) => void
+): Unsubscribe => {
+    return onSnapshot(MANUAL_SORT_DOC, (snapshot) => {
+        if (snapshot.exists()) {
+            callback(snapshot.data() as ManualSortCommand);
+        } else {
+            callback(null);
+        }
+    });
+};
+
+export const ackManualSortCommand = async (): Promise<void> => {
+    try {
+        await setDoc(
+            MANUAL_SORT_DOC,
+            { status: "acknowledged", updatedAt: serverTimestamp() },
+            { merge: true }
+        );
+    } catch (error) {
+        console.error("Error acknowledging manual sort command:", error);
+    }
+};
