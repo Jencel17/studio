@@ -318,6 +318,11 @@ export default function SortVisionSettings({
           await uploadModelToCloud(newModelName, modelFiles.model, modelFiles.metadata, modelFiles.weights);
           addLog(`Model "${newModelName}" synced to cloud.`);
           toast({ title: "Synced to Cloud", description: `"${newModelName}" is now available on all your devices.` });
+          // Optimistically add to cloudModels so UI updates immediately
+          setCloudModels(prev => {
+            if (prev.some(cm => cm.name === newModelName)) return prev;
+            return [...prev, { name: newModelName, modelUrl: '', metadataUrl: '', weightsUrl: '', fileName: newModelName, createdAt: new Date() }];
+          });
         } catch (cloudErr) {
           console.error("Cloud upload failed:", cloudErr);
           addLog("Cloud sync failed, saved locally only.");
@@ -351,6 +356,11 @@ export default function SortVisionSettings({
       await uploadModelToCloud(name, modelData.model, modelData.metadata, modelData.weights);
       addLog(`Model "${name}" successfully synced to cloud.`);
       toast({ title: "Cloud Sync Complete", description: `"${name}" is now backed up in the cloud.` });
+      // Optimistically add to cloudModels so UI updates immediately
+      setCloudModels(prev => {
+        if (prev.some(cm => cm.name === name)) return prev;
+        return [...prev, { name, modelUrl: '', metadataUrl: '', weightsUrl: '', fileName: name, createdAt: new Date() }];
+      });
     } catch (e) {
       console.error("Cloud sync error:", e);
       addLog(`Cloud sync failed for "${name}": ${e instanceof Error ? e.message : "Unknown error"}`);

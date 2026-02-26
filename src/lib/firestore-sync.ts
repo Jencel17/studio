@@ -1,6 +1,7 @@
 import {
     doc,
     setDoc,
+    deleteDoc,
     onSnapshot,
     Unsubscribe,
     serverTimestamp,
@@ -226,19 +227,25 @@ export const uploadModelToCloud = async (
 export const subscribeToCloudModels = (
     callback: (models: CloudModel[]) => void
 ): Unsubscribe => {
-    return onSnapshot(query(MODELS_COLLECTION), (snapshot) => {
-        const models = snapshot.docs.map(doc => doc.data() as CloudModel);
-        callback(models);
-    });
+    return onSnapshot(
+        query(MODELS_COLLECTION),
+        (snapshot) => {
+            const models = snapshot.docs
+                .map(doc => doc.data() as CloudModel & { deleted?: boolean })
+                .filter(m => !m.deleted);
+            callback(models);
+        },
+        (error) => {
+            console.error("Error subscribing to cloud models:", error);
+            // Return empty array on error so UI doesn't stay in loading state
+            callback([]);
+        }
+    );
 };
 
 export const deleteModelFromCloud = async (name: string): Promise<void> => {
     try {
-        // Delete metadata from Firestore
-        await setDoc(doc(MODELS_COLLECTION, name), { deleted: true }, { merge: true });
-        // Normally we'd also delete from Storage, but for simplicity let's just mark as deleted in DB
-        // or delete the doc entirely if we don't need history
-        // await deleteDoc(doc(MODELS_COLLECTION, name));
+        await deleteDoc(doc(MODELS_COLLECTION, name));
     } catch (error) {
         console.error("Error deleting model from cloud:", error);
     }
