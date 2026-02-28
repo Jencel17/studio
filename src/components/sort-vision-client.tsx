@@ -408,7 +408,7 @@ export default function SortVisionClient({
     const l = label.toUpperCase();
     if (l === "PAPER") return "BIODEGRADABLE";
     if (l === "METAL") return "NON-BIODEGRADABLE";
-    if (l === "PLASTIC") return "RECYCLABLE";
+    if (l === "PLASTIC") return "E-WASTE";
     return l;
   };
 

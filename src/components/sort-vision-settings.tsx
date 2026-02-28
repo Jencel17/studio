@@ -106,27 +106,27 @@ export default function SortVisionSettings({
       addLog(`Model loaded with labels: ${labels.join(", ")}`);
 
       // Validate that model has exactly the required classes
-      const requiredClasses = ["background", "biodegradable", "recyclable", "non-biodegradable"];
+      const requiredClasses = ["background", "biodegradable", "e-waste", "non-biodegradable"];
       const normalizedLabels = labels.map(l => l.toLowerCase());
       const hasAllRequiredClasses = requiredClasses.every(cls => normalizedLabels.includes(cls));
       const hasOnlyRequiredClasses = normalizedLabels.every(cls => requiredClasses.includes(cls));
 
       if (!hasAllRequiredClasses) {
-        addLog("Model validation failed: Model must have exactly these classes: background, biodegradable, recyclable, non-biodegradable");
+        addLog("Model validation failed: Model must have exactly these classes: background, biodegradable, e-waste, non-biodegradable");
         toast({
           variant: "destructive",
           title: "Invalid Model Classes",
-          description: "Your model must have exactly these class names: BACKGROUND, BIODEGRADABLE, RECYCLABLE, NON-BIODEGRADABLE (case-insensitive). No more, no less.",
+          description: "Your model must have exactly these class names: BACKGROUND, BIODEGRADABLE, E-WASTE, NON-BIODEGRADABLE (case-insensitive). No more, no less.",
           duration: 9000,
         });
         setModel(null);
         setAppStatus("AWAITING_MODEL");
       } else if (!hasOnlyRequiredClasses) {
-        addLog("Model validation failed: Model has extra classes. Only background, biodegradable, recyclable, non-biodegradable are allowed.");
+        addLog("Model validation failed: Model has extra classes. Only background, biodegradable, e-waste, non-biodegradable are allowed.");
         toast({
           variant: "destructive",
           title: "Invalid Model Classes",
-          description: "Your model has extra classes. Only BACKGROUND, BIODEGRADABLE, RECYCLABLE, and NON-BIODEGRADABLE are allowed.",
+          description: "Your model has extra classes. Only BACKGROUND, BIODEGRADABLE, E-WASTE, and NON-BIODEGRADABLE are allowed.",
           duration: 9000,
         });
         setModel(null);

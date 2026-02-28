@@ -1,18 +1,17 @@
-
 "use client";
 
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import JSZip from "jszip";
-import { Download, Camera, Check, X, Undo2, Loader2, AlertTriangle, ThumbsUp, ThumbsDown, ArrowDown, Recycle, Leaf, Trash2, Droplets } from "lucide-react";
+import { Download, Camera, Check, X, Undo2, Loader2, AlertTriangle, ThumbsUp, ThumbsDown, ArrowDown, Cpu, Leaf, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
-import { AppStatus, LogEntry, Prediction } from "@/lib/types";
+import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
 import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { Card } from "@/components/ui/card";
-import { sendCommand, isConnected, type ESP32Status } from "@/lib/bluetooth";
-import { getMaterialConfig, getRecyclableLabel } from "@/lib/material-config";
+import { sendCommand, isConnected } from "@/lib/bluetooth";
+import { getMaterialConfig, getCategoryLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
 import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
 
@@ -24,6 +23,7 @@ interface ClientViewProps {
     addLog: (message: string) => void;
     confidenceThreshold?: number;
     autoSortEnabled?: boolean;
+    roi: ROI;
 }
 
 const PREDICTION_INTERVAL = 100;
@@ -40,6 +40,7 @@ export default function ClientView({
     addLog,
     confidenceThreshold = 0.8, // Default high for client
     autoSortEnabled = false,
+    roi,
 }: ClientViewProps) {
     // --- 1. State & Refs ---
     const [viewState, setViewState] = useState<ViewState>("IDLE");
@@ -77,7 +78,7 @@ export default function ClientView({
         const l = label.toUpperCase();
         if (l === "PAPER") return "BIODEGRADABLE";
         if (l === "METAL") return "NON-BIODEGRADABLE";
-        if (l === "PLASTIC") return "RECYCLABLE";
+        if (l === "PLASTIC") return "E-WASTE";
         return l;
     }, []);
 
@@ -186,7 +187,24 @@ export default function ClientView({
         if (video.readyState < video.HAVE_ENOUGH_DATA) return;
         isPredictingRef.current = true;
         try {
-            const predictions = await model.predict(video);
+            // Prepare cropped canvas if ROI is enabled
+            let input: HTMLVideoElement | HTMLCanvasElement = video;
+            if (roi.enabled) {
+                const canvas = document.createElement('canvas');
+                canvas.width = 224; // Teachable Machine standard size
+                canvas.height = 224;
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    const sourceX = (roi.x / 100) * video.videoWidth;
+                    const sourceY = (roi.y / 100) * video.videoHeight;
+                    const sourceWidth = (roi.width / 100) * video.videoWidth;
+                    const sourceHeight = (roi.height / 100) * video.videoHeight;
+                    ctx.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, 224, 224);
+                    input = canvas;
+                }
+            }
+
+            const predictions = await model.predict(input);
             const filteredPredictions = predictions.filter(p => p.className.toLowerCase() !== "background");
             const result = interpretDetectionsLocal(filteredPredictions, confidenceThreshold);
             if (result.detectionState === 'SINGLE_OBJECT' && result.primaryObject) {
@@ -334,23 +352,12 @@ export default function ClientView({
 
     useEffect(() => {
         const onConnected = () => setIsBtConnected(true);
-        const onDisconnected = () => {
-            setIsBtConnected(false);
-            setAlcoholStatus(null);
-            setAlcoholLevel(0);
-        };
-        const onStatusUpdate = (e: Event) => {
-            const detail = (e as CustomEvent<ESP32Status>).detail;
-            if (detail.alcoholStatus) setAlcoholStatus(detail.alcoholStatus);
-            if (detail.alcoholLevel !== undefined) setAlcoholLevel(detail.alcoholLevel);
-        };
+        const onDisconnected = () => setIsBtConnected(false);
         window.addEventListener('bt-connected', onConnected);
         window.addEventListener('bt-disconnected', onDisconnected);
-        window.addEventListener('bt-status-update', onStatusUpdate);
         return () => {
             window.removeEventListener('bt-connected', onConnected);
             window.removeEventListener('bt-disconnected', onDisconnected);
-            window.removeEventListener('bt-status-update', onStatusUpdate);
         }
     }, []);
 
@@ -486,8 +493,8 @@ export default function ClientView({
                 )} />
             </div>
 
-            {/* BT Status + Alcohol Level (Top-Right) */}
-            <div className="absolute top-4 right-4 z-50 flex flex-col items-end gap-2">
+            {/* BT Status (Top-Right) */}
+            <div className="absolute top-4 right-4 z-50">
                 <div className={cn(
                     "flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md border text-[10px] font-bold uppercase tracking-wider",
                     isBtConnected ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400" : "bg-rose-500/10 border-rose-500/50 text-rose-400"
@@ -495,39 +502,7 @@ export default function ClientView({
                     <div className={cn("w-2 h-2 rounded-full", isBtConnected ? "bg-emerald-400 animate-pulse" : "bg-rose-400")} />
                     {isBtConnected ? "Connected" : "Disconnected"}
                 </div>
-                {/* Alcohol Level Badge */}
-                {isBtConnected && alcoholStatus && alcoholStatus !== 'UNKNOWN' && (
-                    <div className={cn(
-                        "flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-[10px] font-bold uppercase tracking-wider animate-in fade-in slide-in-from-right-2 duration-300",
-                        alcoholStatus === 'ALCOHOLEMPTY'
-                            ? "bg-rose-500/15 border-rose-500/50 text-rose-400"
-                            : alcoholLevel <= 20
-                                ? "bg-amber-500/15 border-amber-500/50 text-amber-400"
-                                : "bg-cyan-500/10 border-cyan-500/50 text-cyan-400"
-                    )}>
-                        <Droplets className="w-3 h-3" />
-                        {alcoholStatus === 'ALCOHOLEMPTY'
-                            ? 'Alcohol Empty'
-                            : `Alcohol: ${alcoholLevel}%`
-                        }
-                    </div>
-                )}
             </div>
-
-            {/* Alcohol Empty Warning Banner */}
-            {isBtConnected && alcoholStatus === 'ALCOHOLEMPTY' && (
-                <div className="absolute top-16 left-4 right-4 z-50 animate-in fade-in slide-in-from-top-4 duration-500">
-                    <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-rose-500/20 backdrop-blur-lg border border-rose-500/40 shadow-lg shadow-rose-500/10">
-                        <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 animate-pulse" />
-                        <div className="flex-1">
-                            <p className="text-rose-300 text-xs font-bold uppercase tracking-wider">Alcohol Level Empty</p>
-                            <p className="text-rose-400/70 text-[10px] mt-0.5">Sanitization is currently unavailable. Please refill.</p>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-
 
 
             {/* --- MAIN CONTENT LAYERS --- */}
@@ -575,7 +550,7 @@ export default function ClientView({
             {/* 2. DETECTED STATE: "Was it correct?" Split Screen */}
             {viewState === "DETECTED" && (() => {
                 const materialConfig = getMaterialConfig(detectedLabel);
-                const recyclableLabel = getRecyclableLabel(detectedLabel);
+                const categoryLabel = getCategoryLabel(detectedLabel);
                 return (
                     <div key={`${detectedLabel}-${detectionId}`} className="relative z-20 flex h-full w-full animate-in slide-in-from-bottom-10 fade-in duration-300 overflow-y-auto">
                         <div className="flex flex-col landscape:flex-row md:flex-row w-full h-full max-w-6xl mx-auto items-center p-4 landscape:p-3 md:p-12 gap-4 landscape:gap-3 md:gap-6">
@@ -593,11 +568,11 @@ export default function ClientView({
                                             "w-full h-full bg-gradient-to-br rounded-2xl landscape:rounded-xl md:rounded-3xl transform rotate-3 shadow-xl flex items-center justify-center border-4 landscape:border-2 border-white/50",
                                             materialConfig.gradient
                                         )}>
-                                            {recyclableLabel === "Recyclable" && <Recycle className="w-24 h-24 landscape:w-12 landscape:h-12 md:w-48 md:h-48 text-white drop-shadow-md" />}
-                                            {recyclableLabel === "Biodegradable" && <Leaf className="w-24 h-24 landscape:w-12 landscape:h-12 md:w-48 md:h-48 text-white drop-shadow-md" />}
-                                            {recyclableLabel === "Non-Biodegradable" && <Trash2 className="w-24 h-24 landscape:w-12 landscape:h-12 md:w-48 md:h-48 text-white drop-shadow-md" />}
+                                            {categoryLabel === "E-Waste" && <Cpu className="w-24 h-24 landscape:w-12 landscape:h-12 md:w-48 md:h-48 text-white drop-shadow-md" />}
+                                            {categoryLabel === "Biodegradable" && <Leaf className="w-24 h-24 landscape:w-12 landscape:h-12 md:w-48 md:h-48 text-white drop-shadow-md" />}
+                                            {categoryLabel === "Non-Biodegradable" && <Trash2 className="w-24 h-24 landscape:w-12 landscape:h-12 md:w-48 md:h-48 text-white drop-shadow-md" />}
                                             {/* Fallback for unknown/other */}
-                                            {!["Recyclable", "Biodegradable", "Non-Biodegradable"].includes(recyclableLabel) && (
+                                            {!["E-Waste", "Biodegradable", "Non-Biodegradable"].includes(categoryLabel) && (
                                                 <span className="text-6xl landscape:text-3xl md:text-8xl">{materialConfig.icon}</span>
                                             )}
                                         </div>
@@ -607,7 +582,7 @@ export default function ClientView({
                                         "mt-6 landscape:mt-2 md:mt-12 font-bold px-4 landscape:px-3 md:px-8 py-2 landscape:py-1 md:py-3 rounded-full text-sm landscape:text-xs md:text-xl uppercase tracking-widest shadow-lg z-10",
                                         materialConfig.color, "text-white"
                                     )}>
-                                        {recyclableLabel}
+                                        {categoryLabel}
                                     </div>
                                 </Card>
                             </div>

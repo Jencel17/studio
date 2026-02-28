@@ -19,13 +19,13 @@ export const materialConfigs: Record<string, MaterialConfig> = {
         icon: "📄",
         gradient: "from-amber-600 to-orange-700",
     },
-    recyclable: {
-        label: "RECYCLABLE",
-        color: "bg-blue-600",
-        textColor: "text-blue-600",
-        borderColor: "border-blue-600",
-        icon: "🧴",
-        gradient: "from-blue-600 to-cyan-700",
+    "e-waste": {
+        label: "E-WASTE",
+        color: "bg-purple-600",
+        textColor: "text-purple-600",
+        borderColor: "border-purple-600",
+        icon: "⚡",
+        gradient: "from-purple-600 to-violet-700",
     },
     "non-biodegradable": {
         label: "NON-BIODEGRADABLE",
@@ -51,12 +51,12 @@ export function getMaterialConfig(materialName: string): MaterialConfig {
     return materialConfigs[key] || materialConfigs.default;
 }
 
-// Get the recyclable status label
-export function getRecyclableLabel(materialName: string): string {
+// Get the category display label
+export function getCategoryLabel(materialName: string): string {
     const key = materialName.toLowerCase().trim();
 
     if (key === "biodegradable") return "Biodegradable";
-    if (key === "recyclable") return "Recyclable";
+    if (key === "e-waste") return "E-Waste";
     if (key === "non-biodegradable") return "Non-Biodegradable";
 
     return "Unknown Category";

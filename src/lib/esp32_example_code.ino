@@ -53,13 +53,13 @@ void handleSortRequest(AsyncWebServerRequest *request) {
     Serial.print("Received sort command for: ");
     Serial.println(material);
 
-    if (material == "RECYCLABLE") {
-      // TODO: Add your logic to move the 'RECYCLABLE' servo
+    if (material == "E-WASTE") {
+      // TODO: Add your logic to move the 'E-WASTE' servo
       // For example:
       // plasticServo.write(90);
       // delay(500);
       // plasticServo.write(0);
-      request->send(200, "text/plain", "OK: Sorted as RECYCLABLE");
+      request->send(200, "text/plain", "OK: Sorted as E-WASTE");
 
     } else if (material == "NON-BIODEGRADABLE") {
       // TODO: Add your logic to move the 'NON-BIODEGRADABLE' servo

@@ -1,24 +1,24 @@
 import { describe, it, expect } from 'vitest';
-import { getMaterialConfig, getRecyclableLabel } from '@/lib/material-config';
+import { getMaterialConfig, getCategoryLabel } from '@/lib/material-config';
 
 describe('getMaterialConfig', () => {
-    it('returns config for known materials (plastic)', () => {
-        const plastic = getMaterialConfig('plastic');
-        expect(plastic).toBeDefined();
-        expect(plastic.label).toBe('RECYCLABLE');
-        expect(plastic.color).toBe('bg-blue-500');
+    it('returns config for e-waste', () => {
+        const ewaste = getMaterialConfig('e-waste');
+        expect(ewaste).toBeDefined();
+        expect(ewaste.label).toBe('E-WASTE');
+        expect(ewaste.color).toBe('bg-purple-600');
     });
 
-    it('returns config for metal', () => {
-        const metal = getMaterialConfig('metal');
-        expect(metal).toBeDefined();
-        expect(metal.label).toBe('NON-BIODEGRADABLE');
+    it('returns config for non-biodegradable', () => {
+        const nonBio = getMaterialConfig('non-biodegradable');
+        expect(nonBio).toBeDefined();
+        expect(nonBio.label).toBe('NON-BIODEGRADABLE');
     });
 
-    it('returns config for paper', () => {
-        const paper = getMaterialConfig('paper');
-        expect(paper).toBeDefined();
-        expect(paper.label).toBe('BIODEGRADABLE');
+    it('returns config for biodegradable', () => {
+        const bio = getMaterialConfig('biodegradable');
+        expect(bio).toBeDefined();
+        expect(bio.label).toBe('BIODEGRADABLE');
     });
 
     it('returns default config for unknown materials', () => {
@@ -28,30 +28,26 @@ describe('getMaterialConfig', () => {
     });
 
     it('is case-insensitive', () => {
-        const upper = getMaterialConfig('PLASTIC');
-        const lower = getMaterialConfig('plastic');
+        const upper = getMaterialConfig('E-WASTE');
+        const lower = getMaterialConfig('e-waste');
         expect(upper.label).toBe(lower.label);
     });
 });
 
-describe('getRecyclableLabel', () => {
-    it('returns "Recyclable" for recyclable materials', () => {
-        expect(getRecyclableLabel('plastic')).toBe('Recyclable');
-        expect(getRecyclableLabel('metal')).toBe('Recyclable');
-        expect(getRecyclableLabel('paper')).toBe('Recyclable');
-        expect(getRecyclableLabel('glass')).toBe('Recyclable');
+describe('getCategoryLabel', () => {
+    it('returns "E-Waste" for e-waste', () => {
+        expect(getCategoryLabel('e-waste')).toBe('E-Waste');
     });
 
-    it('returns "Compostable" for organic materials', () => {
-        expect(getRecyclableLabel('organic')).toBe('Compostable');
+    it('returns "Biodegradable" for biodegradable', () => {
+        expect(getCategoryLabel('biodegradable')).toBe('Biodegradable');
     });
 
-    it('returns "Special Disposal" for e-waste and hazardous', () => {
-        expect(getRecyclableLabel('ewaste')).toBe('Special Disposal');
-        expect(getRecyclableLabel('hazardous')).toBe('Special Disposal');
+    it('returns "Non-Biodegradable" for non-biodegradable', () => {
+        expect(getCategoryLabel('non-biodegradable')).toBe('Non-Biodegradable');
     });
 
-    it('returns "General Waste" for unknown materials', () => {
-        expect(getRecyclableLabel('unknown_item')).toBe('General Waste');
+    it('returns "Unknown Category" for unknown materials', () => {
+        expect(getCategoryLabel('unknown_item')).toBe('Unknown Category');
     });
 });

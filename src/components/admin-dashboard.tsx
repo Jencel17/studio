@@ -8,7 +8,7 @@ import { Progress } from "@/components/ui/progress";
 import { getSummaryStats, getAllTrainingImages, clearAllTrainingImages, resetAllStats, type SummaryStats, type TrainingImage } from "@/lib/stats-db";
 import { getMaterialConfig } from "@/lib/material-config";
 import { cn } from "@/lib/utils";
-import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, TrendingUp, Users, ShieldCheck, User, Radio, Activity, ArrowRightLeft, Leaf, Recycle, Ban, Loader2 } from "lucide-react";
+import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, TrendingUp, Users, ShieldCheck, User, Radio, Activity, ArrowRightLeft, Leaf, Cpu, Ban, Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import JSZip from "jszip";
 import { useAuth, type UserRole } from "@/contexts/auth-context";
@@ -358,13 +358,13 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
                                 <span className="text-[10px] font-bold uppercase">Bio</span>
                             </Button>
                             <Button
-                                onClick={() => handleManualSort('recyclable')}
+                                onClick={() => handleManualSort('e-waste')}
                                 disabled={isSendingSort}
-                                className="flex flex-col items-center gap-1.5 h-auto py-3 bg-blue-600/10 hover:bg-blue-600/30 border border-blue-600/20 text-blue-500"
+                                className="flex flex-col items-center gap-1.5 h-auto py-3 bg-purple-600/10 hover:bg-purple-600/30 border border-purple-600/20 text-purple-500"
                                 variant="outline"
                             >
-                                {isSendingSort ? <Loader2 className="h-5 w-5 animate-spin" /> : <Recycle className="h-5 w-5" />}
-                                <span className="text-[10px] font-bold uppercase">Recycle</span>
+                                {isSendingSort ? <Loader2 className="h-5 w-5 animate-spin" /> : <Cpu className="h-5 w-5" />}
+                                <span className="text-[10px] font-bold uppercase">E-Waste</span>
                             </Button>
                             <Button
                                 onClick={() => handleManualSort('non-biodegradable')}
