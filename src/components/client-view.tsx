@@ -4,14 +4,14 @@
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import JSZip from "jszip";
-import { Download, Camera, Check, X, Undo2, Loader2, AlertTriangle, ThumbsUp, ThumbsDown, ArrowDown, Recycle, Leaf, Trash2 } from "lucide-react";
+import { Download, Camera, Check, X, Undo2, Loader2, AlertTriangle, ThumbsUp, ThumbsDown, ArrowDown, Recycle, Leaf, Trash2, Droplets } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { AppStatus, LogEntry, Prediction } from "@/lib/types";
 import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { Card } from "@/components/ui/card";
-import { sendCommand, isConnected } from "@/lib/bluetooth";
+import { sendCommand, isConnected, type ESP32Status } from "@/lib/bluetooth";
 import { getMaterialConfig, getRecyclableLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
 import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
@@ -50,6 +50,8 @@ export default function ClientView({
     const [totalSorted, setTotalSorted] = useState<number>(0);
     const [detectionId, setDetectionId] = useState<number>(0);
     const [isBtConnected, setIsBtConnected] = useState(isConnected());
+    const [alcoholStatus, setAlcoholStatus] = useState<string | null>(null);
+    const [alcoholLevel, setAlcoholLevel] = useState<number>(0);
     const [capturedImages, setCapturedImages] = useState<string[]>([]);
     const [preCapturedImages, setPreCapturedImages] = useState<string[]>([]);
 
@@ -332,12 +334,23 @@ export default function ClientView({
 
     useEffect(() => {
         const onConnected = () => setIsBtConnected(true);
-        const onDisconnected = () => setIsBtConnected(false);
+        const onDisconnected = () => {
+            setIsBtConnected(false);
+            setAlcoholStatus(null);
+            setAlcoholLevel(0);
+        };
+        const onStatusUpdate = (e: Event) => {
+            const detail = (e as CustomEvent<ESP32Status>).detail;
+            if (detail.alcoholStatus) setAlcoholStatus(detail.alcoholStatus);
+            if (detail.alcoholLevel !== undefined) setAlcoholLevel(detail.alcoholLevel);
+        };
         window.addEventListener('bt-connected', onConnected);
         window.addEventListener('bt-disconnected', onDisconnected);
+        window.addEventListener('bt-status-update', onStatusUpdate);
         return () => {
             window.removeEventListener('bt-connected', onConnected);
             window.removeEventListener('bt-disconnected', onDisconnected);
+            window.removeEventListener('bt-status-update', onStatusUpdate);
         }
     }, []);
 
@@ -473,8 +486,8 @@ export default function ClientView({
                 )} />
             </div>
 
-            {/* BT Status (Top-Right) */}
-            <div className="absolute top-4 right-4 z-50">
+            {/* BT Status + Alcohol Level (Top-Right) */}
+            <div className="absolute top-4 right-4 z-50 flex flex-col items-end gap-2">
                 <div className={cn(
                     "flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md border text-[10px] font-bold uppercase tracking-wider",
                     isBtConnected ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400" : "bg-rose-500/10 border-rose-500/50 text-rose-400"
@@ -482,7 +495,37 @@ export default function ClientView({
                     <div className={cn("w-2 h-2 rounded-full", isBtConnected ? "bg-emerald-400 animate-pulse" : "bg-rose-400")} />
                     {isBtConnected ? "Connected" : "Disconnected"}
                 </div>
+                {/* Alcohol Level Badge */}
+                {isBtConnected && alcoholStatus && alcoholStatus !== 'UNKNOWN' && (
+                    <div className={cn(
+                        "flex items-center gap-1.5 px-3 py-1.5 rounded-full backdrop-blur-md border text-[10px] font-bold uppercase tracking-wider animate-in fade-in slide-in-from-right-2 duration-300",
+                        alcoholStatus === 'ALCOHOLEMPTY'
+                            ? "bg-rose-500/15 border-rose-500/50 text-rose-400"
+                            : alcoholLevel <= 20
+                                ? "bg-amber-500/15 border-amber-500/50 text-amber-400"
+                                : "bg-cyan-500/10 border-cyan-500/50 text-cyan-400"
+                    )}>
+                        <Droplets className="w-3 h-3" />
+                        {alcoholStatus === 'ALCOHOLEMPTY'
+                            ? 'Alcohol Empty'
+                            : `Alcohol: ${alcoholLevel}%`
+                        }
+                    </div>
+                )}
             </div>
+
+            {/* Alcohol Empty Warning Banner */}
+            {isBtConnected && alcoholStatus === 'ALCOHOLEMPTY' && (
+                <div className="absolute top-16 left-4 right-4 z-50 animate-in fade-in slide-in-from-top-4 duration-500">
+                    <div className="flex items-center gap-3 px-4 py-3 rounded-2xl bg-rose-500/20 backdrop-blur-lg border border-rose-500/40 shadow-lg shadow-rose-500/10">
+                        <AlertTriangle className="w-5 h-5 text-rose-400 flex-shrink-0 animate-pulse" />
+                        <div className="flex-1">
+                            <p className="text-rose-300 text-xs font-bold uppercase tracking-wider">Alcohol Level Empty</p>
+                            <p className="text-rose-400/70 text-[10px] mt-0.5">Sanitization is currently unavailable. Please refill.</p>
+                        </div>
+                    </div>
+                </div>
+            )}
 
 
 

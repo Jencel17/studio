@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, CheckCircle, XCircle, TestTube, Download, Sparkles, Lock, Unlock, BluetoothConnected, BluetoothOff } from "lucide-react";
+import { Camera, CameraOff, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, CheckCircle, XCircle, TestTube, Download, Sparkles, Lock, Unlock, BluetoothConnected, BluetoothOff, Droplets } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -30,7 +30,7 @@ import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
 import { cropVideoFrame, cropCanvasCapture } from "@/lib/roi";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { sendCommand as sendBluetoothCommand } from "@/lib/bluetooth";
+import { sendCommand as sendBluetoothCommand, type ESP32Status } from "@/lib/bluetooth";
 import { interpretDetectionsLocal, type DetectionState } from "@/lib/detection";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Slider } from "@/components/ui/slider";
@@ -102,6 +102,8 @@ export default function SortVisionClient({
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [wakeLock, setWakeLock] = useState<WakeLockSentinel | null>(null);
   const [isBtConnected, setIsBtConnected] = useState(false);
+  const [alcoholStatus, setAlcoholStatus] = useState<string | null>(null);
+  const [alcoholLevel, setAlcoholLevel] = useState<number>(0);
   const [stablePrediction, setStablePrediction] = useState<Prediction | null>(null);
 
   // Local state for the confidence input to allow smooth typing
@@ -786,14 +788,23 @@ export default function SortVisionClient({
     const onDisconnected = () => {
       addLog("Bluetooth device disconnected.");
       setIsBtConnected(false);
+      setAlcoholStatus(null);
+      setAlcoholLevel(0);
+    };
+    const onStatusUpdate = (e: Event) => {
+      const detail = (e as CustomEvent<ESP32Status>).detail;
+      if (detail.alcoholStatus) setAlcoholStatus(detail.alcoholStatus);
+      if (detail.alcoholLevel !== undefined) setAlcoholLevel(detail.alcoholLevel);
     };
 
     window.addEventListener('bt-connected', onConnected);
     window.addEventListener('bt-disconnected', onDisconnected);
+    window.addEventListener('bt-status-update', onStatusUpdate);
 
     return () => {
       window.removeEventListener('bt-connected', onConnected);
       window.removeEventListener('bt-disconnected', onDisconnected);
+      window.removeEventListener('bt-status-update', onStatusUpdate);
     }
   }, [addLog]);
 
@@ -863,6 +874,33 @@ export default function SortVisionClient({
           commandStatus={commandStatus}
         />
       </CardHeader>
+
+      {/* Alcohol Status Alert */}
+      {isBtConnected && alcoholStatus && alcoholStatus !== 'UNKNOWN' && (
+        <div className="px-6 -mt-2 mb-2">
+          {alcoholStatus === 'ALCOHOLEMPTY' ? (
+            <Alert variant="destructive" className="border-rose-500/50 bg-rose-500/10">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle className="text-sm">Alcohol Level Empty</AlertTitle>
+              <AlertDescription className="text-xs">
+                Sanitization unavailable. Please refill the alcohol container.
+              </AlertDescription>
+            </Alert>
+          ) : (
+            <div className="flex items-center gap-2 text-xs">
+              <Badge variant="outline" className={cn(
+                "gap-1.5",
+                alcoholLevel <= 20
+                  ? "border-amber-500/50 text-amber-500"
+                  : "border-cyan-500/50 text-cyan-500"
+              )}>
+                <Droplets className="h-3 w-3" />
+                Alcohol: {alcoholLevel}%
+              </Badge>
+            </div>
+          )}
+        </div>
+      )}
 
       <CardContent className="flex-1 flex flex-col gap-4">
         <div className="grid md:grid-cols-[1fr_auto] gap-4 items-center">
