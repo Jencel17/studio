@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, CheckCircle, XCircle, TestTube, Download, Sparkles, Lock, Unlock, BluetoothConnected, BluetoothOff, Droplets } from "lucide-react";
+import { Camera, CameraOff, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, CheckCircle, XCircle, TestTube, Download, Sparkles, Lock, Unlock, BluetoothConnected, BluetoothOff, Droplets, Leaf, Ban, Cpu } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -104,6 +104,9 @@ export default function SortVisionClient({
   const [isBtConnected, setIsBtConnected] = useState(false);
   const [alcoholStatus, setAlcoholStatus] = useState<string | null>(null);
   const [alcoholLevel, setAlcoholLevel] = useState<number>(0);
+  const [bioTrash, setBioTrash] = useState<number>(0);
+  const [nonBioTrash, setNonBioTrash] = useState<number>(0);
+  const [eWasteTrash, setEWasteTrash] = useState<number>(0);
   const [stablePrediction, setStablePrediction] = useState<Prediction | null>(null);
 
   // Local state for the confidence input to allow smooth typing
@@ -790,11 +793,17 @@ export default function SortVisionClient({
       setIsBtConnected(false);
       setAlcoholStatus(null);
       setAlcoholLevel(0);
+      setBioTrash(0);
+      setNonBioTrash(0);
+      setEWasteTrash(0);
     };
     const onStatusUpdate = (e: Event) => {
       const detail = (e as CustomEvent<ESP32Status>).detail;
       if (detail.alcoholStatus) setAlcoholStatus(detail.alcoholStatus);
       if (detail.alcoholLevel !== undefined) setAlcoholLevel(detail.alcoholLevel);
+      if (detail.bioTrash !== undefined) setBioTrash(detail.bioTrash);
+      if (detail.nonBioTrash !== undefined) setNonBioTrash(detail.nonBioTrash);
+      if (detail.eWasteTrash !== undefined) setEWasteTrash(detail.eWasteTrash);
     };
 
     window.addEventListener('bt-connected', onConnected);
@@ -899,6 +908,53 @@ export default function SortVisionClient({
               </Badge>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Trash Levels Display */}
+      {isBtConnected && (bioTrash > 0 || nonBioTrash > 0 || eWasteTrash > 0) && (
+        <div className="px-6 -mt-2 mb-2">
+          <div className="flex items-center gap-2 text-xs flex-wrap">
+            {bioTrash > 0 && (
+              <Badge variant="outline" className={cn(
+                "gap-1.5",
+                bioTrash >= 80
+                  ? "border-red-500/50 text-red-500"
+                  : bioTrash >= 50
+                  ? "border-amber-500/50 text-amber-500"
+                  : "border-green-500/50 text-green-500"
+              )}>
+                <Leaf className="h-3 w-3" />
+                Bio: {bioTrash}%
+              </Badge>
+            )}
+            {nonBioTrash > 0 && (
+              <Badge variant="outline" className={cn(
+                "gap-1.5",
+                nonBioTrash >= 80
+                  ? "border-red-500/50 text-red-500"
+                  : nonBioTrash >= 50
+                  ? "border-amber-500/50 text-amber-500"
+                  : "border-blue-500/50 text-blue-500"
+              )}>
+                <Ban className="h-3 w-3" />
+                Non-Bio: {nonBioTrash}%
+              </Badge>
+            )}
+            {eWasteTrash > 0 && (
+              <Badge variant="outline" className={cn(
+                "gap-1.5",
+                eWasteTrash >= 80
+                  ? "border-red-500/50 text-red-500"
+                  : eWasteTrash >= 50
+                  ? "border-amber-500/50 text-amber-500"
+                  : "border-purple-500/50 text-purple-500"
+              )}>
+                <Cpu className="h-3 w-3" />
+                E-Waste: {eWasteTrash}%
+              </Badge>
+            )}
+          </div>
         </div>
       )}
 

@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
 import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { Card } from "@/components/ui/card";
-import { sendCommand, isConnected } from "@/lib/bluetooth";
+import { sendCommand, isConnected, type ESP32Status } from "@/lib/bluetooth";
 import { getMaterialConfig, getCategoryLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
 import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
@@ -53,6 +53,10 @@ export default function ClientView({
     const [isBtConnected, setIsBtConnected] = useState(isConnected());
     const [alcoholStatus, setAlcoholStatus] = useState<string | null>(null);
     const [alcoholLevel, setAlcoholLevel] = useState<number>(0);
+    const [sorterStatus, setSorterStatus] = useState<string>("READY");
+    const [bioTrash, setBioTrash] = useState<number>(0);
+    const [nonBioTrash, setNonBioTrash] = useState<number>(0);
+    const [eWasteTrash, setEWasteTrash] = useState<number>(0);
     const [capturedImages, setCapturedImages] = useState<string[]>([]);
     const [preCapturedImages, setPreCapturedImages] = useState<string[]>([]);
 
@@ -245,6 +249,10 @@ export default function ClientView({
                                 setAppStatus("DETECTED");
                                 setViewState("DETECTED");
                                 if (autoSortEnabled) {
+                                    if (sorterStatus === "BUSY") {
+                                        addLog(`Detected ${pred.className}, but sorter is BUSY. Skipping.`);
+                                        return;
+                                    }
                                     setAppStatus("SORTING");
                                     if (isConnected()) {
                                         const command = getArduinoCommand(pred.className);
@@ -352,12 +360,30 @@ export default function ClientView({
 
     useEffect(() => {
         const onConnected = () => setIsBtConnected(true);
-        const onDisconnected = () => setIsBtConnected(false);
+        const onDisconnected = () => {
+            setIsBtConnected(false);
+            setAlcoholStatus(null);
+            setAlcoholLevel(0);
+            setBioTrash(0);
+            setNonBioTrash(0);
+            setEWasteTrash(0);
+        };
+        const onStatusUpdate = (e: Event) => {
+            const detail = (e as CustomEvent<ESP32Status>).detail;
+            if (detail.alcoholStatus) setAlcoholStatus(detail.alcoholStatus);
+            if (detail.alcoholLevel !== undefined) setAlcoholLevel(detail.alcoholLevel);
+            if (detail.sorterStatus) setSorterStatus(detail.sorterStatus.toUpperCase());
+            if (detail.bioTrash !== undefined) setBioTrash(detail.bioTrash);
+            if (detail.nonBioTrash !== undefined) setNonBioTrash(detail.nonBioTrash);
+            if (detail.eWasteTrash !== undefined) setEWasteTrash(detail.eWasteTrash);
+        };
         window.addEventListener('bt-connected', onConnected);
         window.addEventListener('bt-disconnected', onDisconnected);
+        window.addEventListener('bt-status-update', onStatusUpdate);
         return () => {
             window.removeEventListener('bt-connected', onConnected);
             window.removeEventListener('bt-disconnected', onDisconnected);
+            window.removeEventListener('bt-status-update', onStatusUpdate);
         }
     }, []);
 
@@ -424,6 +450,48 @@ export default function ClientView({
         }
         return () => clearTimeout(timeout);
     }, [viewState, detectedLabel, handleCorrect, addLog]);
+
+    // Alcohol Level Notifications
+    useEffect(() => {
+        if (!isBtConnected) return;
+
+        if (alcoholLevel <= 10 && alcoholLevel > 0) {
+            toast({
+                title: "Alcohol Low",
+                description: `Alcohol is at ${alcoholLevel}%. Please refill soon.`,
+                variant: "destructive"
+            });
+        }
+
+        if (alcoholStatus === "EMPTY") {
+            toast({
+                title: "Alcohol Empty",
+                description: "The alcohol container is empty! Please refill immediately.",
+                variant: "destructive"
+            });
+        }
+    }, [alcoholLevel, alcoholStatus, isBtConnected, toast]);
+
+    // Trash Level Notifications
+    useEffect(() => {
+        if (!isBtConnected) return;
+
+        const bins = [
+            { label: 'Biodegradable', val: bioTrash },
+            { label: 'Non-Biodegradable', val: nonBioTrash },
+            { label: 'E-Waste', val: eWasteTrash }
+        ];
+
+        bins.forEach(bin => {
+            if (bin.val >= 90) {
+                toast({
+                    title: `${bin.label} Bin Full`,
+                    description: `The ${bin.label} bin is reached ${bin.val}%. Please empty it soon.`,
+                    variant: "destructive"
+                });
+            }
+        });
+    }, [bioTrash, nonBioTrash, eWasteTrash, isBtConnected, toast]);
 
     // Subscribe to manual sort commands from admin
     useEffect(() => {
@@ -493,11 +561,82 @@ export default function ClientView({
                 )} />
             </div>
 
-            {/* BT Status (Top-Right) */}
-            <div className="absolute top-4 right-4 z-50">
+            {/* Dynamic Status Banner (Top) */}
+            <div className="absolute top-0 left-0 right-0 z-[60] p-4 flex justify-center">
                 <div className={cn(
-                    "flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md border text-[10px] font-bold uppercase tracking-wider",
-                    isBtConnected ? "bg-emerald-500/10 border-emerald-500/50 text-emerald-400" : "bg-rose-500/10 border-rose-500/50 text-rose-400"
+                    "w-full max-w-xl backdrop-blur-xl border-b border-x rounded-b-2xl px-6 py-3 transition-all duration-500 shadow-2xl flex items-center justify-between",
+                    !isBtConnected ? "bg-rose-500/10 border-rose-500/20 text-rose-400" :
+                        sorterStatus === "BUSY" ? "bg-amber-500/10 border-amber-500/20 text-amber-400" :
+                            "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                )}>
+                    <div className="flex items-center gap-3">
+                        <div className={cn(
+                            "w-2.5 h-2.5 rounded-full",
+                            !isBtConnected ? "bg-rose-500" :
+                                sorterStatus === "BUSY" ? "bg-amber-500 animate-pulse" :
+                                    "bg-emerald-500"
+                        )} />
+                        <div className="flex flex-col">
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-50">System Status</span>
+                            <span className="text-sm font-bold tracking-tight">
+                                {!isBtConnected ? "Sorter Disconnected" :
+                                    sorterStatus === "BUSY" ? "Sorter Processing..." : "Sorter Ready"}
+                            </span>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-6">
+                        {/* Alcohol Level indicator */}
+                        <div className="flex flex-col items-end">
+                            <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-50">Alcohol Level</span>
+                            <div className="flex items-center gap-2">
+                                <span className={cn(
+                                    "text-sm font-mono font-bold",
+                                    alcoholLevel <= 10 ? "text-rose-400 animate-pulse" : "text-white"
+                                )}>
+                                    {alcoholLevel}%
+                                </span>
+                                <div className="w-12 h-1.5 bg-white/10 rounded-full overflow-hidden border border-white/5">
+                                    <div
+                                        className={cn(
+                                            "h-full transition-all duration-1000",
+                                            alcoholLevel <= 10 ? "bg-rose-500" :
+                                                alcoholLevel < 40 ? "bg-amber-500" : "bg-emerald-500"
+                                        )}
+                                        style={{ width: `${alcoholLevel}%` }}
+                                    />
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Trash Level indicators (Mini) */}
+                        <div className="hidden sm:flex gap-3 border-l border-white/10 pl-6">
+                            {[
+                                { label: 'BIO', val: bioTrash, color: 'bg-amber-500' },
+                                { label: 'NON', val: nonBioTrash, color: 'bg-slate-400' },
+                                { label: 'EWS', val: eWasteTrash, color: 'bg-purple-500' }
+                            ].map(bin => (
+                                <div key={bin.label} className="flex flex-col items-center">
+                                    <span className="text-[8px] font-bold opacity-40">{bin.label}</span>
+                                    <div className="w-1 h-4 bg-white/5 rounded-full overflow-hidden relative border border-white/5">
+                                        <div
+                                            className={cn("absolute bottom-0 w-full transition-all duration-1000", bin.val >= 90 ? "bg-rose-500 animate-pulse" : bin.color)}
+                                            style={{ height: `${bin.val}%` }}
+                                        />
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            {/* Original BT Status (Removed since we have the banner, or kept as redundant - User asked for banner like admin) */}
+            {/* Let's keep it but move it lower or hide it if connected */}
+            <div className="absolute top-4 right-4 z-50 pointer-events-none opacity-0 sm:opacity-100">
+                <div className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-full backdrop-blur-md border text-[10px] font-bold uppercase tracking-wider transition-opacity",
+                    isBtConnected ? "opacity-0" : "bg-rose-500/10 border-rose-500/50 text-rose-400"
                 )}>
                     <div className={cn("w-2 h-2 rounded-full", isBtConnected ? "bg-emerald-400 animate-pulse" : "bg-rose-400")} />
                     {isBtConnected ? "Connected" : "Disconnected"}

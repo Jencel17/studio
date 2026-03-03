@@ -11,12 +11,15 @@ export type ESP32Status = {
     sorterStatus: string;
     alcoholStatus: string;
     alcoholLevel: number;
+    bioTrash: number;
+    nonBioTrash: number;
+    eWasteTrash: number;
 };
 
 let bluetoothDevice: any | null = null;
 let commandCharacteristic: any | null = null;
 let statusCharacteristic: any | null = null;
-let latestStatus: ESP32Status = { sorterStatus: 'UNKNOWN', alcoholStatus: 'UNKNOWN', alcoholLevel: 0 };
+let latestStatus: ESP32Status = { sorterStatus: 'UNKNOWN', alcoholStatus: 'UNKNOWN', alcoholLevel: 0, bioTrash: 0, nonBioTrash: 0, eWasteTrash: 0 };
 
 export function getLatestStatus(): ESP32Status {
     return { ...latestStatus };
@@ -33,6 +36,9 @@ function parseStatusString(raw: string): Partial<ESP32Status> {
         if (k === 'STATUS') result.sorterStatus = v;
         else if (k === 'ALCOHOL') result.alcoholStatus = v;
         else if (k === 'LEVEL') result.alcoholLevel = parseInt(v, 10) || 0;
+        else if (k === 'BIO') result.bioTrash = parseInt(v, 10) || 0;
+        else if (k === 'NONBIO') result.nonBioTrash = parseInt(v, 10) || 0;
+        else if (k === 'EWASTE') result.eWasteTrash = parseInt(v, 10) || 0;
     }
     return result;
 }
@@ -76,7 +82,7 @@ function onDisconnected() {
     bluetoothDevice = null;
     commandCharacteristic = null;
     statusCharacteristic = null;
-    latestStatus = { sorterStatus: 'UNKNOWN', alcoholStatus: 'UNKNOWN', alcoholLevel: 0 };
+    latestStatus = { sorterStatus: 'UNKNOWN', alcoholStatus: 'UNKNOWN', alcoholLevel: 0, bioTrash: 0, nonBioTrash: 0, eWasteTrash: 0 };
 
     // Notify the UI
     window.dispatchEvent(new CustomEvent('bt-disconnected'));
