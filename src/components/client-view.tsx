@@ -70,7 +70,7 @@ export default function ClientView({
     const viewStateRef = useRef(viewState);
     const lastLivePushRef = useRef<number>(0);
     const lastProcessedSortTimestamp = useRef<number>(0);
-    const geminiTriggeredRef = useRef(false);
+    const confidenceLowTimerRef = useRef<NodeJS.Timeout | null>(null);
 
     const { toast } = useToast();
 
@@ -188,7 +188,8 @@ export default function ClientView({
     }, [capturedImages, detectedLabel, addLog, setAppStatus, toast]);
 
     const runClassification = useCallback(async () => {
-        if (isPredictingRef.current || !videoRef.current || !model || appStatus !== 'AWAITING_OBJECT') return;
+        if (isPredictingRef.current || !videoRef.current || !model) return;
+        if (appStatus !== 'AWAITING_OBJECT' && appStatus !== 'CONFIDENCE_TOO_LOW') return;
         if (viewState !== "IDLE" && viewState !== "DETECTED") return;
         const video = videoRef.current;
         if (video.readyState < video.HAVE_ENOUGH_DATA) return;
@@ -284,44 +285,12 @@ export default function ClientView({
                 }
                 setStablePrediction(null);
             } else {
-                // NO_DETECTION or AMBIGUOUS path
+                // NO_DETECTION — clear detection timer
                 if (detectionTimer.current && viewState === "IDLE") {
                     clearTimeout(detectionTimer.current);
                     detectionTimer.current = null;
                 }
                 setStablePrediction(null);
-
-                // AI Fallback: trigger Gemini if item is ambiguous and we haven't triggered it yet
-                const isAmbiguous = result.detectionState === 'AMBIGUOUS';
-                if (isAmbiguous && !geminiTriggeredRef.current && isGeminiFallbackAvailable() && videoRef.current) {
-                    geminiTriggeredRef.current = true;
-                    addLog(`TF uncertain (${result.reason}). Activating Gemini AI fallback...`);
-                    setIsAiFallbackActive(true);
-                    setAppStatus("AI_FALLBACK");
-                    classifyWithGemini(videoRef.current).then((geminiResult) => {
-                        setIsAiFallbackActive(false);
-                        geminiTriggeredRef.current = false;
-                        if (geminiResult && (viewStateRef.current === "IDLE")) {
-                            addLog(`Gemini AI classified: ${geminiResult}. Proceeding.`);
-                            setDetectedLabel(geminiResult);
-                            setDetectionId(prev => prev + 1);
-                            setAppStatus("DETECTED");
-                            setViewState("DETECTED");
-                            if (autoSortEnabled && isConnected()) {
-                                const command = getArduinoCommand(geminiResult);
-                                setAppStatus("SORTING");
-                                sendCommand(command)
-                                    .then(() => addLog(`Auto-sorted via Gemini AI: ${geminiResult} (Sent: ${command}).`))
-                                    .catch((err: any) => addLog(`Gemini sort command error: ${err.message}`));
-                            }
-                        } else {
-                            addLog(`Gemini AI fallback failed or timed out.`);
-                            setAppStatus("AWAITING_OBJECT");
-                        }
-                    });
-                } else if (!isAmbiguous) {
-                    geminiTriggeredRef.current = false; // reset when scene clears
-                }
             }
         } catch (err: any) {
             const msg = err.message || "";
@@ -331,7 +300,6 @@ export default function ClientView({
             isPredictingRef.current = false;
         }
     }, [model, viewState, appStatus, confidenceThreshold, stablePrediction, detectedLabel, addLog, autoSortEnabled, setAppStatus, getArduinoCommand]);
-
     const stopCamera = useCallback(() => {
         if (streamRef.current) {
             streamRef.current.getTracks().forEach((track) => track.stop());
@@ -481,7 +449,7 @@ export default function ClientView({
     }, [stablePrediction, appStatus, viewState]);
 
     useEffect(() => {
-        if (isCameraOn && appStatus === "AWAITING_OBJECT") {
+        if (isCameraOn && (appStatus === "AWAITING_OBJECT" || appStatus === "CONFIDENCE_TOO_LOW")) {
             predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
         }
         return () => {
@@ -499,6 +467,59 @@ export default function ClientView({
         }
         return () => clearTimeout(timeout);
     }, [viewState, detectedLabel, handleCorrect, addLog]);
+
+    // --- Gemini AI fallback handler ---
+    const handleAskAI = useCallback(() => {
+        if (!videoRef.current || isAiFallbackActive) return;
+        if (!navigator.onLine) {
+            toast({ title: "No Internet", description: "AI fallback requires an internet connection.", variant: "destructive" });
+            return;
+        }
+        addLog("Manual AI fallback triggered by user.");
+        setIsAiFallbackActive(true);
+        setAppStatus("AI_FALLBACK");
+        classifyWithGemini(videoRef.current).then((geminiResult) => {
+            setIsAiFallbackActive(false);
+            if (geminiResult && viewStateRef.current === "IDLE") {
+                addLog(`Gemini AI classified: ${geminiResult}.`);
+                setDetectedLabel(geminiResult);
+                setDetectionId(prev => prev + 1);
+                setAppStatus("DETECTED");
+                setViewState("DETECTED");
+                if (autoSortEnabled && isConnected()) {
+                    const command = getArduinoCommand(geminiResult);
+                    setAppStatus("SORTING");
+                    sendCommand(command)
+                        .then(() => addLog(`Auto-sorted via Gemini AI: ${geminiResult} (Sent: ${command}).`))
+                        .catch((err: any) => addLog(`Gemini sort error: ${err.message}`));
+                }
+            } else {
+                addLog("Gemini AI could not identify the item.");
+                setAppStatus("AWAITING_OBJECT");
+            }
+        });
+    }, [videoRef, isAiFallbackActive, addLog, setAppStatus, autoSortEnabled, getArduinoCommand, toast]);
+
+    // Auto-trigger Gemini after 3s of sustained CONFIDENCE_TOO_LOW
+    useEffect(() => {
+        if (appStatus === "CONFIDENCE_TOO_LOW" && !isAiFallbackActive && isCameraOn) {
+            confidenceLowTimerRef.current = setTimeout(() => {
+                addLog("TF confidence too low for 3s. Auto-activating Gemini AI fallback...");
+                handleAskAI();
+            }, 3000);
+        } else {
+            if (confidenceLowTimerRef.current) {
+                clearTimeout(confidenceLowTimerRef.current);
+                confidenceLowTimerRef.current = null;
+            }
+        }
+        return () => {
+            if (confidenceLowTimerRef.current) {
+                clearTimeout(confidenceLowTimerRef.current);
+                confidenceLowTimerRef.current = null;
+            }
+        };
+    }, [appStatus, isAiFallbackActive, isCameraOn, addLog, handleAskAI]);
 
     // Alcohol Level Notifications
     useEffect(() => {
@@ -727,6 +748,28 @@ export default function ClientView({
                             </div>
                         </div>
                     </div>
+
+                    {/* AI Fallback Button — appears when TF is stuck */}
+                    {(appStatus === "CONFIDENCE_TOO_LOW" || appStatus === "AI_FALLBACK") && (
+                        <div className="absolute bottom-28 landscape:hidden flex flex-col items-center gap-2 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                            <Button
+                                onClick={handleAskAI}
+                                disabled={isAiFallbackActive}
+                                className="gap-2 bg-violet-600/80 hover:bg-violet-500 border border-violet-400/50 backdrop-blur-md text-white shadow-[0_0_20px_rgba(139,92,246,0.4)] rounded-full px-6 py-3 text-sm font-bold"
+                            >
+                                {isAiFallbackActive ? (
+                                    <><Loader2 className="h-4 w-4 animate-spin" /> AI Analyzing...</>
+                                ) : (
+                                    <><Sparkles className="h-4 w-4" /> Ask AI</>
+                                )}
+                            </Button>
+                            {!isAiFallbackActive && (
+                                <p className="text-violet-300/60 text-[10px] uppercase tracking-widest">
+                                    TF model uncertain · Tap to use Gemini AI
+                                </p>
+                            )}
+                        </div>
+                    )}
 
                     {/* Stats - portrait only */}
                     <div className="absolute bottom-12 flex gap-8 landscape:hidden">
