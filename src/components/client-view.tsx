@@ -285,12 +285,18 @@ export default function ClientView({
                 }
                 setStablePrediction(null);
             } else {
-                // NO_DETECTION — clear detection timer
+                // NO_DETECTION or AMBIGUOUS — clear detection timer
                 if (detectionTimer.current && viewState === "IDLE") {
                     clearTimeout(detectionTimer.current);
                     detectionTimer.current = null;
                 }
                 setStablePrediction(null);
+
+                // Set CONFIDENCE_TOO_LOW if something is partially detected but below threshold
+                // Otherwise reset to AWAITING_OBJECT so we keep scanning
+                const hasPartialDetection = filteredPredictions.some(p => p.probability > 0.2);
+                const nextStatus = hasPartialDetection ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
+                if (appStatus !== nextStatus) setAppStatus(nextStatus);
             }
         } catch (err: any) {
             const msg = err.message || "";
@@ -700,6 +706,27 @@ export default function ClientView({
                                 </div>
                             ))}
                         </div>
+
+                        {/* Ask AI button — always available when camera is on */}
+                        {isCameraOn && (
+                            <button
+                                onClick={handleAskAI}
+                                disabled={isAiFallbackActive}
+                                title="Ask Gemini AI to classify"
+                                className={cn(
+                                    "border-l border-white/10 pl-4 flex flex-col items-center gap-0.5 transition-all duration-300 group",
+                                    isAiFallbackActive ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:opacity-100 opacity-70"
+                                )}
+                            >
+                                {isAiFallbackActive
+                                    ? <Loader2 className="h-4 w-4 text-violet-400 animate-spin" />
+                                    : <Sparkles className="h-4 w-4 text-violet-400 group-hover:text-violet-300 transition-colors" />
+                                }
+                                <span className="text-[8px] font-bold text-violet-400 uppercase tracking-wider">
+                                    {isAiFallbackActive ? "AI..." : "Ask AI"}
+                                </span>
+                            </button>
+                        )}
                     </div>
                 </div>
             </div>
