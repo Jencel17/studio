@@ -3,7 +3,7 @@
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
 import JSZip from "jszip";
-import { Download, Camera, Check, X, Undo2, Loader2, AlertTriangle, ThumbsUp, ThumbsDown, ArrowDown, Cpu, Leaf, Trash2 } from "lucide-react";
+import { Download, Camera, Check, X, Undo2, Loader2, AlertTriangle, ThumbsUp, ThumbsDown, ArrowDown, Cpu, Leaf, Trash2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
@@ -14,6 +14,7 @@ import { sendCommand, isConnected, getLatestStatus, type ESP32Status } from "@/l
 import { getMaterialConfig, getCategoryLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
 import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
+import { classifyWithGemini, isGeminiFallbackAvailable } from "@/lib/gemini-fallback";
 
 interface ClientViewProps {
     model: tmImage.CustomMobileNet | null;
@@ -59,6 +60,7 @@ export default function ClientView({
     const [eWasteTrash, setEWasteTrash] = useState<number>(0);
     const [capturedImages, setCapturedImages] = useState<string[]>([]);
     const [preCapturedImages, setPreCapturedImages] = useState<string[]>([]);
+    const [isAiFallbackActive, setIsAiFallbackActive] = useState(false);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -68,6 +70,7 @@ export default function ClientView({
     const viewStateRef = useRef(viewState);
     const lastLivePushRef = useRef<number>(0);
     const lastProcessedSortTimestamp = useRef<number>(0);
+    const geminiTriggeredRef = useRef(false);
 
     const { toast } = useToast();
 
@@ -281,11 +284,44 @@ export default function ClientView({
                 }
                 setStablePrediction(null);
             } else {
+                // NO_DETECTION or AMBIGUOUS path
                 if (detectionTimer.current && viewState === "IDLE") {
                     clearTimeout(detectionTimer.current);
                     detectionTimer.current = null;
                 }
                 setStablePrediction(null);
+
+                // AI Fallback: trigger Gemini if item is ambiguous and we haven't triggered it yet
+                const isAmbiguous = result.detectionState === 'AMBIGUOUS';
+                if (isAmbiguous && !geminiTriggeredRef.current && isGeminiFallbackAvailable() && videoRef.current) {
+                    geminiTriggeredRef.current = true;
+                    addLog(`TF uncertain (${result.reason}). Activating Gemini AI fallback...`);
+                    setIsAiFallbackActive(true);
+                    setAppStatus("AI_FALLBACK");
+                    classifyWithGemini(videoRef.current).then((geminiResult) => {
+                        setIsAiFallbackActive(false);
+                        geminiTriggeredRef.current = false;
+                        if (geminiResult && (viewStateRef.current === "IDLE")) {
+                            addLog(`Gemini AI classified: ${geminiResult}. Proceeding.`);
+                            setDetectedLabel(geminiResult);
+                            setDetectionId(prev => prev + 1);
+                            setAppStatus("DETECTED");
+                            setViewState("DETECTED");
+                            if (autoSortEnabled && isConnected()) {
+                                const command = getArduinoCommand(geminiResult);
+                                setAppStatus("SORTING");
+                                sendCommand(command)
+                                    .then(() => addLog(`Auto-sorted via Gemini AI: ${geminiResult} (Sent: ${command}).`))
+                                    .catch((err: any) => addLog(`Gemini sort command error: ${err.message}`));
+                            }
+                        } else {
+                            addLog(`Gemini AI fallback failed or timed out.`);
+                            setAppStatus("AWAITING_OBJECT");
+                        }
+                    });
+                } else if (!isAmbiguous) {
+                    geminiTriggeredRef.current = false; // reset when scene clears
+                }
             }
         } catch (err: any) {
             const msg = err.message || "";
@@ -580,20 +616,23 @@ export default function ClientView({
                     "w-full max-w-xl backdrop-blur-xl border-b border-x rounded-b-2xl px-6 py-3 transition-all duration-500 shadow-2xl flex items-center justify-between",
                     !isBtConnected ? "bg-rose-500/10 border-rose-500/20 text-rose-400" :
                         sorterStatus === "BUSY" ? "bg-amber-500/10 border-amber-500/20 text-amber-400" :
-                            "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+                            isAiFallbackActive ? "bg-violet-500/10 border-violet-500/20 text-violet-400" :
+                                "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
                 )}>
                     <div className="flex items-center gap-3">
                         <div className={cn(
                             "w-2.5 h-2.5 rounded-full",
                             !isBtConnected ? "bg-rose-500" :
                                 sorterStatus === "BUSY" ? "bg-amber-500 animate-pulse" :
-                                    "bg-emerald-500"
+                                    isAiFallbackActive ? "bg-violet-500 animate-pulse" :
+                                        "bg-emerald-500"
                         )} />
                         <div className="flex flex-col">
                             <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-50">System Status</span>
                             <span className="text-sm font-bold tracking-tight">
                                 {!isBtConnected ? "Sorter Disconnected" :
-                                    sorterStatus === "BUSY" ? "Sorter Processing..." : "Sorter Ready"}
+                                    sorterStatus === "BUSY" ? "Sorter Processing..." :
+                                        isAiFallbackActive ? "AI Analyzing..." : "Sorter Ready"}
                             </span>
                         </div>
                     </div>

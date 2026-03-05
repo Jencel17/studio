@@ -35,6 +35,7 @@ import { interpretDetectionsLocal, type DetectionState } from "@/lib/detection";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
+import { classifyWithGemini, isGeminiFallbackAvailable } from "@/lib/gemini-fallback";
 
 
 type CommandStatus = {
@@ -108,6 +109,7 @@ export default function SortVisionClient({
   const [nonBioTrash, setNonBioTrash] = useState<number>(0);
   const [eWasteTrash, setEWasteTrash] = useState<number>(0);
   const [stablePrediction, setStablePrediction] = useState<Prediction | null>(null);
+  const [isAiFallbackActive, setIsAiFallbackActive] = useState(false);
 
   // Local state for the confidence input to allow smooth typing
   const [inputValue, setInputValue] = useState(String(Math.round(confidenceThreshold * 100)));
@@ -545,8 +547,25 @@ export default function SortVisionClient({
                           setAppStatus("SORTING");
                           handleSortAndRestart(finalResult.primaryObject);
                         } else {
-                          addLog(`Final check failed. Result: ${finalResult.detectionState}. Reason: ${finalResult.reason}`);
-                          handleSortAndRestart("RESTART_NO_SORT");
+                          addLog(`Final check failed (${finalResult.detectionState}). Trying Gemini AI fallback...`);
+                          if (isGeminiFallbackAvailable() && videoRef.current) {
+                            setIsAiFallbackActive(true);
+                            setAppStatus("AI_FALLBACK");
+                            classifyWithGemini(videoRef.current).then((geminiResult) => {
+                              setIsAiFallbackActive(false);
+                              if (geminiResult) {
+                                addLog(`Gemini AI classified as: ${geminiResult}. Sorting.`);
+                                setAppStatus("SORTING");
+                                handleSortAndRestart(geminiResult);
+                              } else {
+                                addLog(`Gemini AI fallback also failed. Skipping sort.`);
+                                handleSortAndRestart("RESTART_NO_SORT");
+                              }
+                            });
+                          } else {
+                            addLog(`Gemini fallback unavailable (offline or cooldown). Skipping sort.`);
+                            handleSortAndRestart("RESTART_NO_SORT");
+                          }
                         }
                       } catch (e) {
                         handleSortAndRestart("RESTART_NO_SORT");
@@ -893,6 +912,12 @@ export default function SortVisionClient({
           isBtConnected={isBtConnected}
           commandStatus={commandStatus}
         />
+        {isAiFallbackActive && (
+          <Badge className="gap-1.5 animate-pulse bg-violet-500/20 border-violet-500/50 text-violet-400 border">
+            <Sparkles className="h-3 w-3" />
+            AI Analyzing...
+          </Badge>
+        )}
       </CardHeader>
 
       {/* Alcohol Status Alert */}

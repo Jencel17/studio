@@ -39,6 +39,7 @@ export default function StatusDisplay({
             case "CAMERA_CYCLING": return "Waiting for Sorter...";
             case "COLLECTING_IMAGES": return "Collecting Images...";
             case "COOLDOWN": return "Cooldown";
+            case "AI_FALLBACK": return "AI Analyzing...";
 
             case "READY_TO_SEND":
                 return `Sending: ${primaryPrediction?.className || '...'}`;
@@ -57,6 +58,7 @@ export default function StatusDisplay({
             case "CAMERA_CYCLING":
             case "CAMERA_WARMING_UP": return "secondary";
             case "CONFIDENCE_TOO_LOW": return "destructive";
+            case "AI_FALLBACK": return "default";
 
             case "AWAITING_OBJECT":
                 return stablePrediction ? "default" : "outline";
@@ -64,13 +66,14 @@ export default function StatusDisplay({
         }
     };
 
-    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_WARMING_UP' || (appStatus === 'AWAITING_OBJECT' && !!stablePrediction);
+    const isLoading = appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || appStatus === 'CAMERA_CYCLING' || appStatus === 'COLLECTING_IMAGES' || appStatus === 'COOLDOWN' || appStatus === 'CAMERA_WARMING_UP' || appStatus === 'AI_FALLBACK' || (appStatus === 'AWAITING_OBJECT' && !!stablePrediction);
 
     return (
         <div className="flex flex-col items-end gap-2">
             <div className="flex flex-wrap items-center justify-end gap-2">
                 <Badge variant={getStatusBadgeVariant()} className="text-xs">
                     {isLoading && <Hourglass className="h-3 w-3 mr-1 animate-spin" />}
+                    {appStatus === 'AI_FALLBACK' && <Sparkles className="h-3 w-3 mr-1 animate-pulse" />}
                     {appStatus === 'ANALYZING_MATERIAL' && <Sparkles className="h-3 w-3 mr-1 animate-pulse" />}
                     {getStatusText()}
                 </Badge>
