@@ -30,7 +30,7 @@ import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
 import { cropVideoFrame, cropCanvasCapture } from "@/lib/roi";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
-import { sendCommand as sendBluetoothCommand, type ESP32Status } from "@/lib/bluetooth";
+import { sendCommand as sendBluetoothCommand, isConnected as isBtConnectedCheck, getLatestStatus, type ESP32Status } from "@/lib/bluetooth";
 import { interpretDetectionsLocal, type DetectionState } from "@/lib/detection";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Slider } from "@/components/ui/slider";
@@ -101,7 +101,7 @@ export default function SortVisionClient({
   const [countdown, setCountdown] = useState(0);
   const [commandStatus, setCommandStatus] = useState<CommandStatus>({ status: "IDLE", message: "Awaiting command." });
   const [wakeLock, setWakeLock] = useState<WakeLockSentinel | null>(null);
-  const [isBtConnected, setIsBtConnected] = useState(false);
+  const [isBtConnected, setIsBtConnected] = useState(isBtConnectedCheck());
   const [alcoholStatus, setAlcoholStatus] = useState<string | null>(null);
   const [alcoholLevel, setAlcoholLevel] = useState<number>(0);
   const [bioTrash, setBioTrash] = useState<number>(0);
@@ -810,6 +810,17 @@ export default function SortVisionClient({
     window.addEventListener('bt-disconnected', onDisconnected);
     window.addEventListener('bt-status-update', onStatusUpdate);
 
+    // Seed BLE state from the latest known status on mount
+    // This ensures values persist when navigating from admin to client view
+    if (isBtConnectedCheck()) {
+      const status = getLatestStatus();
+      if (status.alcoholStatus) setAlcoholStatus(status.alcoholStatus);
+      if (status.alcoholLevel !== undefined) setAlcoholLevel(status.alcoholLevel);
+      if (status.bioTrash !== undefined) setBioTrash(status.bioTrash);
+      if (status.nonBioTrash !== undefined) setNonBioTrash(status.nonBioTrash);
+      if (status.eWasteTrash !== undefined) setEWasteTrash(status.eWasteTrash);
+    }
+
     return () => {
       window.removeEventListener('bt-connected', onConnected);
       window.removeEventListener('bt-disconnected', onDisconnected);
@@ -921,8 +932,8 @@ export default function SortVisionClient({
                 bioTrash >= 80
                   ? "border-red-500/50 text-red-500"
                   : bioTrash >= 50
-                  ? "border-amber-500/50 text-amber-500"
-                  : "border-green-500/50 text-green-500"
+                    ? "border-amber-500/50 text-amber-500"
+                    : "border-green-500/50 text-green-500"
               )}>
                 <Leaf className="h-3 w-3" />
                 Bio: {bioTrash}%
@@ -934,8 +945,8 @@ export default function SortVisionClient({
                 nonBioTrash >= 80
                   ? "border-red-500/50 text-red-500"
                   : nonBioTrash >= 50
-                  ? "border-amber-500/50 text-amber-500"
-                  : "border-blue-500/50 text-blue-500"
+                    ? "border-amber-500/50 text-amber-500"
+                    : "border-blue-500/50 text-blue-500"
               )}>
                 <Ban className="h-3 w-3" />
                 Non-Bio: {nonBioTrash}%
@@ -947,8 +958,8 @@ export default function SortVisionClient({
                 eWasteTrash >= 80
                   ? "border-red-500/50 text-red-500"
                   : eWasteTrash >= 50
-                  ? "border-amber-500/50 text-amber-500"
-                  : "border-purple-500/50 text-purple-500"
+                    ? "border-amber-500/50 text-amber-500"
+                    : "border-purple-500/50 text-purple-500"
               )}>
                 <Cpu className="h-3 w-3" />
                 E-Waste: {eWasteTrash}%

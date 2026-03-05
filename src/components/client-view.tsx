@@ -10,7 +10,7 @@ import { cn } from "@/lib/utils";
 import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
 import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { Card } from "@/components/ui/card";
-import { sendCommand, isConnected, type ESP32Status } from "@/lib/bluetooth";
+import { sendCommand, isConnected, getLatestStatus, type ESP32Status } from "@/lib/bluetooth";
 import { getMaterialConfig, getCategoryLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
 import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
@@ -380,6 +380,19 @@ export default function ClientView({
         window.addEventListener('bt-connected', onConnected);
         window.addEventListener('bt-disconnected', onDisconnected);
         window.addEventListener('bt-status-update', onStatusUpdate);
+
+        // Seed BLE state from the latest known status on mount
+        // This ensures values persist when navigating from admin to client view
+        if (isConnected()) {
+            const status = getLatestStatus();
+            if (status.alcoholStatus) setAlcoholStatus(status.alcoholStatus);
+            if (status.alcoholLevel !== undefined) setAlcoholLevel(status.alcoholLevel);
+            if (status.sorterStatus) setSorterStatus(status.sorterStatus.toUpperCase());
+            if (status.bioTrash !== undefined) setBioTrash(status.bioTrash);
+            if (status.nonBioTrash !== undefined) setNonBioTrash(status.nonBioTrash);
+            if (status.eWasteTrash !== undefined) setEWasteTrash(status.eWasteTrash);
+        }
+
         return () => {
             window.removeEventListener('bt-connected', onConnected);
             window.removeEventListener('bt-disconnected', onDisconnected);
