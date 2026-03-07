@@ -339,7 +339,7 @@ export default function ClientView({
     }, [getModel, viewState, appStatus, confidenceThreshold, stablePrediction, detectedLabel, addLog, autoSortEnabled, setAppStatus, getArduinoCommand, autoFlashEnabled, sendLightCommand, mirrorCameraEnabled]);
 
     // Auto-trigger local AI when stuck at CONFIDENCE_TOO_LOW for too long
-    const AUTO_AI_FALLBACK_DELAY = 4000; // 4 seconds
+    const AUTO_AI_FALLBACK_DELAY = 2500; // 2.5 seconds
     useEffect(() => {
         if (appStatus === 'CONFIDENCE_TOO_LOW' && !isAiFallbackActive && isCameraOn && videoRef.current && viewState === "IDLE") {
             if (!aiFallbackTimer.current) {

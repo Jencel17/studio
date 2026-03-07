@@ -654,7 +654,7 @@ export default function SortVisionClient({
   }, [isCameraOn, getModel, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction, confidenceThreshold, detectionState, currentPredictions, roi, mirrorCameraEnabled]);
 
   // Auto-trigger local AI when stuck at CONFIDENCE_TOO_LOW for too long
-  const AUTO_AI_FALLBACK_DELAY = 4000; // 4 seconds
+  const AUTO_AI_FALLBACK_DELAY = 2500; // 2.5 seconds
   useEffect(() => {
     if (appStatus === 'CONFIDENCE_TOO_LOW' && autoSortEnabled && !isAiFallbackActive && !isDetectionPaused && isCameraOn && videoRef.current) {
       if (!aiFallbackTimer.current) {
