@@ -6,7 +6,7 @@ import { Card, CardHeader, CardTitle, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
 import { getSummaryStats, getAllTrainingImages, clearAllTrainingImages, resetAllStats, type SummaryStats, type TrainingImage } from "@/lib/stats-db";
-import { getMaterialConfig } from "@/lib/material-config";
+import { getMaterialConfig, getCategoryLabel } from "@/lib/material-config";
 import { cn } from "@/lib/utils";
 import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, TrendingUp, Users, ShieldCheck, User, Radio, Activity, ArrowRightLeft, Leaf, Cpu, Ban, Loader2, Calendar, ListOrdered } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -341,8 +341,14 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
                         </CardTitle>
                     </CardHeader>
                     <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-                        {stats.categoryBreakdown.length > 0 ? (
-                            stats.categoryBreakdown.map((cat) => {
+                        {stats.categoryBreakdown.filter(cat => {
+                            const label = getCategoryLabel(cat.category).toLowerCase();
+                            return ["biodegradable", "non-biodegradable", "e-waste"].includes(label);
+                        }).length > 0 ? (
+                            stats.categoryBreakdown.filter(cat => {
+                                const label = getCategoryLabel(cat.category).toLowerCase();
+                                return ["biodegradable", "non-biodegradable", "e-waste"].includes(label);
+                            }).map((cat) => {
                                 const config = getMaterialConfig(cat.category);
                                 const percentage = stats.totalSorted > 0 ? (cat.count / stats.totalSorted) * 100 : 0;
                                 return (

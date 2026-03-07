@@ -161,7 +161,6 @@ export default function ClientView({
         try {
             await incrementCategoryCount(detectedLabel, true);
             await incrementDailyStat(true);
-            setRecentSorts(prev => [detectedLabel, ...prev].slice(0, 5));
         } catch (e) {
             console.error("Failed to save stats:", e);
         }
@@ -200,7 +199,11 @@ export default function ClientView({
         try {
             await incrementCategoryCount(correctLabel, false);
             await incrementDailyStat(false);
-            setRecentSorts(prev => [correctLabel, ...prev].slice(0, 5));
+            setRecentSorts(prev => {
+                const newSorts = [...prev];
+                if (newSorts.length > 0) newSorts[0] = correctLabel;
+                return newSorts;
+            });
         } catch (e) {
             console.error("Failed to save stats:", e);
         }
@@ -273,6 +276,7 @@ export default function ClientView({
                                 setDetectionId(prev => prev + 1);
                                 setAppStatus("DETECTED");
                                 setViewState("DETECTED");
+                                setRecentSorts(prev => [pred.className, ...prev].slice(0, 5));
 
                                 if (autoFlashEnabled) {
                                     sendLightCommand('ON');
@@ -353,6 +357,7 @@ export default function ClientView({
                             setDetectionId(prev => prev + 1);
                             setAppStatus("DETECTED");
                             setViewState("DETECTED");
+                            setRecentSorts(prev => [result.category!, ...prev].slice(0, 5));
                             if (autoSortEnabled && isConnected()) {
                                 if (sorterStatus === "BUSY") {
                                     addLog(`Local AI detected ${result.category}, but sorter is BUSY.`);
