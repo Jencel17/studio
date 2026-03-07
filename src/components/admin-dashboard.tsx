@@ -8,11 +8,12 @@ import { Progress } from "@/components/ui/progress";
 import { getSummaryStats, getAllTrainingImages, clearAllTrainingImages, resetAllStats, type SummaryStats, type TrainingImage } from "@/lib/stats-db";
 import { getMaterialConfig } from "@/lib/material-config";
 import { cn } from "@/lib/utils";
-import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, TrendingUp, Users, ShieldCheck, User, Radio, Activity, ArrowRightLeft, Leaf, Cpu, Ban, Loader2 } from "lucide-react";
+import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, TrendingUp, Users, ShieldCheck, User, Radio, Activity, ArrowRightLeft, Leaf, Cpu, Ban, Loader2, Calendar, ListOrdered } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import JSZip from "jszip";
 import { useAuth, type UserRole } from "@/contexts/auth-context";
-import { subscribeToLiveDetection, subscribeToStats, type LiveDetectionState, sendManualSortCommand, subscribeToManualSortCommand, type ManualSortCommand } from "@/lib/firestore-sync";
+import { subscribeToLiveDetection, subscribeToStats, type LiveDetectionState, sendManualSortCommand, subscribeToManualSortCommand, type ManualSortCommand, type SyncedDailyStats } from "@/lib/firestore-sync";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface AdminDashboardProps {
     addLog: (message: string) => void;
@@ -20,6 +21,8 @@ interface AdminDashboardProps {
 
 export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     const [stats, setStats] = useState<SummaryStats | null>(null);
+    const [dailyData, setDailyData] = useState<SyncedDailyStats>({});
+    const [selectedDate, setSelectedDate] = useState<string>(new Date().toISOString().split('T')[0]);
     const [isLoading, setIsLoading] = useState(true);
     const [isExporting, setIsExporting] = useState(false);
     const [users, setUsers] = useState<{ uid: string; email: string; role: UserRole; createdAt: Date }[]>([]);
@@ -83,6 +86,16 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     // Subscribe to real-time stats from Firestore (primary source for admin)
     useEffect(() => {
         const unsubscribe = subscribeToStats((data) => {
+            if (data.dailyStats) {
+                setDailyData(data.dailyStats);
+                setSelectedDate(prev => {
+                    if (prev && data.dailyStats![prev]) return prev;
+                    const dates = Object.keys(data.dailyStats!);
+                    if (dates.length > 0) return dates.sort().reverse()[0];
+                    return new Date().toISOString().split('T')[0];
+                });
+            }
+
             if (data.categoryStats || data.dailyStats) {
                 const categoryBreakdown = data.categoryStats
                     ? Object.entries(data.categoryStats).map(([category, s]) => ({
@@ -175,6 +188,9 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     };
 
     const handleClearTrainingImages = async () => {
+        if (!window.confirm("Are you sure you want to delete ALL training images? This cannot be undone.")) {
+            return;
+        }
         try {
             await clearAllTrainingImages();
             addLog("Cleared all training images from local storage.");
@@ -187,6 +203,9 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     };
 
     const handleResetAllStats = async () => {
+        if (!window.confirm("Are you sure you want to completely reset all analytics? All history will be lost.")) {
+            return;
+        }
         try {
             await resetAllStats();
             localStorage.setItem('totalItemsSorted', '0');
@@ -270,6 +289,49 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
                         </CardContent>
                     </Card>
                 </div>
+
+                {/* Daily Analytics */}
+                <Card className="border-white/5 bg-background/50">
+                    <CardHeader className="flex flex-row items-center justify-between pb-2">
+                        <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                            <Calendar className="h-4 w-4 text-primary" /> Daily Analytics
+                        </CardTitle>
+                        <Select value={selectedDate} onValueChange={setSelectedDate}>
+                            <SelectTrigger className="w-[140px] h-8 text-xs bg-black/20 border-white/10">
+                                <SelectValue placeholder="Select date" />
+                            </SelectTrigger>
+                            <SelectContent>
+                                {Object.keys(dailyData).length > 0 ? (
+                                    Object.keys(dailyData).sort().reverse().map(date => (
+                                        <SelectItem key={date} value={date}>{date === new Date().toISOString().split('T')[0] ? "Today" : date}</SelectItem>
+                                    ))
+                                ) : (
+                                    <SelectItem value={selectedDate}>Today</SelectItem>
+                                )}
+                            </SelectContent>
+                        </Select>
+                    </CardHeader>
+                    <CardContent>
+                        {dailyData[selectedDate] ? (
+                            <div className="grid grid-cols-3 gap-4 text-center">
+                                <div className="p-3 bg-black/20 rounded-lg border border-white/5">
+                                    <p className="text-xs text-muted-foreground uppercase font-bold mb-1">Total Sorted</p>
+                                    <p className="text-2xl font-bold">{dailyData[selectedDate].totalSorted}</p>
+                                </div>
+                                <div className="p-3 bg-emerald-500/10 rounded-lg border border-emerald-500/20 text-emerald-500">
+                                    <p className="text-xs uppercase font-bold mb-1">Correct</p>
+                                    <p className="text-2xl font-bold">{dailyData[selectedDate].correctCount}</p>
+                                </div>
+                                <div className="p-3 bg-rose-500/10 rounded-lg border border-rose-500/20 text-rose-500">
+                                    <p className="text-xs uppercase font-bold mb-1">Incorrect</p>
+                                    <p className="text-2xl font-bold">{dailyData[selectedDate].incorrectCount}</p>
+                                </div>
+                            </div>
+                        ) : (
+                            <p className="text-sm text-muted-foreground text-center py-6">No data recorded for this date.</p>
+                        )}
+                    </CardContent>
+                </Card>
 
                 {/* Category Breakdown */}
                 <Card className="border-white/5 bg-background/50">
@@ -462,6 +524,40 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
                         )}
                     </CardContent>
                 </Card>
+
+                {/* Recently Sorted Items */}
+                {liveDetection?.recentSorts && liveDetection.recentSorts.length > 0 && (
+                    <Card className="border-white/5 bg-background/50 shadow-xl overflow-hidden">
+                        <CardHeader className="bg-primary/5 border-b border-white/5 pb-3">
+                            <CardTitle className="text-sm font-bold uppercase tracking-wider flex items-center gap-2">
+                                <ListOrdered className="h-4 w-4 text-primary" /> Recently Sorted
+                            </CardTitle>
+                        </CardHeader>
+                        <CardContent className="p-0">
+                            <div className="divide-y divide-white/5">
+                                {liveDetection.recentSorts.map((sort, index) => {
+                                    const config = getMaterialConfig(sort);
+                                    const isBiodegradable = sort.toLowerCase() === "paper" || sort.toLowerCase() === "biodegradable";
+                                    const isNonBio = sort.toLowerCase() === "metal" || sort.toLowerCase() === "non-biodegradable";
+                                    const isEWaste = sort.toLowerCase() === "plastic" || sort.toLowerCase() === "e-waste";
+                                    return (
+                                        <div key={index} className="flex items-center gap-3 p-3 px-4 hover:bg-white/5 transition-colors">
+                                            <div className={cn("h-8 w-8 rounded-full flex items-center justify-center border bg-muted/50", config.color.replace('text-', 'border-').replace('text-white', 'border-white/20'))}>
+                                                <span className={cn("text-base", config.color)}>{config.icon}</span>
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <p className="text-sm font-bold truncate leading-none mb-1 capitalize">{sort}</p>
+                                                <p className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">
+                                                    {isBiodegradable ? "Biodegradable" : isNonBio ? "Non-Biodegradable" : isEWaste ? "E-Waste" : sort}
+                                                </p>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        </CardContent>
+                    </Card>
+                )}
 
                 {/* User Management */}
                 <Card className="border-white/5 bg-background/50 shadow-xl">

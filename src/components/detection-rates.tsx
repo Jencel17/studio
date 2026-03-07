@@ -6,16 +6,16 @@ import { Progress } from "@/components/ui/progress";
 import { Prediction } from "@/lib/types";
 
 interface DetectionRatesProps {
-    model: tmImage.CustomMobileNet | null;
+    getModel: () => tmImage.CustomMobileNet | null;
     currentPredictions: Prediction[];
 }
 
-export default function DetectionRates({ model, currentPredictions }: DetectionRatesProps) {
+export default function DetectionRates({ getModel, currentPredictions }: DetectionRatesProps) {
     const getProbability = (label: string) => {
         const prediction = currentPredictions.find(p => p.className === label);
         return prediction ? prediction.probability : 0;
     };
-    const modelLabels = model?.getClassLabels() ?? [];
+    const modelLabels = getModel()?.getClassLabels() ?? [];
 
     return (
         <div className="flex flex-col justify-center h-full w-full p-4 space-y-3">

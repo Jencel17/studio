@@ -4,7 +4,7 @@
   "description": "AI-powered smart trash sorting assistant",
   "start_url": "/client",
   "scope": "/",
-  "display": "standalone",
+  "display": "fullscreen",
   "orientation": "portrait",
   "background_color": "#09090b",
   "theme_color": "#10b981",

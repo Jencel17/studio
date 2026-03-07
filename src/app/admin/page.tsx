@@ -13,7 +13,7 @@ import AdminDashboard from "@/components/admin-dashboard";
 import { AppStatus, LogEntry, ROI, DEFAULT_ROI } from "@/lib/types";
 import { useToast } from "@/hooks/use-toast";
 import { usePersistentState } from "@/hooks/use-persistent-state";
-import { SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
 import { Loader2, ShieldAlert, Zap, BarChart3, LayoutDashboard, Settings } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 import { cn } from "@/lib/utils";
@@ -21,7 +21,14 @@ import { cn } from "@/lib/utils";
 type AdminTab = "control" | "dashboard";
 
 export default function AdminPage() {
-    const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
+    const [isModelLoaded, setIsModelLoaded] = useState(false);
+    const modelRef = useRef<tmImage.CustomMobileNet | null>(null);
+
+    const getModel = useCallback(() => modelRef.current, []);
+    const setModelWrapper = useCallback((m: tmImage.CustomMobileNet | null) => {
+        modelRef.current = m;
+        setIsModelLoaded(!!m);
+    }, []);
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
     const [activeTab, setActiveTab] = useState<AdminTab>("control");
 
@@ -32,6 +39,7 @@ export default function AdminPage() {
     const [autoCaptureEnabled, setAutoCaptureEnabled] = usePersistentState('autoCaptureEnabled', false);
     const [autoSortEnabled, setAutoSortEnabled] = usePersistentState('autoSortEnabled', false);
     const [autoFlashEnabled, setAutoFlashEnabled] = usePersistentState('autoFlashEnabled', false);
+    const [mirrorCameraEnabled, setMirrorCameraEnabled] = usePersistentState('mirrorCameraEnabled', false);
     const [confidenceThreshold, setConfidenceThreshold] = usePersistentState('confidenceThreshold', 0.8);
     const [roi, setRoi] = usePersistentState<ROI>('roi', DEFAULT_ROI);
 
@@ -93,8 +101,9 @@ export default function AdminPage() {
 
     const SettingsComponent = (
         <SortVisionSettings
-            model={model}
-            setModel={setModel}
+            getModel={getModel}
+            setModel={setModelWrapper}
+            hasModel={isModelLoaded}
             setAppStatus={setAppStatus}
             tmImageRef={tmImageRef}
             isTestMode={isTestMode}
@@ -107,6 +116,8 @@ export default function AdminPage() {
             setAutoSortEnabled={setAutoSortEnabled}
             autoFlashEnabled={autoFlashEnabled}
             setAutoFlashEnabled={setAutoFlashEnabled}
+            mirrorCameraEnabled={mirrorCameraEnabled}
+            setMirrorCameraEnabled={setMirrorCameraEnabled}
             addLog={addLog}
             confidenceThreshold={confidenceThreshold}
             setConfidenceThreshold={setConfidenceThreshold}
@@ -150,100 +161,102 @@ export default function AdminPage() {
     }
 
     return (
-        <div className="flex h-screen w-full bg-background text-foreground overflow-hidden">
-            {/* Responsive Sidebar (Handles both Mobile Sheet and Desktop Sidebar) */}
+        <>
+            {/* Sidebar renders as sibling of SidebarInset for proper desktop layout */}
             {SettingsComponent}
 
-            {/* Main Area */}
-            <div className="flex-1 flex flex-col min-w-0">
-                {/* Header with Tabs */}
-                <header className="h-16 border-b border-white/5 flex items-center justify-between px-4 md:px-6 bg-background/50 backdrop-blur-md z-10 sticky top-0">
-                    <div className="flex items-center gap-4">
-                        {/* Mobile Settings Trigger */}
-                        <div className="md:hidden">
+            {/* Main Area inside SidebarInset so it gets pushed by the sidebar spacer */}
+            <SidebarInset>
+                <div className="flex h-screen w-full flex-col bg-background text-foreground overflow-hidden">
+                    {/* Header with Tabs */}
+                    <header className="h-16 border-b border-white/5 flex items-center justify-between px-4 md:px-6 bg-background/50 backdrop-blur-md z-10 sticky top-0">
+                        <div className="flex items-center gap-4">
+                            {/* Settings Trigger — always visible */}
                             <SidebarTrigger />
+
+                            <h1 className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-400">
+                                Admin Panel
+                            </h1>
                         </div>
 
-                        <h1 className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-400">
-                            Admin Panel
-                        </h1>
-                    </div>
-
-                    <div className="flex bg-muted/30 p-0.5 sm:p-1 rounded-lg gap-1">
-                        <button
-                            onClick={() => setActiveTab("control")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
-                                activeTab === "control"
-                                    ? "bg-background text-foreground shadow-sm"
-                                    : "text-muted-foreground hover:text-foreground"
-                            )}
-                        >
-                            <Zap className="h-3 w-3 sm:h-4 sm:w-4" />
-                            <span className="hidden sm:inline">Control</span>
-                            <span className="sm:hidden">Control</span>
-                        </button>
-                        <button
-                            onClick={() => setActiveTab("dashboard")}
-                            className={cn(
-                                "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
-                                activeTab === "dashboard"
-                                    ? "bg-background text-foreground shadow-sm"
-                                    : "text-muted-foreground hover:text-foreground"
-                            )}
-                        >
-                            <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4" />
-                            <span className="hidden sm:inline">Analytics</span>
-                            <span className="sm:hidden">Analytics</span>
-                        </button>
-                    </div>
-
-                    <div className="hidden md:flex items-center gap-2">
-                        <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
-                        <span className="text-xs font-medium text-emerald-500 uppercase tracking-wider">System Live</span>
-                    </div>
-                </header>
-
-                {/* Content Area */}
-                <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
-                    {activeTab === "control" ? (
-                        <div className="max-w-6xl mx-auto h-full flex flex-col">
-                            <ErrorBoundary fallbackTitle="Classification Error">
-                                <SortVisionClient
-                                    model={model}
-                                    appStatus={appStatus}
-                                    setAppStatus={setAppStatus}
-                                    isTestMode={isTestMode}
-                                    wakeLockEnabled={wakeLockEnabled}
-                                    autoCaptureEnabled={autoCaptureEnabled}
-                                    autoSortEnabled={autoSortEnabled}
-                                    autoFlashEnabled={autoFlashEnabled}
-                                    confidenceThreshold={confidenceThreshold}
-                                    setConfidenceThreshold={setConfidenceThreshold}
-                                    tmImageRef={tmImageRef}
-                                    logs={logs}
-                                    setLogs={setLogs}
-                                    addLog={addLog}
-                                    roi={roi}
-                                />
-                            </ErrorBoundary>
+                        <div className="flex bg-muted/30 p-0.5 sm:p-1 rounded-lg gap-1">
+                            <button
+                                onClick={() => setActiveTab("control")}
+                                className={cn(
+                                    "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
+                                    activeTab === "control"
+                                        ? "bg-background text-foreground shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                <Zap className="h-3 w-3 sm:h-4 sm:w-4" />
+                                <span className="hidden sm:inline">Control</span>
+                                <span className="sm:hidden">Control</span>
+                            </button>
+                            <button
+                                onClick={() => setActiveTab("dashboard")}
+                                className={cn(
+                                    "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
+                                    activeTab === "dashboard"
+                                        ? "bg-background text-foreground shadow-sm"
+                                        : "text-muted-foreground hover:text-foreground"
+                                )}
+                            >
+                                <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4" />
+                                <span className="hidden sm:inline">Analytics</span>
+                                <span className="sm:hidden">Analytics</span>
+                            </button>
                         </div>
-                    ) : (
-                        <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <h2 className="text-2xl font-bold">System Analytics</h2>
-                                    <p className="text-muted-foreground">Monitor performance, training data, and users.</p>
-                                </div>
+
+                        <div className="hidden md:flex items-center gap-2">
+                            <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+                            <span className="text-xs font-medium text-emerald-500 uppercase tracking-wider">System Live</span>
+                        </div>
+                    </header>
+
+                    {/* Content Area */}
+                    <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+                        {activeTab === "control" ? (
+                            <div className="max-w-6xl mx-auto h-full flex flex-col">
+                                <ErrorBoundary fallbackTitle="Classification Error">
+                                    <SortVisionClient
+                                        getModel={getModel}
+                                        hasModel={isModelLoaded}
+                                        appStatus={appStatus}
+                                        setAppStatus={setAppStatus}
+                                        isTestMode={isTestMode}
+                                        wakeLockEnabled={wakeLockEnabled}
+                                        autoCaptureEnabled={autoCaptureEnabled}
+                                        autoSortEnabled={autoSortEnabled}
+                                        autoFlashEnabled={autoFlashEnabled}
+                                        mirrorCameraEnabled={mirrorCameraEnabled}
+                                        confidenceThreshold={confidenceThreshold}
+                                        setConfidenceThreshold={setConfidenceThreshold}
+                                        tmImageRef={tmImageRef}
+                                        logs={logs}
+                                        setLogs={setLogs}
+                                        addLog={addLog}
+                                        roi={roi}
+                                    />
+                                </ErrorBoundary>
                             </div>
+                        ) : (
+                            <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                                <div className="flex items-center justify-between">
+                                    <div>
+                                        <h2 className="text-2xl font-bold">System Analytics</h2>
+                                        <p className="text-muted-foreground">Monitor performance, training data, and users.</p>
+                                    </div>
+                                </div>
 
-                            <ErrorBoundary fallbackTitle="Dashboard Error">
-                                <AdminDashboard addLog={addLog} />
-                            </ErrorBoundary>
-                        </div>
-                    )}
-                </main>
-            </div>
-        </div>
+                                <ErrorBoundary fallbackTitle="Dashboard Error">
+                                    <AdminDashboard addLog={addLog} />
+                                </ErrorBoundary>
+                            </div>
+                        )}
+                    </main>
+                </div>
+            </SidebarInset>
+        </>
     );
 }

@@ -121,6 +121,7 @@ export interface LiveDetectionState {
     appStatus: string;
     timestamp: number;
     deviceId: string;
+    recentSorts?: string[];
 }
 
 const LIVE_DETECTION_DOC = doc(db, "app", "liveDetection");

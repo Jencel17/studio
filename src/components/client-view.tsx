@@ -2,28 +2,32 @@
 
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
 import type * as tmImage from "@teachablemachine/image";
-import JSZip from "jszip";
+
 import { Download, Camera, Check, X, Undo2, Loader2, AlertTriangle, ThumbsUp, ThumbsDown, ArrowDown, Cpu, Leaf, Trash2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
 import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
+import { prepareModelInput } from "@/lib/roi";
 import { Card } from "@/components/ui/card";
 import { sendCommand, isConnected, getLatestStatus, type ESP32Status } from "@/lib/bluetooth";
 import { getMaterialConfig, getCategoryLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
 import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
-import { classifyWithGemini, isGeminiFallbackAvailable } from "@/lib/gemini-fallback";
+import { classifyWithLocalAI, type LocalAIResult } from "@/lib/local-ai-fallback";
 
 interface ClientViewProps {
-    model: tmImage.CustomMobileNet | null;
+    getModel: () => tmImage.CustomMobileNet | null;
     appStatus: AppStatus;
     setAppStatus: (status: AppStatus) => void;
     tmImageRef: MutableRefObject<typeof tmImage | null>;
     addLog: (message: string) => void;
     confidenceThreshold?: number;
     autoSortEnabled?: boolean;
+    mirrorCameraEnabled?: boolean;
+    wakeLockEnabled?: boolean;
+    autoFlashEnabled?: boolean;
     roi: ROI;
 }
 
@@ -34,13 +38,16 @@ const CAMERA_WARMUP_DELAY = 1500;
 type ViewState = "IDLE" | "DETECTED" | "CORRECTION" | "THANK_YOU";
 
 export default function ClientView({
-    model,
+    getModel,
     appStatus,
     setAppStatus,
     tmImageRef,
     addLog,
     confidenceThreshold = 0.8, // Default high for client
     autoSortEnabled = false,
+    mirrorCameraEnabled = false,
+    wakeLockEnabled = false,
+    autoFlashEnabled = false,
     roi,
 }: ClientViewProps) {
     // --- 1. State & Refs ---
@@ -59,8 +66,12 @@ export default function ClientView({
     const [nonBioTrash, setNonBioTrash] = useState<number>(0);
     const [eWasteTrash, setEWasteTrash] = useState<number>(0);
     const [capturedImages, setCapturedImages] = useState<string[]>([]);
+    const [isFlashOn, setIsFlashOn] = useState(false);
+    const [isFocusLocked, setIsFocusLocked] = useState(false);
     const [preCapturedImages, setPreCapturedImages] = useState<string[]>([]);
     const [isAiFallbackActive, setIsAiFallbackActive] = useState(false);
+    const [wakeLock, setWakeLock] = useState<any>(null);
+    const [recentSorts, setRecentSorts] = useState<string[]>([]);
 
     const videoRef = useRef<HTMLVideoElement>(null);
     const streamRef = useRef<MediaStream | null>(null);
@@ -70,7 +81,7 @@ export default function ClientView({
     const viewStateRef = useRef(viewState);
     const lastLivePushRef = useRef<number>(0);
     const lastProcessedSortTimestamp = useRef<number>(0);
-    const confidenceLowTimerRef = useRef<NodeJS.Timeout | null>(null);
+    const aiFallbackTimer = useRef<NodeJS.Timeout | null>(null);
 
     const { toast } = useToast();
 
@@ -113,11 +124,44 @@ export default function ClientView({
         return null;
     }, []);
 
+    const applyCameraSettings = useCallback(async (stream: MediaStream, { flash, focus }: { flash: boolean; focus: boolean; }) => {
+        if (!stream) return;
+        const videoTrack = stream.getVideoTracks()[0];
+        if (!videoTrack) return;
+        const capabilities = videoTrack.getCapabilities();
+        // @ts-ignore
+        if (capabilities.torch) {
+            try {
+                // @ts-ignore
+                await videoTrack.applyConstraints({ advanced: [{ torch: flash }] });
+                setIsFlashOn(flash);
+            } catch (error: any) {
+                console.error("Flash error:", error);
+            }
+        }
+    }, []);
+
+    const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
+        if (!isBtConnected) return false;
+        try {
+            await sendCommand(`LIGHT:${state}`);
+            if (autoFlashEnabled && streamRef.current) {
+                if (state === 'ON' && !isFlashOn) applyCameraSettings(streamRef.current, { flash: true, focus: isFocusLocked });
+                else if (state === 'OFF' && isFlashOn) applyCameraSettings(streamRef.current, { flash: false, focus: isFocusLocked });
+            }
+            return true;
+        } catch (error: any) {
+            console.error("Light command error:", error);
+            return false;
+        }
+    }, [isBtConnected, autoFlashEnabled, isFlashOn, isFocusLocked, applyCameraSettings]);
+
     const handleCorrect = useCallback(async () => {
         setPreCapturedImages([]);
         try {
             await incrementCategoryCount(detectedLabel, true);
             await incrementDailyStat(true);
+            setRecentSorts(prev => [detectedLabel, ...prev].slice(0, 5));
         } catch (e) {
             console.error("Failed to save stats:", e);
         }
@@ -142,23 +186,8 @@ export default function ClientView({
         if (capturedImages.length > 0) {
             try {
                 await saveMultipleTrainingImages(detectedLabel, correctLabel, capturedImages);
-                addLog(`Saved ${capturedImages.length} training images locally for "${correctLabel}".`);
-                const zip = new JSZip();
-                const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-                capturedImages.forEach((imgData, index) => {
-                    const base64Data = imgData.split(',')[1];
-                    zip.file(`${correctLabel}_${timestamp}_${index + 1}.jpg`, base64Data, { base64: true });
-                });
-                const content = await zip.generateAsync({ type: "blob" });
-                const url = URL.createObjectURL(content);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `training-${correctLabel}-${timestamp}.zip`;
-                document.body.appendChild(a);
-                a.click();
-                window.URL.revokeObjectURL(url);
-                document.body.removeChild(a);
-                addLog(`User corrected ${detectedLabel} to ${correctLabel} (${capturedImages.length} samples saved).`);
+                addLog(`Saved ${capturedImages.length} training images to local DB for "${correctLabel}".`);
+                addLog(`User corrected ${detectedLabel} to ${correctLabel}.`);
                 if (isConnected()) {
                     await sendCommand(correctLabel.toUpperCase());
                     addLog(`Sent corrected sort command for: ${correctLabel}`);
@@ -171,6 +200,7 @@ export default function ClientView({
         try {
             await incrementCategoryCount(correctLabel, false);
             await incrementDailyStat(false);
+            setRecentSorts(prev => [correctLabel, ...prev].slice(0, 5));
         } catch (e) {
             console.error("Failed to save stats:", e);
         }
@@ -188,6 +218,7 @@ export default function ClientView({
     }, [capturedImages, detectedLabel, addLog, setAppStatus, toast]);
 
     const runClassification = useCallback(async () => {
+        const model = getModel();
         if (isPredictingRef.current || !videoRef.current || !model) return;
         if (appStatus !== 'AWAITING_OBJECT' && appStatus !== 'CONFIDENCE_TOO_LOW') return;
         if (viewState !== "IDLE" && viewState !== "DETECTED") return;
@@ -195,24 +226,14 @@ export default function ClientView({
         if (video.readyState < video.HAVE_ENOUGH_DATA) return;
         isPredictingRef.current = true;
         try {
-            // Prepare cropped canvas if ROI is enabled
-            let input: HTMLVideoElement | HTMLCanvasElement = video;
-            if (roi.enabled) {
-                const canvas = document.createElement('canvas');
-                canvas.width = 224; // Teachable Machine standard size
-                canvas.height = 224;
-                const ctx = canvas.getContext('2d');
-                if (ctx) {
-                    const sourceX = (roi.x / 100) * video.videoWidth;
-                    const sourceY = (roi.y / 100) * video.videoHeight;
-                    const sourceWidth = (roi.width / 100) * video.videoWidth;
-                    const sourceHeight = (roi.height / 100) * video.videoHeight;
-                    ctx.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, 224, 224);
-                    input = canvas;
-                }
-            }
+            // Prepare 224×224 center-cropped input matching Teachable Machine preprocessing
+            const input = prepareModelInput(video, roi);
+            if (!input) { isPredictingRef.current = false; return; }
 
-            const predictions = await model.predict(input);
+            const predictions = await model.predict(input, mirrorCameraEnabled);
+            // Check if background is the dominant prediction — if so, skip AI fallback
+            const bgPrediction = predictions.find(p => p.className.toLowerCase() === "background");
+            const isBackgroundDominant = bgPrediction && bgPrediction.probability > 0.6;
             const filteredPredictions = predictions.filter(p => p.className.toLowerCase() !== "background");
             const result = interpretDetectionsLocal(filteredPredictions, confidenceThreshold);
             if (result.detectionState === 'SINGLE_OBJECT' && result.primaryObject) {
@@ -252,6 +273,12 @@ export default function ClientView({
                                 setDetectionId(prev => prev + 1);
                                 setAppStatus("DETECTED");
                                 setViewState("DETECTED");
+
+                                if (autoFlashEnabled) {
+                                    sendLightCommand('ON');
+                                    setTimeout(() => sendLightCommand('OFF'), 1500);
+                                }
+
                                 if (autoSortEnabled) {
                                     if (sorterStatus === "BUSY") {
                                         addLog(`Detected ${pred.className}, but sorter is BUSY. Skipping.`);
@@ -293,9 +320,9 @@ export default function ClientView({
                 setStablePrediction(null);
 
                 // Set CONFIDENCE_TOO_LOW if something is partially detected but below threshold
-                // Otherwise reset to AWAITING_OBJECT so we keep scanning
+                // If background is dominant, stay in AWAITING_OBJECT — nothing real to classify
                 const hasPartialDetection = filteredPredictions.some(p => p.probability > 0.2);
-                const nextStatus = hasPartialDetection ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
+                const nextStatus = (hasPartialDetection && !isBackgroundDominant) ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
                 if (appStatus !== nextStatus) setAppStatus(nextStatus);
             }
         } catch (err: any) {
@@ -305,7 +332,58 @@ export default function ClientView({
         } finally {
             isPredictingRef.current = false;
         }
-    }, [model, viewState, appStatus, confidenceThreshold, stablePrediction, detectedLabel, addLog, autoSortEnabled, setAppStatus, getArduinoCommand]);
+    }, [getModel, viewState, appStatus, confidenceThreshold, stablePrediction, detectedLabel, addLog, autoSortEnabled, setAppStatus, getArduinoCommand, autoFlashEnabled, sendLightCommand, mirrorCameraEnabled]);
+
+    // Auto-trigger local AI when stuck at CONFIDENCE_TOO_LOW for too long
+    const AUTO_AI_FALLBACK_DELAY = 4000; // 4 seconds
+    useEffect(() => {
+        if (appStatus === 'CONFIDENCE_TOO_LOW' && !isAiFallbackActive && isCameraOn && videoRef.current && viewState === "IDLE") {
+            if (!aiFallbackTimer.current) {
+                aiFallbackTimer.current = setTimeout(() => {
+                    aiFallbackTimer.current = null;
+                    if (!videoRef.current || isAiFallbackActive || viewStateRef.current !== "IDLE") return;
+                    addLog("TF model uncertain for too long. Auto-triggering Local AI fallback...");
+                    setIsAiFallbackActive(true);
+                    setAppStatus("AI_FALLBACK");
+                    classifyWithLocalAI(videoRef.current!).then((result: LocalAIResult) => {
+                        setIsAiFallbackActive(false);
+                        if (result.category && viewStateRef.current === "IDLE") {
+                            addLog(`Local AI auto-classified: ${result.category}.`);
+                            setDetectedLabel(result.category);
+                            setDetectionId(prev => prev + 1);
+                            setAppStatus("DETECTED");
+                            setViewState("DETECTED");
+                            if (autoSortEnabled && isConnected()) {
+                                if (sorterStatus === "BUSY") {
+                                    addLog(`Local AI detected ${result.category}, but sorter is BUSY.`);
+                                    return;
+                                }
+                                const command = getArduinoCommand(result.category);
+                                setAppStatus("SORTING");
+                                sendCommand(command)
+                                    .then(() => addLog(`Auto-sorted via Local AI: ${result.category} (Sent: ${command}).`))
+                                    .catch((err: any) => addLog(`Local AI sort error: ${err.message}`));
+                            }
+                        } else {
+                            addLog(`Local AI could not identify the item.${result.error ? ` (${result.error})` : ""}`);
+                            setAppStatus("AWAITING_OBJECT");
+                        }
+                    });
+                }, AUTO_AI_FALLBACK_DELAY);
+            }
+        } else {
+            if (aiFallbackTimer.current) {
+                clearTimeout(aiFallbackTimer.current);
+                aiFallbackTimer.current = null;
+            }
+        }
+        return () => {
+            if (aiFallbackTimer.current) {
+                clearTimeout(aiFallbackTimer.current);
+                aiFallbackTimer.current = null;
+            }
+        };
+    }, [appStatus, isAiFallbackActive, isCameraOn, viewState, addLog, setAppStatus, autoSortEnabled, getArduinoCommand, sorterStatus]);
     const stopCamera = useCallback(() => {
         if (streamRef.current) {
             streamRef.current.getTracks().forEach((track) => track.stop());
@@ -366,6 +444,31 @@ export default function ClientView({
         }
     }, [stopCamera, setAppStatus, toast]);
 
+    const requestWakeLock = useCallback(async () => {
+        if ('wakeLock' in navigator && wakeLockEnabled && !wakeLock) {
+            try {
+                const lock = await navigator.wakeLock.request('screen');
+                setWakeLock(lock);
+                lock.addEventListener('release', () => {
+                    setWakeLock(null);
+                });
+            } catch (err: any) {
+                console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
+            }
+        }
+    }, [wakeLockEnabled, wakeLock]);
+
+    const releaseWakeLock = useCallback(async () => {
+        if (wakeLock) {
+            try {
+                await wakeLock.release();
+                setWakeLock(null);
+            } catch (error: any) {
+                console.error("Could not release wake lock:", error);
+            }
+        }
+    }, [wakeLock]);
+
     // --- 3. Effects ---
 
     useEffect(() => {
@@ -422,9 +525,12 @@ export default function ClientView({
     }, []);
 
     useEffect(() => {
-        if (model) startCamera();
-        return () => stopCamera();
-    }, [model, startCamera, stopCamera]);
+        if (getModel()) startCamera();
+        return () => {
+            stopCamera();
+            releaseWakeLock();
+        }
+    }, [getModel, startCamera, stopCamera, releaseWakeLock]);
 
     useEffect(() => {
         if (!stablePrediction && viewState === "IDLE") {
@@ -437,6 +543,7 @@ export default function ClientView({
                     appStatus,
                     timestamp: now,
                     deviceId: 'client',
+                    recentSorts,
                 }).catch(console.error);
             }
         } else if (stablePrediction) {
@@ -449,6 +556,7 @@ export default function ClientView({
                     appStatus,
                     timestamp: now,
                     deviceId: 'client',
+                    recentSorts,
                 }).catch(console.error);
             }
         }
@@ -463,6 +571,19 @@ export default function ClientView({
         }
     }, [isCameraOn, appStatus, runClassification]);
 
+    // Handle visibility changes for wake lock
+    useEffect(() => {
+        const handleVisibilityChange = () => {
+            if (document.visibilityState === 'visible' && isCameraOn) {
+                requestWakeLock();
+            }
+        };
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => {
+            document.removeEventListener('visibilitychange', handleVisibilityChange);
+        };
+    }, [requestWakeLock, isCameraOn]);
+
     useEffect(() => {
         let timeout: NodeJS.Timeout;
         if (viewState === "DETECTED") {
@@ -474,58 +595,36 @@ export default function ClientView({
         return () => clearTimeout(timeout);
     }, [viewState, detectedLabel, handleCorrect, addLog]);
 
-    // --- Gemini AI fallback handler ---
+    // --- Local AI fallback handler ---
     const handleAskAI = useCallback(() => {
         if (!videoRef.current || isAiFallbackActive) return;
-        if (!navigator.onLine) {
-            toast({ title: "No Internet", description: "AI fallback requires an internet connection.", variant: "destructive" });
-            return;
-        }
         addLog("Manual AI fallback triggered by user.");
         setIsAiFallbackActive(true);
         setAppStatus("AI_FALLBACK");
-        classifyWithGemini(videoRef.current).then((geminiResult) => {
+        classifyWithLocalAI(videoRef.current).then((result: LocalAIResult) => {
             setIsAiFallbackActive(false);
-            if (geminiResult && viewStateRef.current === "IDLE") {
-                addLog(`Gemini AI classified: ${geminiResult}.`);
-                setDetectedLabel(geminiResult);
+            if (result.category && viewStateRef.current === "IDLE") {
+                addLog(`Local AI classified: ${result.category}.`);
+                setDetectedLabel(result.category);
                 setDetectionId(prev => prev + 1);
                 setAppStatus("DETECTED");
                 setViewState("DETECTED");
                 if (autoSortEnabled && isConnected()) {
-                    const command = getArduinoCommand(geminiResult);
+                    const command = getArduinoCommand(result.category);
                     setAppStatus("SORTING");
                     sendCommand(command)
-                        .then(() => addLog(`Auto-sorted via Gemini AI: ${geminiResult} (Sent: ${command}).`))
-                        .catch((err: any) => addLog(`Gemini sort error: ${err.message}`));
+                        .then(() => addLog(`Auto-sorted via Local AI: ${result.category} (Sent: ${command}).`))
+                        .catch((err: any) => addLog(`Local AI sort error: ${err.message}`));
                 }
             } else {
-                addLog("Gemini AI could not identify the item.");
+                if (result.error) {
+                    toast({ title: "AI Error", description: result.message || "Could not classify. Try again.", variant: "destructive" });
+                }
+                addLog(`Local AI could not identify the item.${result.error ? ` (${result.error})` : ""}`);
                 setAppStatus("AWAITING_OBJECT");
             }
         });
     }, [videoRef, isAiFallbackActive, addLog, setAppStatus, autoSortEnabled, getArduinoCommand, toast]);
-
-    // Auto-trigger Gemini after 3s of sustained CONFIDENCE_TOO_LOW
-    useEffect(() => {
-        if (appStatus === "CONFIDENCE_TOO_LOW" && !isAiFallbackActive && isCameraOn) {
-            confidenceLowTimerRef.current = setTimeout(() => {
-                addLog("TF confidence too low for 3s. Auto-activating Gemini AI fallback...");
-                handleAskAI();
-            }, 3000);
-        } else {
-            if (confidenceLowTimerRef.current) {
-                clearTimeout(confidenceLowTimerRef.current);
-                confidenceLowTimerRef.current = null;
-            }
-        }
-        return () => {
-            if (confidenceLowTimerRef.current) {
-                clearTimeout(confidenceLowTimerRef.current);
-                confidenceLowTimerRef.current = null;
-            }
-        };
-    }, [appStatus, isAiFallbackActive, isCameraOn, addLog, handleAskAI]);
 
     // Alcohol Level Notifications
     useEffect(() => {
@@ -609,7 +708,7 @@ export default function ClientView({
         }
     };
 
-    if (!model) {
+    if (!getModel()) {
         return (
             <div className="flex h-screen w-full flex-col items-center justify-center bg-zinc-950 p-6 text-center text-white">
                 <AlertTriangle className="h-10 w-10 text-amber-500 mb-4" />
@@ -625,7 +724,7 @@ export default function ClientView({
             <div className="absolute inset-0 z-0 opacity-0 pointer-events-none">
                 <video
                     ref={videoRef}
-                    className="h-full w-full object-cover"
+                    className={cn("h-full w-full object-cover", mirrorCameraEnabled && "scale-x-[-1]")}
                     playsInline
                     muted
                     autoPlay
@@ -712,7 +811,7 @@ export default function ClientView({
                             <button
                                 onClick={handleAskAI}
                                 disabled={isAiFallbackActive}
-                                title="Ask Gemini AI to classify"
+                                title="Ask AI to classify (runs locally)"
                                 className={cn(
                                     "border-l border-white/10 pl-4 flex flex-col items-center gap-0.5 transition-all duration-300 group",
                                     isAiFallbackActive ? "opacity-60 cursor-not-allowed" : "cursor-pointer hover:opacity-100 opacity-70"
@@ -731,6 +830,38 @@ export default function ClientView({
                 </div>
             </div>
 
+            {/* Recently Sorted Display */}
+            <div className="absolute bottom-6 left-6 z-40 hidden md:block select-none pointer-events-none">
+                <Card className="bg-black/50 border-white/10 backdrop-blur-md p-3 w-[180px] shadow-xl">
+                    <h4 className="text-white/60 text-[10px] font-bold uppercase tracking-wider mb-2">Recently Sorted</h4>
+                    {recentSorts.length === 0 ? (
+                        <p className="text-white/40 text-xs italic">No items yet</p>
+                    ) : (
+                        <div className="flex flex-col gap-1.5">
+                            {recentSorts.map((sort, i) => {
+                                const categoryLabel = getCategoryLabel(sort);
+                                const isBiodegradable = categoryLabel === "Biodegradable";
+                                const isNonBio = categoryLabel === "Non-Biodegradable";
+                                const isEWaste = categoryLabel === "E-Waste";
+                                return (
+                                    <div key={i} className="flex items-center gap-2">
+                                        <div className={cn(
+                                            "w-2 h-2 rounded-full flex-shrink-0 animate-in fade-in zoom-in",
+                                            isBiodegradable && "bg-emerald-500",
+                                            isNonBio && "bg-rose-500",
+                                            isEWaste && "bg-amber-500",
+                                            !isBiodegradable && !isNonBio && !isEWaste && "bg-blue-500",
+                                        )} />
+                                        <span className="text-white text-xs font-medium truncate opacity-90">{sort.toUpperCase()}</span>
+                                    </div>
+                                );
+                            })}
+                        </div>
+                    )}
+                </Card>
+            </div>
+
+            {/* --- STATE-BASED UI OVERLAYS --- */}
             {/* Original BT Status (Removed since we have the banner, or kept as redundant - User asked for banner like admin) */}
             {/* Let's keep it but move it lower or hide it if connected */}
             <div className="absolute top-4 right-4 z-50 pointer-events-none opacity-0 sm:opacity-100">
@@ -792,7 +923,7 @@ export default function ClientView({
                             </Button>
                             {!isAiFallbackActive && (
                                 <p className="text-violet-300/60 text-[10px] uppercase tracking-widest">
-                                    TF model uncertain · Tap to use Gemini AI
+                                    TF model uncertain · Tap to use AI
                                 </p>
                             )}
                         </div>
@@ -885,7 +1016,7 @@ export default function ClientView({
                         <p className="text-zinc-400 text-center mb-8 landscape:mb-3 landscape:text-sm">What object is this actually?</p>
 
                         <div className="grid grid-cols-2 md:grid-cols-3 landscape:grid-cols-3 gap-4 landscape:gap-2">
-                            {model.getClassLabels().filter(l => l.toLowerCase() !== 'background').map(label => (
+                            {getModel()?.getClassLabels().filter((l: string) => l.toLowerCase() !== 'background').map((label: string) => (
                                 <Button
                                     key={label}
                                     onClick={() => handleCorrectionSelect(label)}

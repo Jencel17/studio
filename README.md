@@ -13,6 +13,8 @@ SortVision AI is an integrated hardware and software platform designed to addres
 
 #### **1. Professional-Grade Admin Dashboard & Statistics**
 The platform now features a comprehensive data management suite for monitoring system performance:
+*   **Daily Analytics:** View historical data and trends for past dates directly in the dashboard, powered by persistent local storage synced to Firestore.
+*   **Live Sort Monitoring:** See real-time detection and newly sorted items (Recently Sorted) synced from the client device.
 *   **Per-Category Tracking:** Detailed statistics for every material type (Paper, Plastic, Metal, Glass, etc.), tracking total items sorted and individual classification accuracy.
 *   **Performance Metrics:** Real-time calculation of "Accuracy Rate" (Correct vs. Incorrect) to evaluate model performance in the field.
 *   **Visual Analytics:** Integrated bar charts and progress meters for intuitive monitoring of waste distribution.
@@ -33,8 +35,9 @@ The user interface is engineered for both clarity and visual impact:
 #### **4. On-Device AI Processing Core**
 The cornerstone of the SortVision platform is its edge-based processing architecture:
 *   **Real-Time Classification:** Executes a custom-trained TensorFlow.js model (Teachable Machine) directly on the device, achieving sub-100ms inference times.
+*   **Offline AI Fallback:** Integrates a pre-trained MobileNet neural network directly into the browser to act as a fallback when the primary model is uncertain. This completely eliminates reliance on external APIs (like Gemini), ensuring zero latency, no rate limits, and 100% offline capability.
 *   **Data Privacy and Security:** All image processing occurs locally. No visual data is transmitted externally, ensuring compliance with privacy requirements.
-*   **Full Offline Functionality:** Architected for complete operational independence. After initial setup, all core functionalities operate without an active internet connection.
+*   **Full Offline Functionality:** Architected for complete operational independence. After initial setup and caching, all core functionalities, including primary and fallback AI, operate without an active internet connection.
 
 #### **5. Advanced System Integration**
 *   **Wireless Hardware Control:** Utilizes the Web Bluetooth API for robust communication with ESP32-based sorting machinery.

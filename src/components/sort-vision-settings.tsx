@@ -28,7 +28,8 @@ import { useAuth } from "@/contexts/auth-context";
 
 
 interface SortVisionSettingsProps {
-  model: tmImage.CustomMobileNet | null;
+  getModel: () => tmImage.CustomMobileNet | null;
+  hasModel: boolean;
   setModel: (model: tmImage.CustomMobileNet | null) => void;
   setAppStatus: (status: AppStatus) => void;
   tmImageRef: MutableRefObject<typeof tmImage | null>;
@@ -42,6 +43,8 @@ interface SortVisionSettingsProps {
   setAutoSortEnabled: (isEnabled: boolean) => void;
   autoFlashEnabled: boolean;
   setAutoFlashEnabled: (isEnabled: boolean) => void;
+  mirrorCameraEnabled: boolean;
+  setMirrorCameraEnabled: (isEnabled: boolean) => void;
   confidenceThreshold: number;
   setConfidenceThreshold: (value: number) => void;
   addLog: (message: string) => void;
@@ -50,7 +53,8 @@ interface SortVisionSettingsProps {
 }
 
 export default function SortVisionSettings({
-  model,
+  getModel,
+  hasModel,
   setModel,
   setAppStatus,
   tmImageRef,
@@ -64,6 +68,8 @@ export default function SortVisionSettings({
   setAutoSortEnabled,
   autoFlashEnabled,
   setAutoFlashEnabled,
+  mirrorCameraEnabled,
+  setMirrorCameraEnabled,
   confidenceThreshold,
   setConfidenceThreshold,
   addLog,
@@ -421,6 +427,9 @@ export default function SortVisionSettings({
   };
 
   const handleDeleteFromLibrary = async (name: string) => {
+    if (!window.confirm(`Are you sure you want to delete the model "${name}"?`)) {
+      return;
+    }
     try {
       addLog(`Deleting model "${name}" from library.`);
       await deleteModelFromDb(name);
@@ -493,411 +502,420 @@ export default function SortVisionSettings({
 
 
   return (
-    <Sidebar className="glass border-r border-white/10">
-      <SidebarHeader>
+    <Sidebar className="glass border-r border-white/10 flex flex-col h-full">
+      <SidebarHeader className="flex-none">
         <div className="flex items-center justify-between p-4">
           <h2 className="text-xl font-bold text-gradient">Settings</h2>
           <SidebarClose className="text-muted-foreground hover:text-white" />
         </div>
       </SidebarHeader>
-      <SidebarContent className="p-0">
-        <TooltipProvider>
-          <ScrollArea className="h-full">
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Sorter Connection</SidebarGroupLabel>
-              <div className="px-3 sm:p-4 landscape:px-2 landscape:space-y-2 space-y-3 sm:space-y-4">
-                {isBtConnected ? (
-                  <Button onClick={handleBluetoothDisconnect} className="w-full shadow-lg hover:shadow-red-500/20 landscape:py-1 landscape:text-xs" variant="destructive">
-                    <BluetoothConnected className="mr-2 h-4 w-4" />
-                    Disconnect Sorter
-                  </Button>
-                ) : (
-                  <Button onClick={handleBluetoothConnect} className="w-full shadow-lg hover:shadow-primary/20 landscape:py-1 landscape:text-xs" disabled={isConnecting}>
-                    {isConnecting ? (
-                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    ) : (
-                      <Bluetooth className="mr-2 h-4 w-4" />
-                    )}
-                    Connect to Sorter
-                  </Button>
-                )}
-              </div>
-            </SidebarGroup>
-
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Teachable Machine Model</SidebarGroupLabel>
-              <div
-                onDrop={handleFileDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                className={cn(
-                  "mx-3 sm:m-4 sm:mt-0 landscape:m-2 landscape:mt-0 p-4 sm:p-6 landscape:p-3 border-2 border-dashed rounded-xl text-center transition-all duration-300",
-                  isDragging ? "border-primary bg-primary/10 scale-105" : "border-white/10 hover:border-primary/50 hover:bg-white/5",
-                  (isModelLoading || !tmImageRef.current) && "pointer-events-none opacity-50"
-                )}
-              >
-                <FileUp className="mx-auto h-10 w-10 text-muted-foreground" />
-                <p className="mt-2 text-sm text-muted-foreground">
-                  {isModelLoading
-                    ? "Loading model..."
-                    : !tmImageRef.current
-                      ? "Loading AI libs..."
-                      : isDragging
-                        ? "Release to upload"
-                        : "Drag & drop a .zip or model files"}
-                </p>
-                <p className="text-xs text-muted-foreground/80">or</p>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
-                      variant="link"
-                      className="p-0 h-auto text-sm"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isModelLoading || !tmImageRef.current}
-                    >
-                      click to browse
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Select model.zip, or model.json, metadata.json and weights.bin</p>
-                  </TooltipContent>
-                </Tooltip>
-                <input
-                  type="file"
-                  ref={fileInputRef}
-                  className="hidden"
-                  accept=".zip,application/json,.bin"
-                  multiple
-                  onChange={handleFileSelect}
-                  disabled={isModelLoading || !tmImageRef.current}
-                />
-              </div>
-              {modelFiles && (
-                <div className="mx-3 sm:m-4 sm:mb-4 landscape:m-2 landscape:mb-2 p-3 sm:p-4 landscape:p-2 border border-white/10 rounded-xl bg-black/20 space-y-3">
-                  <Label htmlFor="model-name" className="text-xs font-medium text-muted-foreground">Save to Library</Label>
-                  <div className="flex gap-2">
-                    <Input
-                      id="model-name"
-                      value={newModelName}
-                      onChange={(e) => setNewModelName(e.target.value)}
-                      placeholder="Enter model name..."
-                      className="bg-black/20 border-white/10 focus:border-primary/50"
-                    />
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button onClick={handleSaveModel} size="icon">
-                          <Save />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Save current model to library</p>
-                      </TooltipContent>
-                    </Tooltip>
-                  </div>
-                </div>
+      <SidebarContent className="flex-1 p-0 overflow-hidden">
+        <ScrollArea className="h-full">
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Sorter Connection</SidebarGroupLabel>
+            <div className="px-3 sm:p-4 landscape:px-2 landscape:space-y-2 space-y-3 sm:space-y-4">
+              {isBtConnected ? (
+                <Button onClick={handleBluetoothDisconnect} className="w-full shadow-lg hover:shadow-red-500/20 landscape:py-1 landscape:text-xs" variant="destructive">
+                  <BluetoothConnected className="mr-2 h-4 w-4" />
+                  Disconnect Sorter
+                </Button>
+              ) : (
+                <Button onClick={handleBluetoothConnect} className="w-full shadow-lg hover:shadow-primary/20 landscape:py-1 landscape:text-xs" disabled={isConnecting}>
+                  {isConnecting ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Bluetooth className="mr-2 h-4 w-4" />
+                  )}
+                  Connect to Sorter
+                </Button>
               )}
-            </SidebarGroup>
-            <SidebarGroup>
-              <SidebarGroupLabel className="flex items-center justify-between text-primary font-bold uppercase tracking-wider text-xs">
-                Model Library
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refreshModelsFromDb}>
-                      <RefreshCw className="h-4 w-4" />
-                    </Button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Refresh library</p>
-                  </TooltipContent>
-                </Tooltip>
-              </SidebarGroupLabel>
-              <div className="px-3 sm:p-4 landscape:px-2 sm:pt-0 landscape:pt-0">
-                {savedModels.length > 0 ? (
-                  <div className="space-y-2 landscape:space-y-1">
-                    {savedModels.map(m => {
-                      const isSynced = cloudModels.some(cm => cm.name === m.name);
-                      return (
-                        <div key={m.name} className="flex items-center justify-between p-3 bg-black/20 border border-white/5 rounded-lg hover:bg-white/5 transition-colors">
-                          <div className="min-w-0">
-                            <p className="text-sm font-medium truncate" title={m.name}>{m.name}</p>
-                            <div className="flex items-center gap-1.5">
-                              <span className={cn("h-1.5 w-1.5 rounded-full", isSynced ? "bg-emerald-500" : "bg-amber-500")} />
-                              <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">
-                                {isSynced ? "Cloud Synced" : "Local Only"}
-                              </span>
-                            </div>
-                          </div>
-                          <div className="flex gap-1">
-                            {!isSynced && (
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <Button size="icon" variant="ghost" className="h-8 w-8 text-amber-500" onClick={() => handleSyncToCloud(m.name)} disabled={isUploadingToCloud}>
-                                    {isUploadingToCloud ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                                  </Button>
-                                </TooltipTrigger>
-                                <TooltipContent>
-                                  <p>Sync to cloud</p>
-                                </TooltipContent>
-                              </Tooltip>
-                            )}
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !tmImageRef.current}>
-                                  {isModelLoading ? <Loader2 className="animate-spin" /> : <BrainCircuit />}
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>Load model</p>
-                              </TooltipContent>
-                            </Tooltip>
-                            <Tooltip>
-                              <TooltipTrigger asChild>
-                                <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
-                                  <Trash2 />
-                                </Button>
-                              </TooltipTrigger>
-                              <TooltipContent>
-                                <p>Delete model</p>
-                              </TooltipContent>
-                            </Tooltip>
+            </div>
+          </SidebarGroup>
+
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Teachable Machine Model</SidebarGroupLabel>
+            <div
+              onDrop={handleFileDrop}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              className={cn(
+                "mx-3 sm:m-4 sm:mt-0 landscape:m-2 landscape:mt-0 p-4 sm:p-6 landscape:p-3 border-2 border-dashed rounded-xl text-center transition-all duration-300",
+                isDragging ? "border-primary bg-primary/10 scale-105" : "border-white/10 hover:border-primary/50 hover:bg-white/5",
+                (isModelLoading || !tmImageRef.current) && "pointer-events-none opacity-50"
+              )}
+            >
+              <FileUp className="mx-auto h-10 w-10 text-muted-foreground" />
+              <p className="mt-2 text-sm text-muted-foreground">
+                {isModelLoading
+                  ? "Loading model..."
+                  : !tmImageRef.current
+                    ? "Loading AI libs..."
+                    : isDragging
+                      ? "Release to upload"
+                      : "Drag & drop a .zip or model files"}
+              </p>
+              <p className="text-xs text-muted-foreground/80">or</p>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="link"
+                    className="p-0 h-auto text-sm"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isModelLoading || !tmImageRef.current}
+                  >
+                    click to browse
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Select model.zip, or model.json, metadata.json and weights.bin</p>
+                </TooltipContent>
+              </Tooltip>
+              <input
+                type="file"
+                ref={fileInputRef}
+                className="hidden"
+                accept=".zip,application/json,.bin"
+                multiple
+                onChange={handleFileSelect}
+                disabled={isModelLoading || !tmImageRef.current}
+              />
+            </div>
+            {modelFiles && (
+              <div className="mx-3 sm:m-4 sm:mb-4 landscape:m-2 landscape:mb-2 p-3 sm:p-4 landscape:p-2 border border-white/10 rounded-xl bg-black/20 space-y-3">
+                <Label htmlFor="model-name" className="text-xs font-medium text-muted-foreground">Save to Library</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="model-name"
+                    value={newModelName}
+                    onChange={(e) => setNewModelName(e.target.value)}
+                    placeholder="Enter model name..."
+                    className="bg-black/20 border-white/10 focus:border-primary/50"
+                  />
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button onClick={handleSaveModel} size="icon">
+                        <Save />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Save current model to library</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              </div>
+            )}
+          </SidebarGroup>
+          <SidebarGroup>
+            <SidebarGroupLabel className="flex items-center justify-between text-primary font-bold uppercase tracking-wider text-xs">
+              Model Library
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button variant="ghost" size="icon" className="h-6 w-6" onClick={refreshModelsFromDb}>
+                    <RefreshCw className="h-4 w-4" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Refresh library</p>
+                </TooltipContent>
+              </Tooltip>
+            </SidebarGroupLabel>
+            <div className="px-3 sm:p-4 landscape:px-2 sm:pt-0 landscape:pt-0">
+              {savedModels.length > 0 ? (
+                <div className="space-y-2 landscape:space-y-1">
+                  {savedModels.map(m => {
+                    const isSynced = cloudModels.some(cm => cm.name === m.name);
+                    return (
+                      <div key={m.name} className="flex items-center justify-between p-3 bg-black/20 border border-white/5 rounded-lg hover:bg-white/5 transition-colors">
+                        <div className="min-w-0">
+                          <p className="text-sm font-medium truncate" title={m.name}>{m.name}</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className={cn("h-1.5 w-1.5 rounded-full", isSynced ? "bg-emerald-500" : "bg-amber-500")} />
+                            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-tight">
+                              {isSynced ? "Cloud Synced" : "Local Only"}
+                            </span>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground text-center p-4">No models saved locally.</p>
-                )}
-              </div>
-            </SidebarGroup>
-
-            <SidebarGroup>
-              <SidebarGroupLabel className="flex items-center justify-between text-primary font-bold uppercase tracking-wider text-xs">
-                Cloud Models Library
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded ml-2">Experimental</span>
-                  </TooltipTrigger>
-                  <TooltipContent><p>Models synced from other devices</p></TooltipContent>
-                </Tooltip>
-              </SidebarGroupLabel>
-              <div className="px-3 sm:p-4 landscape:px-2 sm:pt-0 landscape:pt-0">
-                {cloudModels.length > 0 ? (
-                  <div className="space-y-2 landscape:space-y-1">
-                    {cloudModels
-                      .filter(cm => !savedModels.some(sm => sm.name === cm.name))
-                      .map(cm => (
-                        <div key={cm.name} className="flex items-center justify-between p-3 bg-primary/5 border border-primary/10 rounded-lg hover:bg-primary/10 transition-colors">
-                          <p className="text-sm font-medium truncate" title={cm.name}>{cm.name}</p>
+                        <div className="flex gap-1">
+                          {!isSynced && (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Button size="icon" variant="ghost" className="h-8 w-8 text-amber-500" onClick={() => handleSyncToCloud(m.name)} disabled={isUploadingToCloud}>
+                                  {isUploadingToCloud ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+                                </Button>
+                              </TooltipTrigger>
+                              <TooltipContent>
+                                <p>Sync to cloud</p>
+                              </TooltipContent>
+                            </Tooltip>
+                          )}
                           <Tooltip>
                             <TooltipTrigger asChild>
-                              <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" onClick={() => handleDownloadFromCloud(cm)} disabled={isModelLoading}>
-                                {isModelLoading ? <Loader2 className="animate-spin" /> : <Download />}
+                              <Button size="icon" variant="ghost" className="h-8 w-8" onClick={() => handleLoadFromLibrary(m.name)} disabled={isModelLoading || !tmImageRef.current}>
+                                {isModelLoading ? <Loader2 className="animate-spin" /> : <BrainCircuit />}
                               </Button>
                             </TooltipTrigger>
                             <TooltipContent>
-                              <p>Download to local library</p>
+                              <p>Load model</p>
+                            </TooltipContent>
+                          </Tooltip>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button size="icon" variant="ghost" className="h-8 w-8 text-destructive" onClick={() => handleDeleteFromLibrary(m.name)}>
+                                <Trash2 />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Delete model</p>
                             </TooltipContent>
                           </Tooltip>
                         </div>
-                      ))}
-                    {cloudModels.filter(cm => !savedModels.some(sm => sm.name === cm.name)).length === 0 && (
-                      <p className="text-xs text-muted-foreground text-center p-4">All cloud models are synced locally.</p>
-                    )}
-                  </div>
-                ) : (
-                  <p className="text-xs text-muted-foreground text-center p-4">No models in cloud yet.</p>
-                )}
-              </div>
-            </SidebarGroup>
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Camera ROI Crop</SidebarGroupLabel>
-              <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="roi-enabled" className="flex items-center gap-2">
-                    <Crop className="h-4 w-4" />
-                    Enable ROI Crop
-                  </Label>
-                  <Switch
-                    id="roi-enabled"
-                    checked={roi.enabled}
-                    onCheckedChange={(checked) => setRoi({ ...roi, enabled: checked })}
-                  />
+                      </div>
+                    );
+                  })}
                 </div>
-                {roi.enabled && (
-                  <div className="space-y-4 pt-1">
-                    <p className="text-xs text-muted-foreground">
-                      Crop the camera feed so the model only sees a specific area (e.g. the chute).
-                    </p>
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <Label className="text-sm">X Offset</Label>
-                        <span className="text-sm font-bold text-primary">{(roi.x * 100).toFixed(0)}%</span>
-                      </div>
-                      <Slider
-                        value={[roi.x]}
-                        onValueChange={(vals) => setRoi({ ...roi, x: vals[0] })}
-                        max={0.9}
-                        min={0}
-                        step={0.01}
-                        className="py-1"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <Label className="text-sm">Y Offset</Label>
-                        <span className="text-sm font-bold text-primary">{(roi.y * 100).toFixed(0)}%</span>
-                      </div>
-                      <Slider
-                        value={[roi.y]}
-                        onValueChange={(vals) => setRoi({ ...roi, y: vals[0] })}
-                        max={0.9}
-                        min={0}
-                        step={0.01}
-                        className="py-1"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <Label className="text-sm">Width</Label>
-                        <span className="text-sm font-bold text-primary">{(roi.width * 100).toFixed(0)}%</span>
-                      </div>
-                      <Slider
-                        value={[roi.width]}
-                        onValueChange={(vals) => setRoi({ ...roi, width: vals[0] })}
-                        max={1}
-                        min={0.1}
-                        step={0.01}
-                        className="py-1"
-                      />
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex justify-between">
-                        <Label className="text-sm">Height</Label>
-                        <span className="text-sm font-bold text-primary">{(roi.height * 100).toFixed(0)}%</span>
-                      </div>
-                      <Slider
-                        value={[roi.height]}
-                        onValueChange={(vals) => setRoi({ ...roi, height: vals[0] })}
-                        max={1}
-                        min={0.1}
-                        step={0.01}
-                        className="py-1"
-                      />
-                    </div>
-                  </div>
-                )}
-              </div>
-            </SidebarGroup>
+              ) : (
+                <p className="text-xs text-muted-foreground text-center p-4">No models saved locally.</p>
+              )}
+            </div>
+          </SidebarGroup>
 
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Automation Settings</SidebarGroupLabel>
-              <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="auto-sort" className="flex items-center gap-2">
-                    <Zap className="h-4 w-4" />
-                    Auto-Sort Mode
-                  </Label>
-                  <Switch
-                    id="auto-sort"
-                    checked={autoSortEnabled}
-                    onCheckedChange={setAutoSortEnabled}
-                  />
+          <SidebarGroup>
+            <SidebarGroupLabel className="flex items-center justify-between text-primary font-bold uppercase tracking-wider text-xs">
+              Cloud Models Library
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-[10px] bg-primary/20 text-primary px-1.5 py-0.5 rounded ml-2">Experimental</span>
+                </TooltipTrigger>
+                <TooltipContent><p>Models synced from other devices</p></TooltipContent>
+              </Tooltip>
+            </SidebarGroupLabel>
+            <div className="px-3 sm:p-4 landscape:px-2 sm:pt-0 landscape:pt-0">
+              {cloudModels.length > 0 ? (
+                <div className="space-y-2 landscape:space-y-1">
+                  {cloudModels
+                    .filter(cm => !savedModels.some(sm => sm.name === cm.name))
+                    .map(cm => (
+                      <div key={cm.name} className="flex items-center justify-between p-3 bg-primary/5 border border-primary/10 rounded-lg hover:bg-primary/10 transition-colors">
+                        <p className="text-sm font-medium truncate" title={cm.name}>{cm.name}</p>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button size="icon" variant="ghost" className="h-8 w-8 text-primary" onClick={() => handleDownloadFromCloud(cm)} disabled={isModelLoading}>
+                              {isModelLoading ? <Loader2 className="animate-spin" /> : <Download />}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>Download to local library</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </div>
+                    ))}
+                  {cloudModels.filter(cm => !savedModels.some(sm => sm.name === cm.name)).length === 0 && (
+                    <p className="text-xs text-muted-foreground text-center p-4">All cloud models are synced locally.</p>
+                  )}
                 </div>
-                {autoSortEnabled && (
-                  <div className="space-y-3 pt-2">
+              ) : (
+                <p className="text-xs text-muted-foreground text-center p-4">No models in cloud yet.</p>
+              )}
+            </div>
+          </SidebarGroup>
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Camera ROI Crop</SidebarGroupLabel>
+            <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="roi-enabled" className="flex items-center gap-2">
+                  <Crop className="h-4 w-4" />
+                  Enable ROI Crop
+                </Label>
+                <Switch
+                  id="roi-enabled"
+                  checked={roi.enabled}
+                  onCheckedChange={(checked) => setRoi({ ...roi, enabled: checked })}
+                />
+              </div>
+              {roi.enabled && (
+                <div className="space-y-4 pt-1">
+                  <p className="text-xs text-muted-foreground">
+                    Crop the camera feed so the model only sees a specific area (e.g. the chute).
+                  </p>
+                  <div className="space-y-2">
                     <div className="flex justify-between">
-                      <Label className="text-sm">Confidence Threshold</Label>
-                      <span className="text-sm font-bold text-primary">{(confidenceThreshold * 100).toFixed(0)}%</span>
+                      <Label className="text-sm">X Offset</Label>
+                      <span className="text-sm font-bold text-primary">{(roi.x * 100).toFixed(0)}%</span>
                     </div>
                     <Slider
-                      value={[confidenceThreshold]}
-                      onValueChange={(vals) => setConfidenceThreshold(vals[0])}
-                      max={1}
-                      min={0.5}
+                      value={[roi.x]}
+                      onValueChange={(vals) => setRoi({ ...roi, x: vals[0] })}
+                      max={0.9}
+                      min={0}
                       step={0.01}
-                      className="py-2"
+                      className="py-1"
                     />
-                    <p className="text-xs text-muted-foreground">
-                      Minimum confidence required to trigger auto-sort.
-                    </p>
                   </div>
-                )}
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="auto-capture" className="flex items-center gap-2">
-                    <Bot className="h-4 w-4" />
-                    Auto-Capture Unknowns
-                  </Label>
-                  <Switch
-                    id="auto-capture"
-                    checked={autoCaptureEnabled}
-                    onCheckedChange={setAutoCaptureEnabled}
-                  />
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <Label className="text-sm">Y Offset</Label>
+                      <span className="text-sm font-bold text-primary">{(roi.y * 100).toFixed(0)}%</span>
+                    </div>
+                    <Slider
+                      value={[roi.y]}
+                      onValueChange={(vals) => setRoi({ ...roi, y: vals[0] })}
+                      max={0.9}
+                      min={0}
+                      step={0.01}
+                      className="py-1"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <Label className="text-sm">Width</Label>
+                      <span className="text-sm font-bold text-primary">{(roi.width * 100).toFixed(0)}%</span>
+                    </div>
+                    <Slider
+                      value={[roi.width]}
+                      onValueChange={(vals) => setRoi({ ...roi, width: vals[0] })}
+                      max={1}
+                      min={0.1}
+                      step={0.01}
+                      className="py-1"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <div className="flex justify-between">
+                      <Label className="text-sm">Height</Label>
+                      <span className="text-sm font-bold text-primary">{(roi.height * 100).toFixed(0)}%</span>
+                    </div>
+                    <Slider
+                      value={[roi.height]}
+                      onValueChange={(vals) => setRoi({ ...roi, height: vals[0] })}
+                      max={1}
+                      min={0.1}
+                      step={0.01}
+                      className="py-1"
+                    />
+                  </div>
                 </div>
+              )}
+            </div>
+          </SidebarGroup>
+
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Automation Settings</SidebarGroupLabel>
+            <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="auto-sort" className="flex items-center gap-2">
+                  <Zap className="h-4 w-4" />
+                  Auto-Sort Mode
+                </Label>
+                <Switch
+                  id="auto-sort"
+                  checked={autoSortEnabled}
+                  onCheckedChange={setAutoSortEnabled}
+                />
               </div>
-            </SidebarGroup>
-
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Device Settings</SidebarGroupLabel>
-              <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="keep-awake" className="flex items-center gap-2">
-                    <Smartphone className="h-4 w-4" />
-                    Keep Screen Awake
-                  </Label>
-                  <Switch
-                    id="keep-awake"
-                    checked={wakeLockEnabled}
-                    onCheckedChange={handleWakeLockToggle}
+              {autoSortEnabled && (
+                <div className="space-y-3 pt-2">
+                  <div className="flex justify-between">
+                    <Label className="text-sm">Confidence Threshold</Label>
+                    <span className="text-sm font-bold text-primary">{(confidenceThreshold * 100).toFixed(0)}%</span>
+                  </div>
+                  <Slider
+                    value={[confidenceThreshold]}
+                    onValueChange={(vals) => setConfidenceThreshold(vals[0])}
+                    max={1}
+                    min={0.5}
+                    step={0.01}
+                    className="py-2"
                   />
+                  <p className="text-xs text-muted-foreground">
+                    Minimum confidence required to trigger auto-sort.
+                  </p>
                 </div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="auto-flash" className="flex items-center gap-2">
-                    <Flashlight className="h-4 w-4" />
-                    Auto Flash on Detect
-                  </Label>
-                  <Switch
-                    id="auto-flash"
-                    checked={autoFlashEnabled}
-                    onCheckedChange={setAutoFlashEnabled}
-                    disabled={!autoSortEnabled}
-                  />
-                </div>
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="test-mode" className="flex items-center gap-2">
-                    <TestTube className="h-4 w-4" />
-                    Test Mode
-                  </Label>                  <Switch
-                    id="test-mode"
-                    checked={isTestMode}
-                    onCheckedChange={setIsTestMode}
-                  />
-                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <Label htmlFor="auto-capture" className="flex items-center gap-2">
+                  <Bot className="h-4 w-4" />
+                  Auto-Capture Unknowns
+                </Label>
+                <Switch
+                  id="auto-capture"
+                  checked={autoCaptureEnabled}
+                  onCheckedChange={setAutoCaptureEnabled}
+                />
               </div>
-            </SidebarGroup>
+            </div>
+          </SidebarGroup>
 
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Audio Tests</SidebarGroupLabel>
-              <div className="space-y-2 px-3 sm:p-4 landscape:px-2 landscape:space-y-1">
-                <Button onClick={playConnectedSound} variant="outline" className="w-full landscape:py-1 landscape:text-xs">
-                  <Music className="mr-2 h-4 w-4" />
-                  Test Connect Sound
-                </Button>
-                <Button onClick={playDisconnectedSound} variant="outline" className="w-full landscape:py-1 landscape:text-xs">
-                  <Music className="mr-2 h-4 w-4" />
-                  Test Disconnect Sound
-                </Button>
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Device Settings</SidebarGroupLabel>
+            <div className="space-y-4 px-3 sm:p-4 landscape:px-2 landscape:space-y-2">
+              <div className="flex items-center justify-between">
+                <Label htmlFor="keep-awake" className="flex items-center gap-2">
+                  <Smartphone className="h-4 w-4" />
+                  Keep Screen Awake
+                </Label>
+                <Switch
+                  id="keep-awake"
+                  checked={wakeLockEnabled}
+                  onCheckedChange={handleWakeLockToggle}
+                />
               </div>
-            </SidebarGroup>
+              <div className="flex items-center justify-between gap-4">
+                <Label htmlFor="mirror-camera" className="flex items-center gap-2 break-words">
+                  <Smartphone className="h-4 w-4 flex-shrink-0" />
+                  <span>Mirror Camera (Teachable Machine)</span>
+                </Label>
+                <Switch
+                  id="mirror-camera"
+                  checked={mirrorCameraEnabled}
+                  onCheckedChange={setMirrorCameraEnabled}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="auto-flash" className="flex items-center gap-2">
+                  <Flashlight className="h-4 w-4" />
+                  Auto Flash on Detect
+                </Label>
+                <Switch
+                  id="auto-flash"
+                  checked={autoFlashEnabled}
+                  onCheckedChange={setAutoFlashEnabled}
+                  disabled={!autoSortEnabled}
+                />
+              </div>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="test-mode" className="flex items-center gap-2">
+                  <TestTube className="h-4 w-4" />
+                  Test Mode
+                </Label>                  <Switch
+                  id="test-mode"
+                  checked={isTestMode}
+                  onCheckedChange={setIsTestMode}
+                />
+              </div>
+            </div>
+          </SidebarGroup>
 
-            {/* Dashboard removed from here, moving to main area tabs */}
+          <SidebarGroup>
+            <SidebarGroupLabel className="text-primary font-bold uppercase tracking-wider text-xs">Audio Tests</SidebarGroupLabel>
+            <div className="space-y-2 px-3 sm:p-4 landscape:px-2 landscape:space-y-1">
+              <Button onClick={playConnectedSound} variant="outline" className="w-full landscape:py-1 landscape:text-xs">
+                <Music className="mr-2 h-4 w-4" />
+                Test Connect Sound
+              </Button>
+              <Button onClick={playDisconnectedSound} variant="outline" className="w-full landscape:py-1 landscape:text-xs">
+                <Music className="mr-2 h-4 w-4" />
+                Test Disconnect Sound
+              </Button>
+            </div>
+          </SidebarGroup>
+
+          {/* Dashboard removed from here, moving to main area tabs */}
 
 
-          </ScrollArea>
-        </TooltipProvider>
+        </ScrollArea>
       </SidebarContent>
-      <SidebarFooter>
-        <div className="px-3 sm:p-4 landscape:px-2 landscape:gap-1 sm:pt-0 landscape:pt-0 space-y-2">
+      <SidebarFooter className="flex-none border-t border-white/10 bg-background/50 backdrop-blur-md pt-4 pb-4 sm:pb-6">
+        <div className="px-3 sm:px-4 landscape:px-2 landscape:gap-1 space-y-2">
           <Button
             variant="outline"
             className="w-full justify-start text-muted-foreground hover:text-primary landscape:py-1 landscape:text-xs landscape:px-2"

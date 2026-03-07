@@ -1,0 +1,1102 @@
+On branch main
+Your branch is up to date with 'origin/main'.
+
+Changes not staged for commit:
+  (use "git add <file>..." to update what will be committed)
+  (use "git restore <file>..." to discard changes in working directory)
+	modified:   src/app/admin/page.tsx
+	modified:   src/app/api/gemini/route.ts
+	modified:   src/app/client/page.tsx
+	modified:   src/app/layout.tsx
+	modified:   src/components/client-view.tsx
+	modified:   src/components/sort-vision-client.tsx
+	modified:   src/components/sort-vision-settings.tsx
+	modified:   src/lib/gemini-fallback.ts
+	modified:   src/lib/roi.ts
+
+Untracked files:
+  (use "git add <file>..." to include in what will be committed)
+	git_out.txt
+	git_status.txt
+
+no changes added to commit (use "git add" and/or "git commit -a")
+diff --git a/src/app/admin/page.tsx b/src/app/admin/page.tsx
+index 3dc14ae..f20e8ff 100644
+--- a/src/app/admin/page.tsx
++++ b/src/app/admin/page.tsx
+@@ -13,7 +13,7 @@ import AdminDashboard from "@/components/admin-dashboard";
+ import { AppStatus, LogEntry, ROI, DEFAULT_ROI } from "@/lib/types";
+ import { useToast } from "@/hooks/use-toast";
+ import { usePersistentState } from "@/hooks/use-persistent-state";
+-import { SidebarTrigger } from "@/components/ui/sidebar";
++import { SidebarTrigger, SidebarInset } from "@/components/ui/sidebar";
+ import { Loader2, ShieldAlert, Zap, BarChart3, LayoutDashboard, Settings } from "lucide-react";
+ import { useAuth } from "@/contexts/auth-context";
+ import { cn } from "@/lib/utils";
+@@ -32,6 +32,7 @@ export default function AdminPage() {
+     const [autoCaptureEnabled, setAutoCaptureEnabled] = usePersistentState('autoCaptureEnabled', false);
+     const [autoSortEnabled, setAutoSortEnabled] = usePersistentState('autoSortEnabled', false);
+     const [autoFlashEnabled, setAutoFlashEnabled] = usePersistentState('autoFlashEnabled', false);
++    const [mirrorCameraEnabled, setMirrorCameraEnabled] = usePersistentState('mirrorCameraEnabled', true);
+     const [confidenceThreshold, setConfidenceThreshold] = usePersistentState('confidenceThreshold', 0.8);
+     const [roi, setRoi] = usePersistentState<ROI>('roi', DEFAULT_ROI);
+ 
+@@ -107,6 +108,8 @@ export default function AdminPage() {
+             setAutoSortEnabled={setAutoSortEnabled}
+             autoFlashEnabled={autoFlashEnabled}
+             setAutoFlashEnabled={setAutoFlashEnabled}
++            mirrorCameraEnabled={mirrorCameraEnabled}
++            setMirrorCameraEnabled={setMirrorCameraEnabled}
+             addLog={addLog}
+             confidenceThreshold={confidenceThreshold}
+             setConfidenceThreshold={setConfidenceThreshold}
+@@ -150,100 +153,101 @@ export default function AdminPage() {
+     }
+ 
+     return (
+-        <div className="flex h-screen w-full bg-background text-foreground overflow-hidden">
+-            {/* Responsive Sidebar (Handles both Mobile Sheet and Desktop Sidebar) */}
++        <>
++            {/* Sidebar renders as sibling of SidebarInset for proper desktop layout */}
+             {SettingsComponent}
+ 
+-            {/* Main Area */}
+-            <div className="flex-1 flex flex-col min-w-0">
+-                {/* Header with Tabs */}
+-                <header className="h-16 border-b border-white/5 flex items-center justify-between px-4 md:px-6 bg-background/50 backdrop-blur-md z-10 sticky top-0">
+-                    <div className="flex items-center gap-4">
+-                        {/* Mobile Settings Trigger */}
+-                        <div className="md:hidden">
++            {/* Main Area inside SidebarInset so it gets pushed by the sidebar spacer */}
++            <SidebarInset>
++                <div className="flex h-screen w-full flex-col bg-background text-foreground overflow-hidden">
++                    {/* Header with Tabs */}
++                    <header className="h-16 border-b border-white/5 flex items-center justify-between px-4 md:px-6 bg-background/50 backdrop-blur-md z-10 sticky top-0">
++                        <div className="flex items-center gap-4">
++                            {/* Settings Trigger — always visible */}
+                             <SidebarTrigger />
++
++                            <h1 className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-400">
++                                Admin Panel
++                            </h1>
+                         </div>
+ 
+-                        <h1 className="text-lg font-bold bg-clip-text text-transparent bg-gradient-to-r from-primary to-blue-400">
+-                            Admin Panel
+-                        </h1>
+-                    </div>
+-
+-                    <div className="flex bg-muted/30 p-0.5 sm:p-1 rounded-lg gap-1">
+-                        <button
+-                            onClick={() => setActiveTab("control")}
+-                            className={cn(
+-                                "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
+-                                activeTab === "control"
+-                                    ? "bg-background text-foreground shadow-sm"
+-                                    : "text-muted-foreground hover:text-foreground"
+-                            )}
+-                        >
+-                            <Zap className="h-3 w-3 sm:h-4 sm:w-4" />
+-                            <span className="hidden sm:inline">Control</span>
+-                            <span className="sm:hidden">Control</span>
+-                        </button>
+-                        <button
+-                            onClick={() => setActiveTab("dashboard")}
+-                            className={cn(
+-                                "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
+-                                activeTab === "dashboard"
+-                                    ? "bg-background text-foreground shadow-sm"
+-                                    : "text-muted-foreground hover:text-foreground"
+-                            )}
+-                        >
+-                            <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4" />
+-                            <span className="hidden sm:inline">Analytics</span>
+-                            <span className="sm:hidden">Analytics</span>
+-                        </button>
+-                    </div>
+-
+-                    <div className="hidden md:flex items-center gap-2">
+-                        <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
+-                        <span className="text-xs font-medium text-emerald-500 uppercase tracking-wider">System Live</span>
+-                    </div>
+-                </header>
+-
+-                {/* Content Area */}
+-                <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+-                    {activeTab === "control" ? (
+-                        <div className="max-w-6xl mx-auto h-full flex flex-col">
+-                            <ErrorBoundary fallbackTitle="Classification Error">
+-                                <SortVisionClient
+-                                    model={model}
+-                                    appStatus={appStatus}
+-                                    setAppStatus={setAppStatus}
+-                                    isTestMode={isTestMode}
+-                                    wakeLockEnabled={wakeLockEnabled}
+-                                    autoCaptureEnabled={autoCaptureEnabled}
+-                                    autoSortEnabled={autoSortEnabled}
+-                                    autoFlashEnabled={autoFlashEnabled}
+-                                    confidenceThreshold={confidenceThreshold}
+-                                    setConfidenceThreshold={setConfidenceThreshold}
+-                                    tmImageRef={tmImageRef}
+-                                    logs={logs}
+-                                    setLogs={setLogs}
+-                                    addLog={addLog}
+-                                    roi={roi}
+-                                />
+-                            </ErrorBoundary>
++                        <div className="flex bg-muted/30 p-0.5 sm:p-1 rounded-lg gap-1">
++                            <button
++                                onClick={() => setActiveTab("control")}
++                                className={cn(
++                                    "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
++                                    activeTab === "control"
++                                        ? "bg-background text-foreground shadow-sm"
++                                        : "text-muted-foreground hover:text-foreground"
++                                )}
++                            >
++                                <Zap className="h-3 w-3 sm:h-4 sm:w-4" />
++                                <span className="hidden sm:inline">Control</span>
++                                <span className="sm:hidden">Control</span>
++                            </button>
++                            <button
++                                onClick={() => setActiveTab("dashboard")}
++                                className={cn(
++                                    "flex items-center gap-1.5 px-2 sm:px-4 py-1.5 rounded-md text-xs sm:text-sm font-medium transition-all whitespace-nowrap",
++                                    activeTab === "dashboard"
++                                        ? "bg-background text-foreground shadow-sm"
++                                        : "text-muted-foreground hover:text-foreground"
++                                )}
++                            >
++                                <BarChart3 className="h-3 w-3 sm:h-4 sm:w-4" />
++                                <span className="hidden sm:inline">Analytics</span>
++                                <span className="sm:hidden">Analytics</span>
++                            </button>
+                         </div>
+-                    ) : (
+-                        <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+-                            <div className="flex items-center justify-between">
+-                                <div>
+-                                    <h2 className="text-2xl font-bold">System Analytics</h2>
+-                                    <p className="text-muted-foreground">Monitor performance, training data, and users.</p>
+-                                </div>
+-                            </div>
+ 
+-                            <ErrorBoundary fallbackTitle="Dashboard Error">
+-                                <AdminDashboard addLog={addLog} />
+-                            </ErrorBoundary>
++                        <div className="hidden md:flex items-center gap-2">
++                            <div className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse" />
++                            <span className="text-xs font-medium text-emerald-500 uppercase tracking-wider">System Live</span>
+                         </div>
+-                    )}
+-                </main>
+-            </div>
+-        </div>
++                    </header>
++
++                    {/* Content Area */}
++                    <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
++                        {activeTab === "control" ? (
++                            <div className="max-w-6xl mx-auto h-full flex flex-col">
++                                <ErrorBoundary fallbackTitle="Classification Error">
++                                    <SortVisionClient
++                                        model={model}
++                                        appStatus={appStatus}
++                                        setAppStatus={setAppStatus}
++                                        isTestMode={isTestMode}
++                                        wakeLockEnabled={wakeLockEnabled}
++                                        autoCaptureEnabled={autoCaptureEnabled}
++                                        autoSortEnabled={autoSortEnabled}
++                                        autoFlashEnabled={autoFlashEnabled}
++                                        mirrorCameraEnabled={mirrorCameraEnabled}
++                                        confidenceThreshold={confidenceThreshold}
++                                        setConfidenceThreshold={setConfidenceThreshold}
++                                        tmImageRef={tmImageRef}
++                                        logs={logs}
++                                        setLogs={setLogs}
++                                        addLog={addLog}
++                                        roi={roi}
++                                    />
++                                </ErrorBoundary>
++                            </div>
++                        ) : (
++                            <div className="max-w-5xl mx-auto space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
++                                <div className="flex items-center justify-between">
++                                    <div>
++                                        <h2 className="text-2xl font-bold">System Analytics</h2>
++                                        <p className="text-muted-foreground">Monitor performance, training data, and users.</p>
++                                    </div>
++                                </div>
++
++                                <ErrorBoundary fallbackTitle="Dashboard Error">
++                                    <AdminDashboard addLog={addLog} />
++                                </ErrorBoundary>
++                            </div>
++                        )}
++                    </main>
++                </div>
++            </SidebarInset>
++        </>
+     );
+ }
+diff --git a/src/app/api/gemini/route.ts b/src/app/api/gemini/route.ts
+index c059368..5755845 100644
+--- a/src/app/api/gemini/route.ts
++++ b/src/app/api/gemini/route.ts
+@@ -66,9 +66,34 @@ export async function POST(req: NextRequest) {
+ 
+         if (!response.ok) {
+             const errorData = await response.json().catch(() => ({}));
+-            console.error("Gemini API error:", errorData);
++            console.error("Gemini API error:", response.status, errorData);
++            const isRateLimited = response.status === 429 || response.status === 468;
++
++            // Parse Retry-After header if present (seconds or HTTP-date)
++            let retryAfterSeconds: number | undefined;
++            const retryAfterHeader = response.headers.get("Retry-After");
++            if (retryAfterHeader) {
++                const parsed = parseInt(retryAfterHeader, 10);
++                if (!isNaN(parsed)) {
++                    retryAfterSeconds = parsed;
++                } else {
++                    // Try parsing as an HTTP date
++                    const date = new Date(retryAfterHeader);
++                    if (!isNaN(date.getTime())) {
++                        retryAfterSeconds = Math.max(1, Math.ceil((date.getTime() - Date.now()) / 1000));
++                    }
++                }
++            }
++
+             return NextResponse.json(
+-                { error: "Gemini API request failed.", details: errorData },
++                {
++                    error: isRateLimited
++                        ? "Rate limited by Gemini API. Please wait and try again."
++                        : "Gemini API request failed.",
++                    details: errorData,
++                    retryable: isRateLimited,
++                    ...(retryAfterSeconds !== undefined && { retryAfterSeconds }),
++                },
+                 { status: response.status }
+             );
+         }
+diff --git a/src/app/client/page.tsx b/src/app/client/page.tsx
+index 98cc4fd..4d6537e 100644
+--- a/src/app/client/page.tsx
++++ b/src/app/client/page.tsx
+@@ -26,6 +26,9 @@ export default function ClientPage() {
+     // Shared state
+     const [confidenceThreshold] = usePersistentState('confidenceThreshold', 0.8);
+     const [autoSortEnabled] = usePersistentState('autoSortEnabled', false);
++    const [mirrorCameraEnabled] = usePersistentState('mirrorCameraEnabled', true);
++    const [wakeLockEnabled] = usePersistentState('wakeLockEnabled', false);
++    const [autoFlashEnabled] = usePersistentState('autoFlashEnabled', false);
+     const [roi] = usePersistentState<ROI>('roi', DEFAULT_ROI);
+ 
+     const tmImageRef = useRef<typeof tmImage | null>(null);
+@@ -105,6 +108,9 @@ export default function ClientPage() {
+                                 addLog={addLog}
+                                 confidenceThreshold={confidenceThreshold}
+                                 autoSortEnabled={autoSortEnabled}
++                                mirrorCameraEnabled={mirrorCameraEnabled}
++                                wakeLockEnabled={wakeLockEnabled}
++                                autoFlashEnabled={autoFlashEnabled}
+                                 roi={roi}
+                             />
+                         </ErrorBoundary>
+diff --git a/src/app/layout.tsx b/src/app/layout.tsx
+index 35986df..99e2e58 100644
+--- a/src/app/layout.tsx
++++ b/src/app/layout.tsx
+@@ -5,7 +5,7 @@ import "./globals.css";
+ import { Toaster } from "@/components/ui/toaster";
+ import { ThemeProvider } from "@/components/theme-provider";
+ import OfflineIndicator from "@/components/offline-indicator";
+-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
++import { SidebarProvider } from "@/components/ui/sidebar";
+ import { AuthProvider } from "@/contexts/auth-context";
+ 
+ const outfit = Outfit({
+@@ -50,12 +50,10 @@ export default function RootLayout({
+           disableTransitionOnChange
+         >
+           <AuthProvider>
+-            <SidebarProvider defaultOpen={true}>
+-              <SidebarInset>
+-                {children}
+-                <OfflineIndicator />
+-                <Toaster />
+-              </SidebarInset>
++            <SidebarProvider defaultOpen={false}>
++              {children}
++              <OfflineIndicator />
++              <Toaster />
+             </SidebarProvider>
+           </AuthProvider>
+         </ThemeProvider>
+diff --git a/src/components/client-view.tsx b/src/components/client-view.tsx
+index 59295a9..c3b45f8 100644
+--- a/src/components/client-view.tsx
++++ b/src/components/client-view.tsx
+@@ -9,12 +9,13 @@ import { useToast } from "@/hooks/use-toast";
+ import { cn } from "@/lib/utils";
+ import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
+ import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
++import { prepareModelInput } from "@/lib/roi";
+ import { Card } from "@/components/ui/card";
+ import { sendCommand, isConnected, getLatestStatus, type ESP32Status } from "@/lib/bluetooth";
+ import { getMaterialConfig, getCategoryLabel } from "@/lib/material-config";
+ import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
+ import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
+-import { classifyWithGemini, isGeminiFallbackAvailable } from "@/lib/gemini-fallback";
++import { classifyWithGemini, isGeminiFallbackAvailable, getRemainingCooldown, type GeminiResult } from "@/lib/gemini-fallback";
+ 
+ interface ClientViewProps {
+     model: tmImage.CustomMobileNet | null;
+@@ -24,6 +25,9 @@ interface ClientViewProps {
+     addLog: (message: string) => void;
+     confidenceThreshold?: number;
+     autoSortEnabled?: boolean;
++    mirrorCameraEnabled?: boolean;
++    wakeLockEnabled?: boolean;
++    autoFlashEnabled?: boolean;
+     roi: ROI;
+ }
+ 
+@@ -41,6 +45,9 @@ export default function ClientView({
+     addLog,
+     confidenceThreshold = 0.8, // Default high for client
+     autoSortEnabled = false,
++    mirrorCameraEnabled = true,
++    wakeLockEnabled = false,
++    autoFlashEnabled = false,
+     roi,
+ }: ClientViewProps) {
+     // --- 1. State & Refs ---
+@@ -59,8 +66,11 @@ export default function ClientView({
+     const [nonBioTrash, setNonBioTrash] = useState<number>(0);
+     const [eWasteTrash, setEWasteTrash] = useState<number>(0);
+     const [capturedImages, setCapturedImages] = useState<string[]>([]);
++    const [isFlashOn, setIsFlashOn] = useState(false);
++    const [isFocusLocked, setIsFocusLocked] = useState(false);
+     const [preCapturedImages, setPreCapturedImages] = useState<string[]>([]);
+     const [isAiFallbackActive, setIsAiFallbackActive] = useState(false);
++    const [wakeLock, setWakeLock] = useState<any>(null);
+ 
+     const videoRef = useRef<HTMLVideoElement>(null);
+     const streamRef = useRef<MediaStream | null>(null);
+@@ -70,7 +80,6 @@ export default function ClientView({
+     const viewStateRef = useRef(viewState);
+     const lastLivePushRef = useRef<number>(0);
+     const lastProcessedSortTimestamp = useRef<number>(0);
+-    const confidenceLowTimerRef = useRef<NodeJS.Timeout | null>(null);
+ 
+     const { toast } = useToast();
+ 
+@@ -113,6 +122,38 @@ export default function ClientView({
+         return null;
+     }, []);
+ 
++    const applyCameraSettings = useCallback(async (stream: MediaStream, { flash, focus }: { flash: boolean; focus: boolean; }) => {
++        if (!stream) return;
++        const videoTrack = stream.getVideoTracks()[0];
++        if (!videoTrack) return;
++        const capabilities = videoTrack.getCapabilities();
++        // @ts-ignore
++        if (capabilities.torch) {
++            try {
++                // @ts-ignore
++                await videoTrack.applyConstraints({ advanced: [{ torch: flash }] });
++                setIsFlashOn(flash);
++            } catch (error: any) {
++                console.error("Flash error:", error);
++            }
++        }
++    }, []);
++
++    const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
++        if (!isBtConnected) return false;
++        try {
++            await sendCommand(`LIGHT:${state}`);
++            if (autoFlashEnabled && streamRef.current) {
++                if (state === 'ON' && !isFlashOn) applyCameraSettings(streamRef.current, { flash: true, focus: isFocusLocked });
++                else if (state === 'OFF' && isFlashOn) applyCameraSettings(streamRef.current, { flash: false, focus: isFocusLocked });
++            }
++            return true;
++        } catch (error: any) {
++            console.error("Light command error:", error);
++            return false;
++        }
++    }, [isBtConnected, autoFlashEnabled, isFlashOn, isFocusLocked, applyCameraSettings]);
++
+     const handleCorrect = useCallback(async () => {
+         setPreCapturedImages([]);
+         try {
+@@ -195,24 +236,14 @@ export default function ClientView({
+         if (video.readyState < video.HAVE_ENOUGH_DATA) return;
+         isPredictingRef.current = true;
+         try {
+-            // Prepare cropped canvas if ROI is enabled
+-            let input: HTMLVideoElement | HTMLCanvasElement = video;
+-            if (roi.enabled) {
+-                const canvas = document.createElement('canvas');
+-                canvas.width = 224; // Teachable Machine standard size
+-                canvas.height = 224;
+-                const ctx = canvas.getContext('2d');
+-                if (ctx) {
+-                    const sourceX = (roi.x / 100) * video.videoWidth;
+-                    const sourceY = (roi.y / 100) * video.videoHeight;
+-                    const sourceWidth = (roi.width / 100) * video.videoWidth;
+-                    const sourceHeight = (roi.height / 100) * video.videoHeight;
+-                    ctx.drawImage(video, sourceX, sourceY, sourceWidth, sourceHeight, 0, 0, 224, 224);
+-                    input = canvas;
+-                }
+-            }
+-
+-            const predictions = await model.predict(input);
++            // Prepare 224×224 center-cropped input matching Teachable Machine preprocessing
++            const input = prepareModelInput(video, roi);
++            if (!input) { isPredictingRef.current = false; return; }
++
++            const predictions = await model.predict(input, mirrorCameraEnabled);
++            // Check if background is the dominant prediction — if so, skip AI fallback
++            const bgPrediction = predictions.find(p => p.className.toLowerCase() === "background");
++            const isBackgroundDominant = bgPrediction && bgPrediction.probability > 0.6;
+             const filteredPredictions = predictions.filter(p => p.className.toLowerCase() !== "background");
+             const result = interpretDetectionsLocal(filteredPredictions, confidenceThreshold);
+             if (result.detectionState === 'SINGLE_OBJECT' && result.primaryObject) {
+@@ -252,6 +283,12 @@ export default function ClientView({
+                                 setDetectionId(prev => prev + 1);
+                                 setAppStatus("DETECTED");
+                                 setViewState("DETECTED");
++
++                                if (autoFlashEnabled) {
++                                    sendLightCommand('ON');
++                                    setTimeout(() => sendLightCommand('OFF'), 1500);
++                                }
++
+                                 if (autoSortEnabled) {
+                                     if (sorterStatus === "BUSY") {
+                                         addLog(`Detected ${pred.className}, but sorter is BUSY. Skipping.`);
+@@ -293,9 +330,9 @@ export default function ClientView({
+                 setStablePrediction(null);
+ 
+                 // Set CONFIDENCE_TOO_LOW if something is partially detected but below threshold
+-                // Otherwise reset to AWAITING_OBJECT so we keep scanning
++                // If background is dominant, stay in AWAITING_OBJECT — nothing real to classify
+                 const hasPartialDetection = filteredPredictions.some(p => p.probability > 0.2);
+-                const nextStatus = hasPartialDetection ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
++                const nextStatus = (hasPartialDetection && !isBackgroundDominant) ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
+                 if (appStatus !== nextStatus) setAppStatus(nextStatus);
+             }
+         } catch (err: any) {
+@@ -305,7 +342,7 @@ export default function ClientView({
+         } finally {
+             isPredictingRef.current = false;
+         }
+-    }, [model, viewState, appStatus, confidenceThreshold, stablePrediction, detectedLabel, addLog, autoSortEnabled, setAppStatus, getArduinoCommand]);
++    }, [model, viewState, appStatus, confidenceThreshold, stablePrediction, detectedLabel, addLog, autoSortEnabled, setAppStatus, getArduinoCommand, autoFlashEnabled, sendLightCommand, mirrorCameraEnabled]);
+     const stopCamera = useCallback(() => {
+         if (streamRef.current) {
+             streamRef.current.getTracks().forEach((track) => track.stop());
+@@ -366,6 +403,31 @@ export default function ClientView({
+         }
+     }, [stopCamera, setAppStatus, toast]);
+ 
++    const requestWakeLock = useCallback(async () => {
++        if ('wakeLock' in navigator && wakeLockEnabled && !wakeLock) {
++            try {
++                const lock = await navigator.wakeLock.request('screen');
++                setWakeLock(lock);
++                lock.addEventListener('release', () => {
++                    setWakeLock(null);
++                });
++            } catch (err: any) {
++                console.error(`Wake Lock Error: ${err.name}, ${err.message}`);
++            }
++        }
++    }, [wakeLockEnabled, wakeLock]);
++
++    const releaseWakeLock = useCallback(async () => {
++        if (wakeLock) {
++            try {
++                await wakeLock.release();
++                setWakeLock(null);
++            } catch (error: any) {
++                console.error("Could not release wake lock:", error);
++            }
++        }
++    }, [wakeLock]);
++
+     // --- 3. Effects ---
+ 
+     useEffect(() => {
+@@ -423,8 +485,11 @@ export default function ClientView({
+ 
+     useEffect(() => {
+         if (model) startCamera();
+-        return () => stopCamera();
+-    }, [model, startCamera, stopCamera]);
++        return () => {
++            stopCamera();
++            releaseWakeLock();
++        }
++    }, [model, startCamera, stopCamera, releaseWakeLock]);
+ 
+     useEffect(() => {
+         if (!stablePrediction && viewState === "IDLE") {
+@@ -463,6 +528,19 @@ export default function ClientView({
+         }
+     }, [isCameraOn, appStatus, runClassification]);
+ 
++    // Handle visibility changes for wake lock
++    useEffect(() => {
++        const handleVisibilityChange = () => {
++            if (document.visibilityState === 'visible' && isCameraOn) {
++                requestWakeLock();
++            }
++        };
++        document.addEventListener('visibilitychange', handleVisibilityChange);
++        return () => {
++            document.removeEventListener('visibilitychange', handleVisibilityChange);
++        };
++    }, [requestWakeLock, isCameraOn]);
++
+     useEffect(() => {
+         let timeout: NodeJS.Timeout;
+         if (viewState === "DETECTED") {
+@@ -481,52 +559,44 @@ export default function ClientView({
+             toast({ title: "No Internet", description: "AI fallback requires an internet connection.", variant: "destructive" });
+             return;
+         }
++        if (!isGeminiFallbackAvailable()) {
++            const remaining = getRemainingCooldown();
++            toast({ title: "Please Wait", description: `AI is on cooldown. Try again in ~${remaining}s.`, variant: "destructive" });
++            return;
++        }
+         addLog("Manual AI fallback triggered by user.");
+         setIsAiFallbackActive(true);
+         setAppStatus("AI_FALLBACK");
+-        classifyWithGemini(videoRef.current).then((geminiResult) => {
++        classifyWithGemini(videoRef.current).then((result: GeminiResult) => {
+             setIsAiFallbackActive(false);
+-            if (geminiResult && viewStateRef.current === "IDLE") {
+-                addLog(`Gemini AI classified: ${geminiResult}.`);
+-                setDetectedLabel(geminiResult);
++            if (result.category && viewStateRef.current === "IDLE") {
++                addLog(`Gemini AI classified: ${result.category}.`);
++                setDetectedLabel(result.category);
+                 setDetectionId(prev => prev + 1);
+                 setAppStatus("DETECTED");
+                 setViewState("DETECTED");
+                 if (autoSortEnabled && isConnected()) {
+-                    const command = getArduinoCommand(geminiResult);
++                    const command = getArduinoCommand(result.category);
+                     setAppStatus("SORTING");
+                     sendCommand(command)
+-                        .then(() => addLog(`Auto-sorted via Gemini AI: ${geminiResult} (Sent: ${command}).`))
++                        .then(() => addLog(`Auto-sorted via Gemini AI: ${result.category} (Sent: ${command}).`))
+                         .catch((err: any) => addLog(`Gemini sort error: ${err.message}`));
+                 }
+             } else {
+-                addLog("Gemini AI could not identify the item.");
++                // Show user-facing error based on error type
++                if (result.error === "RATE_LIMITED") {
++                    toast({ title: "Rate Limited", description: result.message || "Please wait a moment and try again.", variant: "destructive" });
++                } else if (result.error === "TIMEOUT") {
++                    toast({ title: "Request Timeout", description: "The AI took too long. Please try again.", variant: "destructive" });
++                } else if (result.error) {
++                    toast({ title: "AI Error", description: result.message || "Could not classify. Try again.", variant: "destructive" });
++                }
++                addLog(`Gemini AI could not identify the item.${result.error ? ` (${result.error})` : ""}`);
+                 setAppStatus("AWAITING_OBJECT");
+             }
+         });
+     }, [videoRef, isAiFallbackActive, addLog, setAppStatus, autoSortEnabled, getArduinoCommand, toast]);
+ 
+-    // Auto-trigger Gemini after 3s of sustained CONFIDENCE_TOO_LOW
+-    useEffect(() => {
+-        if (appStatus === "CONFIDENCE_TOO_LOW" && !isAiFallbackActive && isCameraOn) {
+-            confidenceLowTimerRef.current = setTimeout(() => {
+-                addLog("TF confidence too low for 3s. Auto-activating Gemini AI fallback...");
+-                handleAskAI();
+-            }, 3000);
+-        } else {
+-            if (confidenceLowTimerRef.current) {
+-                clearTimeout(confidenceLowTimerRef.current);
+-                confidenceLowTimerRef.current = null;
+-            }
+-        }
+-        return () => {
+-            if (confidenceLowTimerRef.current) {
+-                clearTimeout(confidenceLowTimerRef.current);
+-                confidenceLowTimerRef.current = null;
+-            }
+-        };
+-    }, [appStatus, isAiFallbackActive, isCameraOn, addLog, handleAskAI]);
+-
+     // Alcohol Level Notifications
+     useEffect(() => {
+         if (!isBtConnected) return;
+@@ -625,7 +695,7 @@ export default function ClientView({
+             <div className="absolute inset-0 z-0 opacity-0 pointer-events-none">
+                 <video
+                     ref={videoRef}
+-                    className="h-full w-full object-cover"
++                    className={cn("h-full w-full object-cover", mirrorCameraEnabled && "scale-x-[-1]")}
+                     playsInline
+                     muted
+                     autoPlay
+diff --git a/src/components/sort-vision-client.tsx b/src/components/sort-vision-client.tsx
+index 7398953..cc60065 100644
+--- a/src/components/sort-vision-client.tsx
++++ b/src/components/sort-vision-client.tsx
+@@ -27,7 +27,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
+ import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
+ import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
+ import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
+-import { cropVideoFrame, cropCanvasCapture } from "@/lib/roi";
++import { prepareModelInput, cropCanvasCapture } from "@/lib/roi";
+ import { Label } from "@/components/ui/label";
+ import { Switch } from "@/components/ui/switch";
+ import { sendCommand as sendBluetoothCommand, isConnected as isBtConnectedCheck, getLatestStatus, type ESP32Status } from "@/lib/bluetooth";
+@@ -35,7 +35,7 @@ import { interpretDetectionsLocal, type DetectionState } from "@/lib/detection";
+ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+ import { Slider } from "@/components/ui/slider";
+ import { Input } from "@/components/ui/input";
+-import { classifyWithGemini, isGeminiFallbackAvailable } from "@/lib/gemini-fallback";
++import { classifyWithGemini, isGeminiFallbackAvailable, getRemainingCooldown, type GeminiResult } from "@/lib/gemini-fallback";
+ 
+ 
+ type CommandStatus = {
+@@ -52,6 +52,7 @@ interface SortVisionClientProps {
+   autoCaptureEnabled: boolean;
+   autoSortEnabled: boolean;
+   autoFlashEnabled: boolean;
++  mirrorCameraEnabled: boolean;
+   tmImageRef: MutableRefObject<typeof tmImage | null>;
+   logs: LogEntry[];
+   setLogs: (logs: LogEntry[]) => void;
+@@ -81,6 +82,7 @@ export default function SortVisionClient({
+   autoCaptureEnabled,
+   autoSortEnabled,
+   autoFlashEnabled,
++  mirrorCameraEnabled,
+   tmImageRef,
+   logs,
+   setLogs,
+@@ -488,14 +490,17 @@ export default function SortVisionClient({
+     isPredictingRef.current = true;
+ 
+     try {
+-      const croppedCanvas = cropVideoFrame(video, roi);
+-      const predictionSource = croppedCanvas || video;
+-      const predictions = await model.predict(predictionSource as any);
++      const modelInput = prepareModelInput(video, roi);
++      if (!modelInput) { isPredictingRef.current = false; return; }
++      const predictions = await model.predict(modelInput, mirrorCameraEnabled);
+       setCurrentPredictions(predictions);
+ 
+       const filteredPredictions = predictions.filter(
+         (p) => p.className.toLowerCase() !== "background"
+       );
++      // Check if background is the dominant prediction — skip AI fallback if so
++      const bgPrediction = predictions.find(p => p.className.toLowerCase() === "background");
++      const isBackgroundDominant = bgPrediction && bgPrediction.probability > 0.6;
+ 
+       const localResult = interpretDetectionsLocal(
+         filteredPredictions,
+@@ -537,9 +542,9 @@ export default function SortVisionClient({
+                       }
+                       addLog("Re-classifying with light on...");
+                       try {
+-                        const finalCropped = cropVideoFrame(videoRef.current, roi);
+-                        const finalSource = finalCropped || videoRef.current;
+-                        const finalPredictions = await model.predict(finalSource as any);
++                        const finalInput = prepareModelInput(videoRef.current, roi);
++                        if (!finalInput) { handleSortAndRestart("RESTART_NO_SORT"); return; }
++                        const finalPredictions = await model.predict(finalInput, mirrorCameraEnabled);
+                         const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
+                         const finalResult = interpretDetectionsLocal(finalFiltered, confidenceThreshold);
+                         if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
+@@ -551,19 +556,20 @@ export default function SortVisionClient({
+                           if (isGeminiFallbackAvailable() && videoRef.current) {
+                             setIsAiFallbackActive(true);
+                             setAppStatus("AI_FALLBACK");
+-                            classifyWithGemini(videoRef.current).then((geminiResult) => {
++                            classifyWithGemini(videoRef.current).then((result: GeminiResult) => {
+                               setIsAiFallbackActive(false);
+-                              if (geminiResult) {
+-                                addLog(`Gemini AI classified as: ${geminiResult}. Sorting.`);
++                              if (result.category) {
++                                addLog(`Gemini AI classified as: ${result.category}. Sorting.`);
+                                 setAppStatus("SORTING");
+-                                handleSortAndRestart(geminiResult);
++                                handleSortAndRestart(result.category);
+                               } else {
+-                                addLog(`Gemini AI fallback also failed. Skipping sort.`);
++                                addLog(`Gemini AI fallback also failed.${result.error ? ` (${result.error})` : ""} Skipping sort.`);
+                                 handleSortAndRestart("RESTART_NO_SORT");
+                               }
+                             });
+                           } else {
+-                            addLog(`Gemini fallback unavailable (offline or cooldown). Skipping sort.`);
++                            const remaining = getRemainingCooldown();
++                            addLog(`Gemini fallback unavailable (${remaining > 0 ? `cooldown: ${remaining}s remaining` : "offline"}). Skipping sort.`);
+                             handleSortAndRestart("RESTART_NO_SORT");
+                           }
+                         }
+@@ -601,7 +607,7 @@ export default function SortVisionClient({
+         setPrimaryPrediction(null);
+ 
+         const isUncertain = localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5));
+-        const nextStatus: AppStatus = isUncertain ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
++        const nextStatus: AppStatus = (isUncertain && !isBackgroundDominant) ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
+ 
+         if (appStatus !== nextStatus) {
+           setAppStatus(nextStatus);
+@@ -630,7 +636,7 @@ export default function SortVisionClient({
+       clearTimeout(ambiguousDetectionTimer.current);
+       ambiguousDetectionTimer.current = null;
+     }
+-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction, confidenceThreshold, detectionState, currentPredictions, roi]);
++  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction, confidenceThreshold, detectionState, currentPredictions, roi, mirrorCameraEnabled]);
+ 
+   useEffect(() => {
+     return () => {
+@@ -999,7 +1005,7 @@ export default function SortVisionClient({
+           <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border-2 border-border/30">
+             <video
+               ref={videoRef}
+-              className="h-full w-full object-cover"
++              className={cn("h-full w-full object-cover", mirrorCameraEnabled && "scale-x-[-1]")}
+               playsInline
+               muted
+               autoPlay
+diff --git a/src/components/sort-vision-settings.tsx b/src/components/sort-vision-settings.tsx
+index dad8c4b..bce6288 100644
+--- a/src/components/sort-vision-settings.tsx
++++ b/src/components/sort-vision-settings.tsx
+@@ -42,6 +42,8 @@ interface SortVisionSettingsProps {
+   setAutoSortEnabled: (isEnabled: boolean) => void;
+   autoFlashEnabled: boolean;
+   setAutoFlashEnabled: (isEnabled: boolean) => void;
++  mirrorCameraEnabled: boolean;
++  setMirrorCameraEnabled: (isEnabled: boolean) => void;
+   confidenceThreshold: number;
+   setConfidenceThreshold: (value: number) => void;
+   addLog: (message: string) => void;
+@@ -64,6 +66,8 @@ export default function SortVisionSettings({
+   setAutoSortEnabled,
+   autoFlashEnabled,
+   setAutoFlashEnabled,
++  mirrorCameraEnabled,
++  setMirrorCameraEnabled,
+   confidenceThreshold,
+   setConfidenceThreshold,
+   addLog,
+@@ -493,14 +497,14 @@ export default function SortVisionSettings({
+ 
+ 
+   return (
+-    <Sidebar className="glass border-r border-white/10">
+-      <SidebarHeader>
++    <Sidebar className="glass border-r border-white/10 flex flex-col h-full">
++      <SidebarHeader className="flex-none">
+         <div className="flex items-center justify-between p-4">
+           <h2 className="text-xl font-bold text-gradient">Settings</h2>
+           <SidebarClose className="text-muted-foreground hover:text-white" />
+         </div>
+       </SidebarHeader>
+-      <SidebarContent className="p-0">
++      <SidebarContent className="flex-1 p-0 overflow-hidden">
+         <TooltipProvider>
+           <ScrollArea className="h-full">
+             <SidebarGroup>
+@@ -851,6 +855,17 @@ export default function SortVisionSettings({
+                     onCheckedChange={handleWakeLockToggle}
+                   />
+                 </div>
++                <div className="flex items-center justify-between gap-4">
++                  <Label htmlFor="mirror-camera" className="flex items-center gap-2 break-words">
++                    <Smartphone className="h-4 w-4 flex-shrink-0" />
++                    <span>Mirror Camera (Teachable Machine)</span>
++                  </Label>
++                  <Switch
++                    id="mirror-camera"
++                    checked={mirrorCameraEnabled}
++                    onCheckedChange={setMirrorCameraEnabled}
++                  />
++                </div>
+                 <div className="flex items-center justify-between">
+                   <Label htmlFor="auto-flash" className="flex items-center gap-2">
+                     <Flashlight className="h-4 w-4" />
+@@ -896,8 +911,8 @@ export default function SortVisionSettings({
+           </ScrollArea>
+         </TooltipProvider>
+       </SidebarContent>
+-      <SidebarFooter>
+-        <div className="px-3 sm:p-4 landscape:px-2 landscape:gap-1 sm:pt-0 landscape:pt-0 space-y-2">
++      <SidebarFooter className="flex-none border-t border-white/10 bg-background/50 backdrop-blur-md pt-4 pb-4 sm:pb-6">
++        <div className="px-3 sm:px-4 landscape:px-2 landscape:gap-1 space-y-2">
+           <Button
+             variant="outline"
+             className="w-full justify-start text-muted-foreground hover:text-primary landscape:py-1 landscape:text-xs landscape:px-2"
+diff --git a/src/lib/gemini-fallback.ts b/src/lib/gemini-fallback.ts
+index fc0cb97..a15298b 100644
+--- a/src/lib/gemini-fallback.ts
++++ b/src/lib/gemini-fallback.ts
+@@ -7,8 +7,17 @@
+ const VALID_CATEGORIES = ["BIODEGRADABLE", "NON-BIODEGRADABLE", "E-WASTE"] as const;
+ export type GeminiCategory = typeof VALID_CATEGORIES[number];
+ 
+-const GEMINI_COOLDOWN_MS = 8000; // Prevent spamming — at most once every 8s
+-let lastGeminiCallTime = 0;
++const DEFAULT_COOLDOWN_MS = 15_000;        // 15s cooldown after a successful call
++const RATE_LIMIT_COOLDOWN_MS = 30_000;     // 30s cooldown after a rate-limit error
++let cooldownUntil = 0;                     // Timestamp when cooldown expires
++
++export type GeminiError = "RATE_LIMITED" | "NETWORK" | "TIMEOUT" | "API_ERROR" | "UNKNOWN";
++
++export interface GeminiResult {
++    category: GeminiCategory | null;
++    error?: GeminiError;
++    message?: string;
++}
+ 
+ /**
+  * Returns true if the Gemini fallback can be triggered right now.
+@@ -16,8 +25,15 @@ let lastGeminiCallTime = 0;
+  */
+ export function isGeminiFallbackAvailable(): boolean {
+     if (typeof navigator !== "undefined" && !navigator.onLine) return false;
+-    const now = Date.now();
+-    return now - lastGeminiCallTime > GEMINI_COOLDOWN_MS;
++    return Date.now() >= cooldownUntil;
++}
++
++/**
++ * Returns the number of seconds remaining on the cooldown, or 0 if ready.
++ */
++export function getRemainingCooldown(): number {
++    const remaining = cooldownUntil - Date.now();
++    return remaining > 0 ? Math.ceil(remaining / 1000) : 0;
+ }
+ 
+ /**
+@@ -53,37 +69,44 @@ function captureFrameAsBase64(
+ }
+ 
+ /**
+- * Main entry point: classify an item via Gemini Flash Lite.
+- * @param source - The video or canvas to capture the frame from.
+- * @returns The classified category string, or null if failed/unavailable.
++ * Internal fetch helper with exponential-backoff retry for rate-limit errors (429/468).
+  */
+-export async function classifyWithGemini(
+-    source: HTMLVideoElement | HTMLCanvasElement
+-): Promise<GeminiCategory | null> {
+-    if (!isGeminiFallbackAvailable()) {
+-        console.log("[GeminiFallback] Skipped — cooldown active or offline.");
+-        return null;
+-    }
+-
+-    const imageBase64 = captureFrameAsBase64(source);
+-    if (!imageBase64) {
+-        console.warn("[GeminiFallback] Failed to capture frame.");
+-        return null;
+-    }
+-
+-    lastGeminiCallTime = Date.now();
++async function fetchGeminiAPI(imageBase64: string, retryCount = 0): Promise<GeminiResult> {
++    const MAX_RETRIES = 2;
++    const BASE_RETRY_DELAY_MS = 3000; // 3s, 6s (exponential)
+ 
+     try {
+         const response = await fetch("/api/gemini", {
+             method: "POST",
+             headers: { "Content-Type": "application/json" },
+             body: JSON.stringify({ imageBase64, mimeType: "image/jpeg" }),
+-            signal: AbortSignal.timeout(10000), // 10-second timeout
++            signal: AbortSignal.timeout(15000), // 15-second timeout
+         });
+ 
+         if (!response.ok) {
+-            console.error("[GeminiFallback] API error:", response.status);
+-            return null;
++            const errorData = await response.json().catch(() => ({}));
++            console.error("[GeminiFallback] API error:", response.status, errorData);
++
++            // Retry on rate-limit errors (429/468) with exponential backoff
++            const isRateLimited = errorData.retryable || response.status === 429 || response.status === 468;
++            if (isRateLimited && retryCount < MAX_RETRIES) {
++                const delay = BASE_RETRY_DELAY_MS * Math.pow(2, retryCount); // 3s, 6s
++                console.log(`[GeminiFallback] Rate limited. Retrying in ${delay / 1000}s... (attempt ${retryCount + 1}/${MAX_RETRIES})`);
++                await new Promise(r => setTimeout(r, delay));
++                return fetchGeminiAPI(imageBase64, retryCount + 1);
++            }
++
++            if (response.status === 429 || response.status === 468) {
++                // Set cooldown based on server hint or default
++                const serverCooldown = errorData.retryAfterSeconds
++                    ? errorData.retryAfterSeconds * 1000
++                    : RATE_LIMIT_COOLDOWN_MS;
++                cooldownUntil = Date.now() + serverCooldown;
++                const waitSec = Math.ceil(serverCooldown / 1000);
++                console.warn(`[GeminiFallback] Rate limited. Cooldown set for ${waitSec}s.`);
++                return { category: null, error: "RATE_LIMITED", message: `Rate limited. Please wait ~${waitSec}s before trying again.` };
++            }
++            return { category: null, error: "API_ERROR", message: errorData.error || "Gemini API request failed." };
+         }
+ 
+         const data = await response.json();
+@@ -91,17 +114,48 @@ export async function classifyWithGemini(
+ 
+         if (VALID_CATEGORIES.includes(category as GeminiCategory)) {
+             console.log(`[GeminiFallback] Result: ${category}`);
+-            return category as GeminiCategory;
++            return { category: category as GeminiCategory };
+         }
+ 
+         console.warn(`[GeminiFallback] Invalid category returned: ${category}`);
+-        return null;
++        return { category: null, error: "UNKNOWN", message: `Could not classify the item (returned: ${category}).` };
+     } catch (err: any) {
+         if (err.name === "TimeoutError" || err.name === "AbortError") {
+             console.warn("[GeminiFallback] Request timed out.");
+-        } else {
+-            console.error("[GeminiFallback] Unexpected error:", err);
++            return { category: null, error: "TIMEOUT", message: "Request timed out. Please try again." };
+         }
+-        return null;
++        console.error("[GeminiFallback] Unexpected error:", err);
++        return { category: null, error: "NETWORK", message: "Network error. Check your connection." };
++    }
++}
++
++/**
++ * Main entry point: classify an item via Gemini Flash Lite.
++ * @param source - The video or canvas to capture the frame from.
++ * @returns A GeminiResult with the classified category, or error details if failed.
++ */
++export async function classifyWithGemini(
++    source: HTMLVideoElement | HTMLCanvasElement
++): Promise<GeminiResult> {
++    if (!isGeminiFallbackAvailable()) {
++        const remaining = getRemainingCooldown();
++        console.log(`[GeminiFallback] Skipped — cooldown active (${remaining}s left) or offline.`);
++        return { category: null, error: "RATE_LIMITED", message: `Please wait ~${remaining}s before trying again.` };
+     }
++
++    const imageBase64 = captureFrameAsBase64(source);
++    if (!imageBase64) {
++        console.warn("[GeminiFallback] Failed to capture frame.");
++        return { category: null, error: "UNKNOWN", message: "Failed to capture camera frame." };
++    }
++
++    const result = await fetchGeminiAPI(imageBase64);
++
++    // Set cooldown on SUCCESS to prevent rapid successive calls
++    if (result.category) {
++        cooldownUntil = Date.now() + DEFAULT_COOLDOWN_MS;
++    }
++    // Rate-limit cooldown is already set inside fetchGeminiAPI
++
++    return result;
+ }
+diff --git a/src/lib/roi.ts b/src/lib/roi.ts
+index 904c2fd..7b543fb 100644
+--- a/src/lib/roi.ts
++++ b/src/lib/roi.ts
+@@ -1,42 +1,69 @@
+ import { ROI } from "./types";
+ 
++const TM_INPUT_SIZE = 224;
++
+ /**
+- * Creates an off-screen canvas with the cropped ROI region of the video.
+- * Returns the canvas element for use with model.predict().
+- * Returns null if ROI is disabled.
++ * Prepares a 224×224 canvas for model.predict(), matching Teachable Machine's
++ * preprocessing exactly: center-crop to square, then resize to 224×224.
++ *
++ * If ROI is enabled, the ROI region is extracted first, then center-cropped.
++ * If ROI is disabled, the full video frame is center-cropped.
+  */
+-export function cropVideoFrame(
++export function prepareModelInput(
+     video: HTMLVideoElement,
+     roi: ROI
+ ): HTMLCanvasElement | null {
+-    if (!roi.enabled) return null;
+     if (video.readyState < video.HAVE_ENOUGH_DATA) return null;
+ 
+     const vw = video.videoWidth;
+     const vh = video.videoHeight;
++    if (vw === 0 || vh === 0) return null;
+ 
+-    const sx = Math.round(roi.x * vw);
+-    const sy = Math.round(roi.y * vh);
+-    const sw = Math.round(roi.width * vw);
+-    const sh = Math.round(roi.height * vh);
++    // Determine the source rectangle
++    let sx: number, sy: number, sw: number, sh: number;
+ 
+-    // Safety: clamp to valid bounds
+-    const clampedSw = Math.min(sw, vw - sx);
+-    const clampedSh = Math.min(sh, vh - sy);
++    if (roi.enabled) {
++        sx = Math.round(roi.x * vw);
++        sy = Math.round(roi.y * vh);
++        sw = Math.min(Math.round(roi.width * vw), vw - sx);
++        sh = Math.min(Math.round(roi.height * vh), vh - sy);
++        if (sw <= 0 || sh <= 0) return null;
++    } else {
++        sx = 0;
++        sy = 0;
++        sw = vw;
++        sh = vh;
++    }
+ 
+-    if (clampedSw <= 0 || clampedSh <= 0) return null;
++    // Center-crop to square (matching Teachable Machine behavior)
++    const cropSize = Math.min(sw, sh);
++    const cropX = sx + Math.round((sw - cropSize) / 2);
++    const cropY = sy + Math.round((sh - cropSize) / 2);
+ 
++    // Draw into a 224×224 canvas
+     const canvas = document.createElement("canvas");
+-    canvas.width = clampedSw;
+-    canvas.height = clampedSh;
+-
++    canvas.width = TM_INPUT_SIZE;
++    canvas.height = TM_INPUT_SIZE;
+     const ctx = canvas.getContext("2d");
+     if (!ctx) return null;
+ 
+-    ctx.drawImage(video, sx, sy, clampedSw, clampedSh, 0, 0, clampedSw, clampedSh);
++    ctx.drawImage(video, cropX, cropY, cropSize, cropSize, 0, 0, TM_INPUT_SIZE, TM_INPUT_SIZE);
+     return canvas;
+ }
+ 
++/**
++ * Legacy: Creates an off-screen canvas with the cropped ROI region of the video.
++ * Now always outputs 224×224 to match Teachable Machine expectations.
++ * Returns null if ROI is disabled.
++ */
++export function cropVideoFrame(
++    video: HTMLVideoElement,
++    roi: ROI
++): HTMLCanvasElement | null {
++    if (!roi.enabled) return null;
++    return prepareModelInput(video, roi);
++}
++
+ /**
+  * Captures a JPEG data URI of the cropped ROI region.
+  * If ROI is disabled, captures the full frame.
+commit 22314a0f24bc73a4f1aac7e61775450bc0acf4bb
+Author: Jencel17 <temporado.jencel123@gmail.com>
+Date:   Thu Mar 5 19:27:15 2026 +0800
+
+    fix: set CONFIDENCE_TOO_LOW in detection flow and add always-visible Ask AI button in status banner

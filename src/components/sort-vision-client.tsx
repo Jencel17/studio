@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { Camera, CameraOff, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, CheckCircle, XCircle, TestTube, Download, Sparkles, Lock, Unlock, BluetoothConnected, BluetoothOff, Droplets, Leaf, Ban, Cpu } from "lucide-react";
+import { Camera, CameraOff, Flashlight, FlashlightOff, AlertTriangle, Upload, Hourglass, CheckCircle, XCircle, TestTube, Download, Sparkles, Lock, Unlock, BluetoothConnected, BluetoothOff, Droplets, Leaf, Ban, Cpu, Pause, Play } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { cn } from "@/lib/utils";
 import { SidebarTrigger } from "@/components/ui/sidebar";
@@ -27,7 +27,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Alert, AlertTitle, AlertDescription } from "@/components/ui/alert";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
-import { cropVideoFrame, cropCanvasCapture } from "@/lib/roi";
+import { prepareModelInput, cropCanvasCapture } from "@/lib/roi";
 import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { sendCommand as sendBluetoothCommand, isConnected as isBtConnectedCheck, getLatestStatus, type ESP32Status } from "@/lib/bluetooth";
@@ -35,7 +35,7 @@ import { interpretDetectionsLocal, type DetectionState } from "@/lib/detection";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Slider } from "@/components/ui/slider";
 import { Input } from "@/components/ui/input";
-import { classifyWithGemini, isGeminiFallbackAvailable } from "@/lib/gemini-fallback";
+import { classifyWithLocalAI, type LocalAIResult } from "@/lib/local-ai-fallback";
 
 
 type CommandStatus = {
@@ -44,7 +44,8 @@ type CommandStatus = {
 };
 
 interface SortVisionClientProps {
-  model: tmImage.CustomMobileNet | null;
+  getModel: () => tmImage.CustomMobileNet | null;
+  hasModel: boolean;
   appStatus: AppStatus;
   setAppStatus: (status: AppStatus) => void;
   isTestMode: boolean;
@@ -52,6 +53,7 @@ interface SortVisionClientProps {
   autoCaptureEnabled: boolean;
   autoSortEnabled: boolean;
   autoFlashEnabled: boolean;
+  mirrorCameraEnabled: boolean;
   tmImageRef: MutableRefObject<typeof tmImage | null>;
   logs: LogEntry[];
   setLogs: (logs: LogEntry[]) => void;
@@ -73,7 +75,8 @@ const CAMERA_WARMUP_DELAY = 3000;
 const DETECTION_SETTLE_DELAY = 1500;
 
 export default function SortVisionClient({
-  model,
+  getModel,
+  hasModel,
   appStatus,
   setAppStatus,
   isTestMode,
@@ -81,6 +84,7 @@ export default function SortVisionClient({
   autoCaptureEnabled,
   autoSortEnabled,
   autoFlashEnabled,
+  mirrorCameraEnabled,
   tmImageRef,
   logs,
   setLogs,
@@ -110,6 +114,9 @@ export default function SortVisionClient({
   const [eWasteTrash, setEWasteTrash] = useState<number>(0);
   const [stablePrediction, setStablePrediction] = useState<Prediction | null>(null);
   const [isAiFallbackActive, setIsAiFallbackActive] = useState(false);
+  const [sorterStatus, setSorterStatus] = useState<string>("READY");
+  const [isDetectionPaused, setIsDetectionPaused] = useState(false);
+  const [recentSorts, setRecentSorts] = useState<string[]>([]);
 
   // Local state for the confidence input to allow smooth typing
   const [inputValue, setInputValue] = useState(String(Math.round(confidenceThreshold * 100)));
@@ -121,6 +128,7 @@ export default function SortVisionClient({
   const ambiguousDetectionTimer = useRef<NodeJS.Timeout | null>(null);
   const detectionTimer = useRef<NodeJS.Timeout | null>(null);
   const isPredictingRef = useRef(false);
+  const aiFallbackTimer = useRef<NodeJS.Timeout | null>(null);
 
   const { toast } = useToast();
 
@@ -433,6 +441,12 @@ export default function SortVisionClient({
       return false;
     }
 
+    if (sorterStatus === "BUSY") {
+      addLog(`Cannot send sort command: Sorter is busy.`);
+      toast({ variant: "destructive", title: "Sorter Busy", description: "The sorter is still processing. Please wait." });
+      return false;
+    }
+
     try {
       await sendBluetoothCommand(arduinoCommand);
       setCommandStatus({ status: "SUCCESS", message: `Success: Sorted ${classificationLabel}` });
@@ -444,7 +458,7 @@ export default function SortVisionClient({
       toast({ variant: "destructive", title: "Bluetooth Error", description: `Could not send command.` });
       return false;
     }
-  }, [addLog, toast, isTestMode, isBtConnected]);
+  }, [addLog, toast, isTestMode, isBtConnected, sorterStatus]);
 
   const handleSortAndRestart = useCallback(async (classification: string) => {
     const flashState = isFlashOn;
@@ -462,6 +476,9 @@ export default function SortVisionClient({
     if (classification !== "RESTART_NO_SORT") {
       addLog(`Sending command for ${classification}...`);
       sortSuccess = await sendSortCommand(classification);
+      if (sortSuccess || isTestMode) {
+        setRecentSorts(prev => [classification, ...prev].slice(0, 5));
+      }
     } else {
       sortSuccess = true; // No sort needed, so we can proceed
     }
@@ -476,6 +493,7 @@ export default function SortVisionClient({
   }, [stopCamera, addLog, sendSortCommand, startCamera, setAppStatus, sendLightCommand, isFlashOn, isFocusLocked]);
 
   const runClassification = useCallback(async () => {
+    const model = getModel();
     if (isPredictingRef.current || !isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
       return;
     }
@@ -488,14 +506,17 @@ export default function SortVisionClient({
     isPredictingRef.current = true;
 
     try {
-      const croppedCanvas = cropVideoFrame(video, roi);
-      const predictionSource = croppedCanvas || video;
-      const predictions = await model.predict(predictionSource as any);
+      const modelInput = prepareModelInput(video, roi);
+      if (!modelInput) { isPredictingRef.current = false; return; }
+      const predictions = await model.predict(modelInput, mirrorCameraEnabled);
       setCurrentPredictions(predictions);
 
       const filteredPredictions = predictions.filter(
         (p) => p.className.toLowerCase() !== "background"
       );
+      // Check if background is the dominant prediction — skip AI fallback if so
+      const bgPrediction = predictions.find(p => p.className.toLowerCase() === "background");
+      const isBackgroundDominant = bgPrediction && bgPrediction.probability > 0.6;
 
       const localResult = interpretDetectionsLocal(
         filteredPredictions,
@@ -537,9 +558,9 @@ export default function SortVisionClient({
                       }
                       addLog("Re-classifying with light on...");
                       try {
-                        const finalCropped = cropVideoFrame(videoRef.current, roi);
-                        const finalSource = finalCropped || videoRef.current;
-                        const finalPredictions = await model.predict(finalSource as any);
+                        const finalInput = prepareModelInput(videoRef.current, roi);
+                        if (!finalInput) { handleSortAndRestart("RESTART_NO_SORT"); return; }
+                        const finalPredictions = await model.predict(finalInput, mirrorCameraEnabled);
                         const finalFiltered = finalPredictions.filter(p => p.className.toLowerCase() !== 'background');
                         const finalResult = interpretDetectionsLocal(finalFiltered, confidenceThreshold);
                         if (finalResult.detectionState === 'SINGLE_OBJECT' && finalResult.primaryObject) {
@@ -547,23 +568,23 @@ export default function SortVisionClient({
                           setAppStatus("SORTING");
                           handleSortAndRestart(finalResult.primaryObject);
                         } else {
-                          addLog(`Final check failed (${finalResult.detectionState}). Trying Gemini AI fallback...`);
-                          if (isGeminiFallbackAvailable() && videoRef.current) {
+                          addLog(`Final check failed (${finalResult.detectionState}). Trying Local AI fallback...`);
+                          if (videoRef.current) {
                             setIsAiFallbackActive(true);
                             setAppStatus("AI_FALLBACK");
-                            classifyWithGemini(videoRef.current).then((geminiResult) => {
+                            classifyWithLocalAI(videoRef.current).then((result: LocalAIResult) => {
                               setIsAiFallbackActive(false);
-                              if (geminiResult) {
-                                addLog(`Gemini AI classified as: ${geminiResult}. Sorting.`);
+                              if (result.category) {
+                                addLog(`Local AI classified as: ${result.category}. Sorting.`);
                                 setAppStatus("SORTING");
-                                handleSortAndRestart(geminiResult);
+                                handleSortAndRestart(result.category);
                               } else {
-                                addLog(`Gemini AI fallback also failed. Skipping sort.`);
+                                addLog(`Local AI fallback could not classify.${result.error ? ` (${result.error})` : ""} Skipping sort.`);
                                 handleSortAndRestart("RESTART_NO_SORT");
                               }
                             });
                           } else {
-                            addLog(`Gemini fallback unavailable (offline or cooldown). Skipping sort.`);
+                            addLog(`Local AI fallback unavailable (no video source). Skipping sort.`);
                             handleSortAndRestart("RESTART_NO_SORT");
                           }
                         }
@@ -601,7 +622,7 @@ export default function SortVisionClient({
         setPrimaryPrediction(null);
 
         const isUncertain = localResult.detectionState === 'AMBIGUOUS' || (localResult.detectionState === 'NO_DETECTION' && filteredPredictions.some(p => p.probability > 0.5));
-        const nextStatus: AppStatus = isUncertain ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
+        const nextStatus: AppStatus = (isUncertain && !isBackgroundDominant) ? "CONFIDENCE_TOO_LOW" : "AWAITING_OBJECT";
 
         if (appStatus !== nextStatus) {
           setAppStatus(nextStatus);
@@ -630,7 +651,45 @@ export default function SortVisionClient({
       clearTimeout(ambiguousDetectionTimer.current);
       ambiguousDetectionTimer.current = null;
     }
-  }, [isCameraOn, model, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction, confidenceThreshold, detectionState, currentPredictions, roi]);
+  }, [isCameraOn, getModel, appStatus, autoCaptureEnabled, autoSortEnabled, isCollectingImages, addLog, setAppStatus, startImageCollection, handleSortAndRestart, sendLightCommand, autoFlashEnabled, isFlashOn, stablePrediction, confidenceThreshold, detectionState, currentPredictions, roi, mirrorCameraEnabled]);
+
+  // Auto-trigger local AI when stuck at CONFIDENCE_TOO_LOW for too long
+  const AUTO_AI_FALLBACK_DELAY = 4000; // 4 seconds
+  useEffect(() => {
+    if (appStatus === 'CONFIDENCE_TOO_LOW' && autoSortEnabled && !isAiFallbackActive && !isDetectionPaused && isCameraOn && videoRef.current) {
+      if (!aiFallbackTimer.current) {
+        aiFallbackTimer.current = setTimeout(() => {
+          aiFallbackTimer.current = null;
+          if (!videoRef.current || isAiFallbackActive) return;
+          addLog("TF model uncertain for too long. Auto-triggering Local AI fallback...");
+          setIsAiFallbackActive(true);
+          setAppStatus("AI_FALLBACK");
+          classifyWithLocalAI(videoRef.current!).then((result: LocalAIResult) => {
+            setIsAiFallbackActive(false);
+            if (result.category) {
+              addLog(`Local AI auto-classified as: ${result.category}. Sorting.`);
+              setAppStatus("SORTING");
+              handleSortAndRestart(result.category);
+            } else {
+              addLog(`Local AI auto-fallback could not classify.${result.error ? ` (${result.error})` : ""}`);
+              setAppStatus("AWAITING_OBJECT");
+            }
+          });
+        }, AUTO_AI_FALLBACK_DELAY);
+      }
+    } else {
+      if (aiFallbackTimer.current) {
+        clearTimeout(aiFallbackTimer.current);
+        aiFallbackTimer.current = null;
+      }
+    }
+    return () => {
+      if (aiFallbackTimer.current) {
+        clearTimeout(aiFallbackTimer.current);
+        aiFallbackTimer.current = null;
+      }
+    };
+  }, [appStatus, autoSortEnabled, isAiFallbackActive, isDetectionPaused, isCameraOn, addLog, setAppStatus, handleSortAndRestart]);
 
   useEffect(() => {
     return () => {
@@ -647,7 +706,7 @@ export default function SortVisionClient({
       setAppStatus("AWAITING_MODEL");
     } else {
       // Check if model is loaded
-      if (!model) {
+      if (!hasModel) {
         addLog("Cannot start camera: No model loaded.");
         toast({
           variant: "destructive",
@@ -658,7 +717,7 @@ export default function SortVisionClient({
       }
 
       // Check if model has a background class
-      const modelLabels = model.getClassLabels();
+      const modelLabels = getModel()?.getClassLabels() || [];
       const hasBackground = modelLabels.some(label => label.toLowerCase() === 'background');
 
       if (!hasBackground) {
@@ -773,11 +832,11 @@ export default function SortVisionClient({
 
   useEffect(() => {
     const activeStates: AppStatus[] = ['AWAITING_OBJECT', 'CONFIDENCE_TOO_LOW'];
-    const shouldRunLoop = isCameraOn && model && !predictionIntervalRef.current && activeStates.includes(appStatus) && !isCollectingImages;
+    const shouldRunLoop = isCameraOn && getModel() && !predictionIntervalRef.current && activeStates.includes(appStatus) && !isCollectingImages && !isDetectionPaused;
 
     if (shouldRunLoop) {
       predictionIntervalRef.current = setInterval(runClassification, PREDICTION_INTERVAL);
-    } else if ((!isCameraOn || !model || isCollectingImages || !activeStates.includes(appStatus)) && predictionIntervalRef.current) {
+    } else if ((!isCameraOn || !getModel() || isCollectingImages || !activeStates.includes(appStatus) || isDetectionPaused) && predictionIntervalRef.current) {
       clearInterval(predictionIntervalRef.current);
       predictionIntervalRef.current = undefined;
     }
@@ -788,7 +847,7 @@ export default function SortVisionClient({
         predictionIntervalRef.current = undefined;
       }
     };
-  }, [isCameraOn, model, runClassification, addLog, isCollectingImages, appStatus]);
+  }, [isCameraOn, getModel, runClassification, addLog, isCollectingImages, appStatus, isDetectionPaused]);
 
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -810,6 +869,7 @@ export default function SortVisionClient({
     const onDisconnected = () => {
       addLog("Bluetooth device disconnected.");
       setIsBtConnected(false);
+      setSorterStatus("READY");
       setAlcoholStatus(null);
       setAlcoholLevel(0);
       setBioTrash(0);
@@ -818,6 +878,7 @@ export default function SortVisionClient({
     };
     const onStatusUpdate = (e: Event) => {
       const detail = (e as CustomEvent<ESP32Status>).detail;
+      if (detail.sorterStatus) setSorterStatus(detail.sorterStatus.toUpperCase());
       if (detail.alcoholStatus) setAlcoholStatus(detail.alcoholStatus);
       if (detail.alcoholLevel !== undefined) setAlcoholLevel(detail.alcoholLevel);
       if (detail.bioTrash !== undefined) setBioTrash(detail.bioTrash);
@@ -833,6 +894,7 @@ export default function SortVisionClient({
     // This ensures values persist when navigating from admin to client view
     if (isBtConnectedCheck()) {
       const status = getLatestStatus();
+      if (status.sorterStatus) setSorterStatus(status.sorterStatus.toUpperCase());
       if (status.alcoholStatus) setAlcoholStatus(status.alcoholStatus);
       if (status.alcoholLevel !== undefined) setAlcoholLevel(status.alcoholLevel);
       if (status.bioTrash !== undefined) setBioTrash(status.bioTrash);
@@ -999,7 +1061,7 @@ export default function SortVisionClient({
           <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-muted/50 border-2 border-border/30">
             <video
               ref={videoRef}
-              className="h-full w-full object-cover"
+              className={cn("h-full w-full object-cover", mirrorCameraEnabled && "scale-x-[-1]")}
               playsInline
               muted
               autoPlay
@@ -1037,6 +1099,38 @@ export default function SortVisionClient({
                 </div>
               </>
             )}
+
+            {/* Recently Sorted Overlay for Admin Test View */}
+            <div className="absolute bottom-4 left-4 z-40 hidden md:block select-none pointer-events-none">
+              <Card className="bg-black/50 border-white/10 backdrop-blur-md p-3 w-[160px] shadow-xl">
+                <h4 className="text-white/60 text-[10px] font-bold uppercase tracking-wider mb-2">Recently Sorted</h4>
+                {recentSorts.length === 0 ? (
+                  <p className="text-white/40 text-[10px] italic">No items yet</p>
+                ) : (
+                  <div className="flex flex-col gap-1.5">
+                    {recentSorts.map((sort, i) => {
+                      const l = sort.toLowerCase();
+                      const isBiodegradable = l === "paper" || l === "biodegradable";
+                      const isNonBio = l === "metal" || l === "non-biodegradable";
+                      const isEWaste = l === "plastic" || l === "e-waste";
+                      return (
+                        <div key={i} className="flex items-center gap-2">
+                          <div className={cn(
+                            "w-1.5 h-1.5 rounded-full flex-shrink-0 animate-in fade-in zoom-in",
+                            isBiodegradable && "bg-emerald-500",
+                            isNonBio && "bg-rose-500",
+                            isEWaste && "bg-amber-500",
+                            !isBiodegradable && !isNonBio && !isEWaste && "bg-blue-500",
+                          )} />
+                          <span className="text-white text-[10px] font-medium truncate opacity-90">{sort.toUpperCase()}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+              </Card>
+            </div>
+
             <PredictionDisplay
               isCameraOn={isCameraOn}
               hasCameraPermission={hasCameraPermission}
@@ -1044,14 +1138,14 @@ export default function SortVisionClient({
               appStatus={appStatus}
               isCollectingImages={isCollectingImages}
               collectedImages={collectedImages}
-              model={model}
+              hasModel={hasModel}
               detectionState={detectionState}
               primaryPrediction={primaryPrediction}
               stablePrediction={stablePrediction}
             />
           </div>
           <div className="hidden md:flex flex-col items-center justify-center p-4 bg-muted/30 rounded-lg border-2 border-dashed border-border/20 h-full w-[240px]">
-            <DetectionRates model={model} currentPredictions={currentPredictions} />
+            <DetectionRates getModel={getModel} currentPredictions={currentPredictions} />
           </div>
         </div>
         <Accordion type="single" collapsible>
@@ -1075,44 +1169,62 @@ export default function SortVisionClient({
           <SidebarTrigger />
           <p className="text-xs text-muted-foreground ml-2">Press <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">⌘</kbd> <kbd className="pointer-events-none inline-flex h-5 select-none items-center gap-1 rounded border bg-muted px-1.5 font-mono text-[10px] font-medium text-muted-foreground opacity-100">B</kbd> to toggle.</p>
         </div>
-        <TooltipProvider>
-          <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
-            <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={appStatus === 'LOADING_LIBS' || isCollectingImages}>
-              {isCameraOn ? <CameraOff /> : <Camera />}
-              {isCameraOn ? "Stop" : "Start"}
-            </Button>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled} aria-label="Toggle Flash">
-                  {isFlashOn ? <FlashlightOff /> : <Flashlight />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Toggle Flash</p>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button onClick={toggleFocus} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled} aria-label="Toggle Focus Lock">
-                  {isFocusLocked ? <Unlock /> : <Lock />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>{isFocusLocked ? 'Unlock Focus' : 'Lock Focus'}</p>
-              </TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || !model || isCollectingImages} aria-label="Download Training Images">
-                  <Download />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Capture training images</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </TooltipProvider>
+        <div className="flex flex-wrap justify-center gap-2 w-full sm:w-auto">
+          <Button onClick={toggleCamera} variant="outline" className="flex-grow sm:flex-grow-0" disabled={appStatus === 'LOADING_LIBS' || isCollectingImages}>
+            {isCameraOn ? <CameraOff /> : <Camera />}
+            {isCameraOn ? "Stop" : "Start"}
+          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={toggleFlash} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled} aria-label="Toggle Flash">
+                {isFlashOn ? <FlashlightOff /> : <Flashlight />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Toggle Flash</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={toggleFocus} variant="outline" size="icon" disabled={!isCameraOn || isCameraControlDisabled} aria-label="Toggle Focus Lock">
+                {isFocusLocked ? <Unlock /> : <Lock />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{isFocusLocked ? 'Unlock Focus' : 'Lock Focus'}</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button onClick={startImageCollection} variant="outline" size="icon" disabled={!isCameraOn || !hasModel || isCollectingImages} aria-label="Download Training Images">
+                <Download />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>Capture training images</p>
+            </TooltipContent>
+          </Tooltip>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                onClick={() => {
+                  setIsDetectionPaused(prev => !prev);
+                  addLog(isDetectionPaused ? "Detection resumed." : "Detection paused.");
+                }}
+                variant={isDetectionPaused ? "default" : "outline"}
+                size="icon"
+                disabled={!isCameraOn || isCameraControlDisabled}
+                aria-label={isDetectionPaused ? "Resume Detection" : "Pause Detection"}
+                className={isDetectionPaused ? "bg-amber-500 hover:bg-amber-600 text-white" : ""}
+              >
+                {isDetectionPaused ? <Play /> : <Pause />}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p>{isDetectionPaused ? 'Resume Detection' : 'Pause Detection'}</p>
+            </TooltipContent>
+          </Tooltip>
+        </div>
       </CardFooter>
     </Card>
   );

@@ -18,7 +18,7 @@ interface PredictionDisplayProps {
     appStatus: AppStatus;
     isCollectingImages: boolean;
     collectedImages: string[];
-    model: tmImage.CustomMobileNet | null;
+    hasModel: boolean;
     detectionState: DetectionState;
     primaryPrediction: Prediction | null;
     stablePrediction: Prediction | null;
@@ -31,7 +31,7 @@ export default function PredictionDisplay({
     appStatus,
     isCollectingImages,
     collectedImages,
-    model,
+    hasModel,
     detectionState,
     primaryPrediction,
     stablePrediction,
@@ -83,7 +83,7 @@ export default function PredictionDisplay({
             );
         }
 
-        if (appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || (!model && appStatus !== "AWAITING_OBJECT")) {
+        if (appStatus === 'LOADING_LIBS' || appStatus === 'MODEL_LOADING' || (!hasModel && appStatus !== "AWAITING_OBJECT")) {
             return (
                 <div className="absolute inset-0 flex flex-col items-center justify-center bg-background/80 backdrop-blur-sm">
                     <Upload className="h-16 w-16 text-muted-foreground animate-pulse" />

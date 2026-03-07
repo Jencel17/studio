@@ -17,7 +17,14 @@ import { Loader2 } from "lucide-react";
 import { useAuth } from "@/contexts/auth-context";
 
 export default function ClientPage() {
-    const [model, setModel] = useState<tmImage.CustomMobileNet | null>(null);
+    const [isModelLoaded, setIsModelLoaded] = useState(false);
+    const modelRef = useRef<tmImage.CustomMobileNet | null>(null);
+
+    const getModel = useCallback(() => modelRef.current, []);
+    const setModelWrapper = useCallback((m: tmImage.CustomMobileNet | null) => {
+        modelRef.current = m;
+        setIsModelLoaded(!!m);
+    }, []);
     const [appStatus, setAppStatus] = useState<AppStatus>("LOADING_LIBS");
     const [logs, setLogs] = useState<LogEntry[]>([]);
 
@@ -26,6 +33,9 @@ export default function ClientPage() {
     // Shared state
     const [confidenceThreshold] = usePersistentState('confidenceThreshold', 0.8);
     const [autoSortEnabled] = usePersistentState('autoSortEnabled', false);
+    const [mirrorCameraEnabled] = usePersistentState('mirrorCameraEnabled', false);
+    const [wakeLockEnabled] = usePersistentState('wakeLockEnabled', false);
+    const [autoFlashEnabled] = usePersistentState('autoFlashEnabled', false);
     const [roi] = usePersistentState<ROI>('roi', DEFAULT_ROI);
 
     const tmImageRef = useRef<typeof tmImage | null>(null);
@@ -38,6 +48,31 @@ export default function ClientPage() {
             router.push('/login');
         }
     }, [loading, user, router]);
+
+    // Auto-request fullscreen on first tap (browser requires user gesture)
+    useEffect(() => {
+        if (!user) return;
+
+        const requestFullscreen = () => {
+            const el = document.documentElement;
+            if (!document.fullscreenElement) {
+                el.requestFullscreen?.().catch(() => {
+                    // Fullscreen not supported or blocked — silently ignore
+                });
+            }
+            // Only need one tap
+            document.removeEventListener('click', requestFullscreen);
+            document.removeEventListener('touchstart', requestFullscreen);
+        };
+
+        document.addEventListener('click', requestFullscreen, { once: true });
+        document.addEventListener('touchstart', requestFullscreen, { once: true });
+
+        return () => {
+            document.removeEventListener('click', requestFullscreen);
+            document.removeEventListener('touchstart', requestFullscreen);
+        };
+    }, [user]);
 
     const addLog = useCallback((message: string) => {
         const newLog: LogEntry = {
@@ -92,19 +127,22 @@ export default function ClientPage() {
                 appStatus === 'LOADING_LIBS' ? <SplashScreen /> : (
                     <ClientLoader
                         tmImageRef={tmImageRef}
-                        setModel={setModel}
+                        setModel={setModelWrapper}
                         setAppStatus={setAppStatus}
-                        model={model}
+                        hasModel={isModelLoaded}
                     >
                         <ErrorBoundary fallbackTitle="Classification Error">
                             <ClientView
-                                model={model}
+                                getModel={getModel}
                                 appStatus={appStatus}
                                 setAppStatus={setAppStatus}
                                 tmImageRef={tmImageRef}
                                 addLog={addLog}
                                 confidenceThreshold={confidenceThreshold}
                                 autoSortEnabled={autoSortEnabled}
+                                mirrorCameraEnabled={mirrorCameraEnabled}
+                                wakeLockEnabled={wakeLockEnabled}
+                                autoFlashEnabled={autoFlashEnabled}
                                 roi={roi}
                             />
                         </ErrorBoundary>
@@ -123,19 +161,19 @@ function ClientLoader({
     tmImageRef,
     setModel,
     setAppStatus,
-    model
+    hasModel
 }: {
     children: React.ReactNode,
     tmImageRef: any,
     setModel: (m: any) => void,
     setAppStatus: (s: AppStatus) => void,
-    model: any
+    hasModel: boolean
 }) {
     const [loadingMsg, setLoadingMsg] = useState("");
 
     useEffect(() => {
         const loadDefaultModel = async () => {
-            if (model) return;
+            if (hasModel) return;
             if (!tmImageRef.current) return;
 
             setLoadingMsg("Checking for saved models...");
@@ -163,9 +201,9 @@ function ClientLoader({
         };
 
         loadDefaultModel();
-    }, [tmImageRef, model, setModel, setAppStatus]);
+    }, [tmImageRef, hasModel, setModel, setAppStatus]);
 
-    if (!model) {
+    if (!hasModel) {
         return (
             <div className="flex h-full w-full flex-col items-center justify-center p-6 text-center text-white space-y-4">
                 <Loader2 className="h-10 w-10 animate-spin" />

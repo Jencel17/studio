@@ -1,10 +1,9 @@
-
 {
   "name": "SortVision",
   "short_name": "SortVision",
   "description": "AI-powered trash sorting assistant",
   "start_url": "/",
-  "display": "standalone",
+  "display": "fullscreen",
   "background_color": "#282c34",
   "theme_color": "#282c34",
   "icons": [
