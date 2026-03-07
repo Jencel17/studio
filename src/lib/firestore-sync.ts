@@ -122,6 +122,7 @@ export interface LiveDetectionState {
     timestamp: number;
     deviceId: string;
     recentSorts?: string[];
+    sorterStatus?: string;
 }
 
 const LIVE_DETECTION_DOC = doc(db, "app", "liveDetection");

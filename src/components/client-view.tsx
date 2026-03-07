@@ -223,6 +223,7 @@ export default function ClientView({
     const runClassification = useCallback(async () => {
         const model = getModel();
         if (isPredictingRef.current || !videoRef.current || !model) return;
+        if (sorterStatus === "BUSY") return; // Respect sorting phase, halt all detections
         if (appStatus !== 'AWAITING_OBJECT' && appStatus !== 'CONFIDENCE_TOO_LOW') return;
         if (viewState !== "IDLE" && viewState !== "DETECTED") return;
         const video = videoRef.current;
@@ -549,6 +550,7 @@ export default function ClientView({
                     timestamp: now,
                     deviceId: 'client',
                     recentSorts,
+                    sorterStatus,
                 }).catch(console.error);
             }
         } else if (stablePrediction) {
@@ -562,10 +564,11 @@ export default function ClientView({
                     timestamp: now,
                     deviceId: 'client',
                     recentSorts,
+                    sorterStatus,
                 }).catch(console.error);
             }
         }
-    }, [stablePrediction, appStatus, viewState]);
+    }, [stablePrediction, appStatus, viewState, recentSorts, sorterStatus]);
 
     useEffect(() => {
         if (isCameraOn && (appStatus === "AWAITING_OBJECT" || appStatus === "CONFIDENCE_TOO_LOW")) {

@@ -531,6 +531,33 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
                     </CardContent>
                 </Card>
 
+                {/* Sorter Status */}
+                {liveDetection && (
+                    <Card className="border-white/5 bg-background/50 shadow-xl overflow-hidden">
+                        <CardContent className="p-4 flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className={cn(
+                                    "p-2 rounded-lg",
+                                    liveDetection.sorterStatus === "READY" ? "bg-emerald-500/20 text-emerald-500" :
+                                        liveDetection.sorterStatus === "BUSY" ? "bg-amber-500/20 text-amber-500" :
+                                            "bg-rose-500/20 text-rose-500"
+                                )}>
+                                    <Activity className="h-5 w-5" />
+                                </div>
+                                <div>
+                                    <p className="text-xs text-muted-foreground uppercase font-bold tracking-wider mb-0.5">Sorter Action</p>
+                                    <p className="text-sm font-bold uppercase">{liveDetection.sorterStatus || "UNKNOWN"}</p>
+                                </div>
+                            </div>
+                            <span className={cn(
+                                "h-2 w-2 rounded-full",
+                                liveDetection.sorterStatus === "READY" ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.8)]" :
+                                    liveDetection.sorterStatus === "BUSY" ? "bg-amber-500 animate-ping" : "bg-rose-500"
+                            )}></span>
+                        </CardContent>
+                    </Card>
+                )}
+
                 {/* Recently Sorted Items */}
                 {liveDetection?.recentSorts && liveDetection.recentSorts.length > 0 && (
                     <Card className="border-white/5 bg-background/50 shadow-xl overflow-hidden">

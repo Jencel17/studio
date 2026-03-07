@@ -497,6 +497,7 @@ export default function SortVisionClient({
     if (isPredictingRef.current || !isCameraOn || !videoRef.current?.srcObject || !model || !streamRef.current?.active) {
       return;
     }
+    if (sorterStatus === "BUSY") return; // Respect sorting phase, halt all detections
 
     const video = videoRef.current;
     if (video.readyState < video.HAVE_ENOUGH_DATA) {
