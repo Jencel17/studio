@@ -158,9 +158,30 @@ export const getSummaryStats = async (): Promise<SummaryStats> => {
     const categoryStats = await getAllCategoryStats();
     const trainingCount = await getTrainingImageCount();
 
-    const totalSorted = categoryStats.reduce((sum, c) => sum + c.count, 0);
-    const totalCorrect = categoryStats.reduce((sum, c) => sum + c.correctCount, 0);
-    const totalIncorrect = categoryStats.reduce((sum, c) => sum + c.incorrectCount, 0);
+    const aggregatedMap = new Map<string, CategoryStats>();
+    for (const item of categoryStats) {
+        let formalLabel = item.category.toLowerCase().trim();
+        if (formalLabel === "paper") formalLabel = "biodegradable";
+        if (formalLabel === "plastic") formalLabel = "e-waste";
+        if (formalLabel === "metal") formalLabel = "non-biodegradable";
+
+        if (!aggregatedMap.has(formalLabel)) {
+            aggregatedMap.set(formalLabel, { ...item, category: formalLabel });
+        } else {
+            const existing = aggregatedMap.get(formalLabel)!;
+            existing.count += item.count;
+            existing.correctCount += item.correctCount;
+            existing.incorrectCount += item.incorrectCount;
+            if (item.lastUpdated > existing.lastUpdated) {
+                existing.lastUpdated = item.lastUpdated;
+            }
+        }
+    }
+    const aggregatedStats = Array.from(aggregatedMap.values());
+
+    const totalSorted = aggregatedStats.reduce((sum, c) => sum + c.count, 0);
+    const totalCorrect = aggregatedStats.reduce((sum, c) => sum + c.correctCount, 0);
+    const totalIncorrect = aggregatedStats.reduce((sum, c) => sum + c.incorrectCount, 0);
     const accuracyRate = totalSorted > 0 ? (totalCorrect / totalSorted) * 100 : 0;
 
     return {
@@ -168,7 +189,7 @@ export const getSummaryStats = async (): Promise<SummaryStats> => {
         totalCorrect,
         totalIncorrect,
         accuracyRate,
-        categoryBreakdown: categoryStats.sort((a, b) => b.count - a.count),
+        categoryBreakdown: aggregatedStats.sort((a, b) => b.count - a.count),
         trainingImagesCount: trainingCount,
     };
 };

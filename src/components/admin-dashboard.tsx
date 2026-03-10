@@ -98,7 +98,7 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
             }
 
             if (data.categoryStats || data.dailyStats) {
-                const categoryBreakdown = data.categoryStats
+                const rawBreakdown = data.categoryStats
                     ? Object.entries(data.categoryStats).map(([category, s]) => ({
                         category,
                         count: s.count,
@@ -107,6 +107,23 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
                         lastUpdated: s.lastUpdated ? new Date(s.lastUpdated) : new Date()
                     }))
                     : [];
+
+                const aggregatedMap = new Map<string, any>();
+                for (const item of rawBreakdown) {
+                    const formalLabel = getCategoryLabel(item.category).toLowerCase();
+                    if (!aggregatedMap.has(formalLabel)) {
+                        aggregatedMap.set(formalLabel, { ...item, category: formalLabel });
+                    } else {
+                        const existing = aggregatedMap.get(formalLabel);
+                        existing.count += item.count;
+                        existing.correctCount += item.correctCount;
+                        existing.incorrectCount += item.incorrectCount;
+                        if (item.lastUpdated > existing.lastUpdated) {
+                            existing.lastUpdated = item.lastUpdated;
+                        }
+                    }
+                }
+                const categoryBreakdown = Array.from(aggregatedMap.values());
 
                 const totalSorted = categoryBreakdown.reduce((sum, c) => sum + c.count, 0);
                 const totalCorrect = categoryBreakdown.reduce((sum, c) => sum + c.correctCount, 0);

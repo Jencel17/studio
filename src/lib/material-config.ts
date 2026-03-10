@@ -47,13 +47,19 @@ export const materialConfigs: Record<string, MaterialConfig> = {
 };
 
 export function getMaterialConfig(materialName: string): MaterialConfig {
-    const key = materialName.toLowerCase().trim();
+    let key = materialName.toLowerCase().trim();
+    if (key === "paper") key = "biodegradable";
+    if (key === "plastic") key = "e-waste";
+    if (key === "metal") key = "non-biodegradable";
     return materialConfigs[key] || materialConfigs.default;
 }
 
 // Get the category display label
 export function getCategoryLabel(materialName: string): string {
-    const key = materialName.toLowerCase().trim();
+    let key = materialName.toLowerCase().trim();
+    if (key === "paper") key = "biodegradable";
+    if (key === "plastic") key = "e-waste";
+    if (key === "metal") key = "non-biodegradable";
 
     if (key === "biodegradable") return "Biodegradable";
     if (key === "e-waste") return "E-Waste";
