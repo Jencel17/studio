@@ -8,9 +8,35 @@ import {
     collection,
     query,
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL, deleteObject } from "firebase/storage";
+import { ref, uploadString, getDownloadURL, deleteObject, listAll, getBlob, uploadBytes } from "firebase/storage";
 import { db, storage } from "./firebase";
 
+// ===================== TRAINING IMAGES SYNC =====================
+
+const TRAINING_IMAGES_FOLDER = "training_images";
+
+export const uploadTrainingImagesToCloud = async (
+    category: string,
+    base64Images: string[]
+): Promise<void> => {
+    try {
+        const timestamp = Date.now();
+        const baseDir = `${TRAINING_IMAGES_FOLDER}/${category}`;
+        console.log(`[firestore-sync] Uploading ${base64Images.length} images to ${baseDir}...`);
+
+        const uploadPromises = base64Images.map((base64String, index) => {
+            const fileName = `${timestamp}_${index}.jpg`;
+            const imageRef = ref(storage, `${baseDir}/${fileName}`);
+            // The string is likely a data URL: 'data:image/jpeg;base64,/9j/4AAQSkZ...'
+            return uploadString(imageRef, base64String, 'data_url');
+        });
+
+        await Promise.all(uploadPromises);
+        console.log(`[firestore-sync] Successfully uploaded ${base64Images.length} images to ${category}.`);
+    } catch (error) {
+        console.error("Error uploading training images to cloud:", error);
+    }
+};
 // ===================== SETTINGS SYNC =====================
 
 export interface SyncedSettings {

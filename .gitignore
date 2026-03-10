@@ -56,3 +56,8 @@ tsc_errors.txt
 tsc_errs.txt
 tsc_output.txt
 tsc_output_ascii.txt
+errors*.txt
+
+# local images
+public/training_images/
+typescript_errors.log

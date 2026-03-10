@@ -15,6 +15,7 @@ import { sendCommand, isConnected, getLatestStatus, type ESP32Status } from "@/l
 import { getMaterialConfig, getCategoryLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
 import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
+import { uploadTrainingImagesToLocal } from "@/lib/local-sync";
 import { classifyWithLocalAI, type LocalAIResult } from "@/lib/local-ai-fallback";
 
 interface ClientViewProps {
@@ -186,6 +187,12 @@ export default function ClientView({
             try {
                 await saveMultipleTrainingImages(detectedLabel, correctLabel, capturedImages);
                 addLog(`Saved ${capturedImages.length} training images to local DB for "${correctLabel}".`);
+
+                // Also trigger background upload to Local Server API so Admin can see them
+                uploadTrainingImagesToLocal(correctLabel, capturedImages).catch(e => {
+                    console.error("Failed to upload training images to local server:", e);
+                });
+
                 addLog(`User corrected ${detectedLabel} to ${correctLabel}.`);
                 if (isConnected()) {
                     await sendCommand(correctLabel.toUpperCase());
@@ -223,7 +230,7 @@ export default function ClientView({
     const runClassification = useCallback(async () => {
         const model = getModel();
         if (isPredictingRef.current || !videoRef.current || !model) return;
-        if (sorterStatus === "BUSY") return; // Respect sorting phase, halt all detections
+        if (sorterStatus === "BUSY" || sorterStatus.includes("CHECKING")) return; // Respect sorting/checking phase, halt all detections
         if (appStatus !== 'AWAITING_OBJECT' && appStatus !== 'CONFIDENCE_TOO_LOW') return;
         if (viewState !== "IDLE" && viewState !== "DETECTED") return;
         const video = videoRef.current;
@@ -285,8 +292,8 @@ export default function ClientView({
                                 }
 
                                 if (autoSortEnabled) {
-                                    if (sorterStatus === "BUSY") {
-                                        addLog(`Detected ${pred.className}, but sorter is BUSY. Skipping.`);
+                                    if (sorterStatus === "BUSY" || sorterStatus.includes("CHECKING")) {
+                                        addLog(`Detected ${pred.className}, but sorter is ${sorterStatus}. Skipping.`);
                                         return;
                                     }
                                     setAppStatus("SORTING");
@@ -360,8 +367,8 @@ export default function ClientView({
                             setViewState("DETECTED");
                             setRecentSorts(prev => [result.category!, ...prev].slice(0, 5));
                             if (autoSortEnabled && isConnected()) {
-                                if (sorterStatus === "BUSY") {
-                                    addLog(`Local AI detected ${result.category}, but sorter is BUSY.`);
+                                if (sorterStatus === "BUSY" || sorterStatus.includes("CHECKING")) {
+                                    addLog(`Local AI detected ${result.category}, but sorter is ${sorterStatus}.`);
                                     return;
                                 }
                                 const command = getArduinoCommand(result.category);
@@ -882,6 +889,17 @@ export default function ClientView({
                 </div>
             </div>
 
+
+            {/* CHECKING TRASH OVERLAY */}
+            {sorterStatus.includes("CHECKING") && (
+                <div className="absolute inset-0 z-[100] flex items-center justify-center bg-black/80 backdrop-blur-sm animate-in fade-in duration-300 p-4">
+                    <Card className="max-w-md w-full p-8 border-emerald-500/30 bg-black/50 shadow-[0_0_40px_rgba(16,185,129,0.2)] flex flex-col items-center text-center rounded-3xl">
+                        <Loader2 className="w-16 h-16 text-emerald-400 animate-spin mb-6" />
+                        <h2 className="text-2xl font-black text-white mb-3 uppercase tracking-widest drop-shadow-md">Checking Trash</h2>
+                        <p className="text-emerald-400/90 text-sm leading-relaxed">The system is currently scanning the bins for availability. Please wait before placing the next item.</p>
+                    </Card>
+                </div>
+            )}
 
             {/* --- MAIN CONTENT LAYERS --- */}
 

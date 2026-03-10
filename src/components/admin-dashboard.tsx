@@ -12,7 +12,8 @@ import { RefreshCw, Download, Trash2, BarChart3, CheckCircle, XCircle, Image, Tr
 import { useToast } from "@/hooks/use-toast";
 import JSZip from "jszip";
 import { useAuth, type UserRole } from "@/contexts/auth-context";
-import { subscribeToLiveDetection, subscribeToStats, type LiveDetectionState, sendManualSortCommand, subscribeToManualSortCommand, type ManualSortCommand, type SyncedDailyStats } from "@/lib/firestore-sync";
+import { subscribeToLiveDetection, subscribeToStats, type LiveDetectionState, sendManualSortCommand, subscribeToManualSortCommand, type ManualSortCommand, type SyncedDailyStats, type CloudModel, type SyncedCategoryStats } from "@/lib/firestore-sync";
+import { getAllLocalTrainingImages, clearLocalTrainingImages, type LocalTrainingImage } from "@/lib/local-sync";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 interface AdminDashboardProps {
@@ -126,11 +127,12 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
         return () => unsubscribe();
     }, []);
 
-    const handleToggleRole = async (uid: string, currentRole: UserRole) => {
-        const newRole: UserRole = currentRole === 'admin' ? 'user' : 'admin';
+    const handleToggleRole = async (uid: string, currentRole: string) => {
+        const newRole = currentRole === 'admin' ? 'user' : 'admin';
         try {
-            await setUserRole(uid, newRole);
-            toast({ title: 'Role Updated', description: `User role changed to ${newRole}.` });
+            // Note: Cloud function or similar auth layer must actually perform this role change in firestore.
+            // Temporarily removed the setUserRole call as it does not exist in local lib/auth
+            toast({ title: 'Role Updated Request', description: `User role logic needs backend integration to change to ${newRole}.` });
             loadUsers();
         } catch (e: any) {
             toast({ variant: 'destructive', title: 'Error', description: e.message });
@@ -140,10 +142,11 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     const handleExportTrainingImages = async () => {
         setIsExporting(true);
         try {
-            const images = await getAllTrainingImages();
+            // Fetch from Local API directly
+            const images = await getAllLocalTrainingImages();
 
             if (images.length === 0) {
-                toast({ title: "No Images", description: "No training images saved locally." });
+                toast({ title: "No Images", description: "No training images found in the cloud." });
                 setIsExporting(false);
                 return;
             }
@@ -152,7 +155,7 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
             const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
 
             // Group images by corrected label
-            const byCategory: Record<string, TrainingImage[]> = {};
+            const byCategory: Record<string, LocalTrainingImage[]> = {};
             images.forEach(img => {
                 const key = img.correctedTo;
                 if (!byCategory[key]) byCategory[key] = [];
@@ -162,8 +165,8 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
             // Add images to zip, organized by folder
             for (const [category, categoryImages] of Object.entries(byCategory)) {
                 categoryImages.forEach((img, index) => {
-                    const base64Data = img.imageData.split(',')[1];
-                    zip.file(`${category}/${category}_${index + 1}.jpg`, base64Data, { base64: true });
+                    const base64Data = img.imageData.includes(',') ? img.imageData.split(',')[1] : img.imageData;
+                    zip.file(`${category}/${img.fileName || category + '_' + index + '.jpg'}`, base64Data, { base64: true });
                 });
             }
 
@@ -188,12 +191,14 @@ export default function AdminDashboard({ addLog }: AdminDashboardProps) {
     };
 
     const handleClearTrainingImages = async () => {
-        if (!window.confirm("Are you sure you want to delete ALL training images? This cannot be undone.")) {
+        if (!window.confirm("Are you sure you want to delete ALL training images from the server and local storage? This cannot be undone.")) {
             return;
         }
         try {
-            await clearAllTrainingImages();
-            addLog("Cleared all training images from local storage.");
+            await clearAllTrainingImages(); // browser local
+            await clearLocalTrainingImages(); // server local
+
+            addLog("Cleared all training images from server and local storage.");
             toast({ title: "Cleared", description: "All training images have been deleted." });
             refreshTrainingImageCount();
         } catch (e: any) {
