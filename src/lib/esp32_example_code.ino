@@ -1,185 +1,344 @@
-/*
-  ESP32 SortVision Companion
-  
-  This sketch creates a WiFi Access Point that the SortVision app can connect to.
-  It listens for commands from the app to control the sorting mechanism and an indicator light.
+#include <BLEDevice.h>
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include <BLE2902.h>
+#include <Ticker.h>
+#include <ServoEasing.hpp>
 
-  - SSID: The name of the WiFi network created by the ESP32.
-  - Password: The password for the WiFi network.
-  - IP Address: The static IP address of the ESP32 on its own network.
-*/
+// -- UUIDs (MUST MATCH web app) --
+#define SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
+#define CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+#define STATUS_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
 
-#include <WiFi.h>
-#include <ESPAsyncWebServer.h>
+BLECharacteristic *pStatusCharacteristic = nullptr;
 
-// --- WiFi Network Configuration ---
-const char* ssid = "SortVision-ESP32";
-const char* password = "password123";
+// -- Sorter Status --
+const char* sorterStatus = "READY";
+const char* alcoholStatus = "FULL";
+const char* trashStatus = "EMPTY";
 
-// --- Static IP Configuration ---
-// The app will connect to this IP address.
-IPAddress local_ip(192, 168, 4, 1);
-IPAddress gateway(192, 168, 4, 1);
-IPAddress subnet(255, 255, 255, 0);
+// -- Servo & Pins --
+ServoEasing servoChute;
+ServoEasing servoSorter;
 
-// --- Web Server on Port 80 ---
-AsyncWebServer server(80);
+const byte SERVO_CHUTE_PIN = 32;
+const byte SERVO_SORTER_PIN = 33;
+// -- Alcohol --
+const byte TRIG_PIN2 = 25;
+const byte ECHO_PIN2 = 26;
+// -- Trash --
+const byte TRIG_PIN3 = 18;
+const byte ECHO_PIN3 = 19;
+const byte BUZZER_PIN = 14;
 
-// --- Pin Definitions ---
-// Define the GPIO pins connected to the servo motors for each category.
-const int PLASTIC_SERVO_PIN = 13; 
-const int METAL_SERVO_PIN = 14; 
-const int PAPER_SERVO_PIN = 15;
-// Define the GPIO pin for the indicator light.
-const int LIGHT_PIN = 2;
+// -- Target Positions --
+const byte BIO_POS = 0;
+const byte NON_BIO_POS = 90;
+const byte E_WASTE_POS = 175;
+const byte CHUTE_OPEN = 90;
+const byte CHUTE_CLOSED = 150;
+const byte SORTER_DEFAULT = 92;
 
+// -- Ticker for CheckAlcohol level --
+int alcoholPercentage = 0;
+Ticker checkAlcoholLevel;
 
-// =================================================================
-//                      REQUEST HANDLERS
-// =================================================================
+// -- Ticker for Trash level --
+Ticker checkTrashLevel;
+bool doCheckAlcohol = false;
+bool doCheckTrash = false;
 
-/**
- * @brief Handles incoming requests to /sort to control the sorting servos.
- * 
- * Expects a URL parameter 'class' (e.g., /sort?class=PLASTIC).
- * Controls the servo motor corresponding to the identified material.
- */
-void handleSortRequest(AsyncWebServerRequest *request) {
-  if (request->hasParam("class")) {
-    String material = request->getParam("class")->value();
-    material.toUpperCase();
-    
-    // Print the received material to the Serial Monitor for debugging.
-    Serial.print("Received sort command for: ");
-    Serial.println(material);
+void tickAlcohol() { doCheckAlcohol = true; }
+void tickTrash()   { doCheckTrash = true; }
 
-    if (material == "E-WASTE") {
-      // TODO: Add your logic to move the 'E-WASTE' servo
-      // For example:
-      // plasticServo.write(90);
-      // delay(500);
-      // plasticServo.write(0);
-      request->send(200, "text/plain", "OK: Sorted as E-WASTE");
+// -- Trash Capacity Check Level --
+int bioTrashPercentage = 0;
+int nonBioTrashPercentage = 0;
+int eWasteTrashPercentage = 0;
+int trashPercentage = 0;
 
-    } else if (material == "NON-BIODEGRADABLE") {
-      // TODO: Add your logic to move the 'NON-BIODEGRADABLE' servo
-      request->send(200, "text/plain", "OK: Sorted as NON-BIODEGRADABLE");
+// Forward declarations
+void performCheckAlcohol();
+void performCheckTrash();
+void ultrasonicCheckTrash();
+void sortingBeep();
+void updateBLEStatus();
 
-    } else if (material == "BIODEGRADABLE") {
-      // TODO: Add your logic to move the 'BIODEGRADABLE' servo
-      request->send(200, "text/plain", "OK: Sorted as BIODEGRADABLE");
+// -- BLE Status Update --
+void updateBLEStatus() {
+  if (!pStatusCharacteristic) return;
+  String statusStr = String("STATUS:") + sorterStatus 
+                   + ",ALCOHOL:" + alcoholStatus 
+                   + ",LEVEL:" + String(alcoholPercentage)
+                   + ",BIO:" + String(bioTrashPercentage)
+                   + ",NONBIO:" + String(nonBioTrashPercentage)
+                   + ",EWASTE:" + String(eWasteTrashPercentage);
+  pStatusCharacteristic->setValue(statusStr.c_str());
+  pStatusCharacteristic->notify();
+  Serial.print("BLE Status: ");
+  Serial.println(statusStr);
+}
 
-    } else {
-      request->send(400, "text/plain", "Error: Unknown class '" + material + "'");
-    }
+void performSort(byte position, const char* materialName) {
+  sorterStatus = "BUSY";
+  updateBLEStatus();
+  Serial.printf("\n--- Sorting %s ---\n", materialName);
+
+  sortingBeep();
+
+  if (position != NON_BIO_POS) {
+    servoSorter.attach(SERVO_SORTER_PIN, 400, 2500);
+
+    servoSorter.easeTo(position);
+    while (servoSorter.isMoving());
+
+    servoChute.easeTo(CHUTE_OPEN);
+    delay(1000);
+    while (servoChute.isMoving());
+
+    servoChute.easeTo(CHUTE_CLOSED);
+    while (servoChute.isMoving());
+    delay(1000);
+
+    servoSorter.easeTo(SORTER_DEFAULT);
+    while (servoSorter.isMoving());
+    servoSorter.detach();
   } else {
-    request->send(400, "text/plain", "Error: Missing 'class' parameter");
+    servoSorter.detach();
+    servoChute.easeTo(CHUTE_OPEN);
+    delay(1000);
+    while (servoChute.isMoving());
+
+    servoChute.easeTo(CHUTE_CLOSED);
+    while (servoChute.isMoving());
+    delay(300);
   }
+
+  sorterStatus = "READY";
+  updateBLEStatus();
+  Serial.println("--- Done ---");
 }
 
-/**
- * @brief Handles incoming requests to /light to control the indicator light.
- * 
- * Expects a URL parameter 'state' (e.g., /light?state=ON).
- * Turns the indicator light ON or OFF.
- */
-void handleLightRequest(AsyncWebServerRequest *request) {
-  if (request->hasParam("state")) {
-    String lightState = request->getParam("state")->value();
-    lightState.toUpperCase();
-    
-    if (lightState == "ON") {
-      digitalWrite(LIGHT_PIN, HIGH);
-      Serial.println("Light turned ON");
-      request->send(200, "text/plain", "OK: Light ON");
-    } else if (lightState == "OFF") {
-      digitalWrite(LIGHT_PIN, LOW);
-      Serial.println("Light turned OFF");
-      request->send(200, "text/plain", "OK: Light OFF");
-    } else {
-      request->send(400, "text/plain", "Error: Invalid light state. Use ON or OFF.");
+void sortingBeep() {
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(100);
+  digitalWrite(BUZZER_PIN, LOW);
+  delay(100);
+  digitalWrite(BUZZER_PIN, HIGH);
+  delay(100);
+  digitalWrite(BUZZER_PIN, LOW);
+}
+class MyServerCallbacks: public BLEServerCallbacks {
+  void onConnect(BLEServer* pServer) {
+    Serial.println("Client connected");
+  }
+  void onDisconnect(BLEServer* pServer) {
+    Serial.println("Client disconnected — restarting advertising");
+    delay(500);
+    BLEDevice::startAdvertising();
+  }
+};
+
+class MyCallbacks: public BLECharacteristicCallbacks {
+    void onWrite(BLECharacteristic *pCharacteristic) {
+      String value = pCharacteristic->getValue();
+      if (value.length() > 0) {
+        String material = "";
+        for (int i = 0; i < value.length(); i++) material += value[i];
+        material.trim();
+        material.toUpperCase();
+
+        if (strcmp(sorterStatus, "READY") == 0) {
+          if (material == "NON-BIODEGRADABLE") performSort(NON_BIO_POS, "NON-BIODEGRADABLE");
+          else if (material == "BIODEGRADABLE")  performSort(BIO_POS, "BIODEGRADABLE");
+          else if (material == "E-WASTE")         performSort(E_WASTE_POS, "E-WASTE");
+          else if (material == "MULTIPLE")        performSort(SORTER_DEFAULT, "MULTIPLE");
+        }
+      }
     }
-  } else {
-    request->send(400, "text/plain", "Error: Missing 'state' parameter.");
-  }
-}
-
-// =================================================================
-//                      WEB SERVER TASK
-// =================================================================
-
-/**
- * @brief This task contains all logic for setting up and running the web server.
- * 
- * Running the server in a dedicated task with a larger stack is more stable
- * and prevents stack overflow crashes when using async libraries.
- * @param pvParameters Function parameters (not used).
- */
-void webServerTask(void *pvParameters) {
-  Serial.println("Setting up Access Point...");
-  
-  // Configure and start the WiFi Access Point.
-  WiFi.softAPConfig(local_ip, gateway, subnet);
-  if (!WiFi.softAP(ssid, password)) {
-    Serial.println("AP Config failed.");
-    return; // Cannot proceed.
-  }
-
-  Serial.print("AP IP address: ");
-  Serial.println(WiFi.softAPIP());
-
-  // --- Define Server Routes ---
-  // Route for sorting command
-  server.on("/sort", HTTP_GET, handleSortRequest);
-  
-  // Route for light control
-  server.on("/light", HTTP_GET, handleLightRequest);
-
-  // Route for root (/) to confirm the server is running
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
-    request->send(200, "text/plain", "ESP32 SortVision Server is running!");
-  });
-
-  // Start the server.
-  server.begin();
-  Serial.println("Web Server started.");
-
-  // This task has completed its setup, so we can delete it.
-  // The web server runs in its own background tasks.
-  vTaskDelete(NULL);
-}
-
-
-// =================================================================
-//                      MAIN ARDUINO SKETCH
-// =================================================================
+};
 
 void setup() {
   Serial.begin(115200);
-  Serial.println("\nESP32 Starting...");
+  delay(1000);
+  btStop();    
+  Serial.println("Starting...");
 
-  // Initialize GPIO pins
-  pinMode(PLASTIC_SERVO_PIN, OUTPUT);
-  pinMode(METAL_SERVO_PIN, OUTPUT);
-  pinMode(PAPER_SERVO_PIN, OUTPUT);
-  pinMode(LIGHT_PIN, OUTPUT);
+  servoChute.attach(SERVO_CHUTE_PIN, 400, 2500);
+  servoSorter.attach(SERVO_SORTER_PIN, 400, 2500);
 
-  // Create the dedicated task for our web server.
-  // The stack size (10000) is increased to prevent overflows.
-  xTaskCreatePinnedToCore(
-    webServerTask,      // Function to implement the task
-    "WebServerTask",    // Name of the task
-    10000,              // Stack size in words
-    NULL,               // Task input parameter
-    1,                  // Priority of the task
-    NULL,               // Task handle
-    0                   // Core where the task should run (0 or 1)
-  );
+  servoSorter.setSpeed(50);
+  servoChute.setSpeed(50);
+
+  servoSorter.setEasingType(EASE_LINEAR);
+  servoChute.setEasingType(EASE_QUADRATIC_IN_OUT);
+  servoChute.write(CHUTE_CLOSED);
+  servoSorter.write(SORTER_DEFAULT);
+  delay(1000);
+
+    // BLE Setup
+  BLEDevice::init("ESP32_Sorter_BLE");
+  BLEServer *pServer = BLEDevice::createServer();
+  pServer->setCallbacks(new MyServerCallbacks());
+  BLEService *pService = pServer->createService(SERVICE_UUID);
+
+  BLECharacteristic *pCharacteristic = pService->createCharacteristic(
+                                         CHARACTERISTIC_UUID,
+                                         BLECharacteristic::PROPERTY_READ |
+                                         BLECharacteristic::PROPERTY_WRITE
+                                       );
+  pCharacteristic->setCallbacks(new MyCallbacks());
+
+  pStatusCharacteristic = pService->createCharacteristic(
+                            STATUS_CHARACTERISTIC_UUID,
+                            BLECharacteristic::PROPERTY_READ |
+                            BLECharacteristic::PROPERTY_NOTIFY
+                          );
+  pStatusCharacteristic->addDescriptor(new BLE2902());
+
+  pService->start();
+  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
+  pAdvertising->addServiceUUID(SERVICE_UUID);
+  pAdvertising->setScanResponse(true);
+  pAdvertising->setMinPreferred(0x06);
+  pAdvertising->setMinPreferred(0x12);
+  BLEDevice::startAdvertising();
+
+  pinMode(BUZZER_PIN, OUTPUT);
+  pinMode(TRIG_PIN2, OUTPUT);
+  pinMode(ECHO_PIN2, INPUT);
+  pinMode(TRIG_PIN3, OUTPUT);
+  pinMode(ECHO_PIN3, INPUT);
+
+  // -- TICKER: Alcohol --
+  performCheckAlcohol();
+  checkAlcoholLevel.attach_ms(30000, tickAlcohol);
+
+  performCheckTrash();
+  checkTrashLevel.attach_ms(600000, tickTrash);
+
+  sortingBeep();
+  updateBLEStatus();
+
+  Serial.println("BLE Sorter Ready! Connect via Web App.");
+  delay(500);
 }
 
 void loop() {
-  // The loop is intentionally left empty.
-  // All work is handled by the ESPAsyncWebServer library in the background
-  // and our one-time setup in the webServerTask.
-  // Adding delay() here can cause the server to crash.
+  if (doCheckAlcohol) {
+    doCheckAlcohol = false;
+    performCheckAlcohol();
+  }
+  if (doCheckTrash) {
+    doCheckTrash = false;
+    performCheckTrash();
+  }
+
+  // Reserved for future use
+}
+
+void performCheckTrash() {
+  sorterStatus = "BUSY";
+  updateBLEStatus();
+
+  servoSorter.attach(SERVO_SORTER_PIN, 400, 2500);
+
+  servoSorter.easeTo(SORTER_DEFAULT);
+  while (servoSorter.isMoving());
+  delay(500);
+
+  servoSorter.easeTo(E_WASTE_POS);
+  while (servoSorter.isMoving());
+  delay(1000);
+  ultrasonicCheckTrash();
+  bioTrashPercentage = trashPercentage;
+  Serial.print("BIO: ");
+  Serial.print(bioTrashPercentage);
+  Serial.println("%");
+
+  servoSorter.easeTo(NON_BIO_POS);
+  while (servoSorter.isMoving());
+  delay(1000);
+  ultrasonicCheckTrash();
+  nonBioTrashPercentage = trashPercentage;
+  Serial.print("NON-BIO: ");
+  Serial.print(nonBioTrashPercentage);
+  Serial.println("%");
+
+  servoSorter.easeTo(BIO_POS);
+  while (servoSorter.isMoving());
+  delay(1000);
+  ultrasonicCheckTrash();
+  eWasteTrashPercentage = trashPercentage;
+  Serial.print("E-WASTE: ");
+  Serial.print(eWasteTrashPercentage);
+  Serial.println("%");
+
+  servoSorter.easeTo(NON_BIO_POS);
+  while (servoSorter.isMoving());
+  servoSorter.detach();
+
+  sorterStatus = "READY";
+  updateBLEStatus();
+  Serial.println("--- Done ---");
+}
+
+void ultrasonicCheckTrash() {
+  digitalWrite(TRIG_PIN3, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN3, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN3, LOW);
+
+  long duration = pulseIn(ECHO_PIN3, HIGH, 10000);
+  if (duration == 0) {
+    Serial.println("Trash sensor timeout!");
+    trashStatus = "UNKNOWN";
+    updateBLEStatus();
+    return;
+  }
+
+  int distance = duration * 0.034 / 2;
+  int trashHeight = 32;
+  Serial.print("Distance=");
+  Serial.println(distance);
+  trashPercentage = ((trashHeight - distance) * 100) / trashHeight;
+  trashPercentage = constrain(trashPercentage, 0, 100);
+}
+
+void performCheckAlcohol() {
+  digitalWrite(TRIG_PIN2, LOW);
+  delayMicroseconds(2);
+  digitalWrite(TRIG_PIN2, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(TRIG_PIN2, LOW);
+
+  long duration = pulseIn(ECHO_PIN2, HIGH, 10000);
+  if (duration == 0) {
+    Serial.println("Alcohol sensor timeout!");
+    alcoholStatus = "UNKNOWN";
+    updateBLEStatus();
+    return;
+  }
+
+  int distance = duration * 0.034 / 2;
+  int tankHeight = 12;
+  alcoholPercentage = ((tankHeight - distance) * 100) / tankHeight;
+  alcoholPercentage = constrain(alcoholPercentage, 0, 100);
+
+  if (alcoholPercentage >= 0 && alcoholPercentage <= 5) {
+    Serial.print("Distance: ");
+    Serial.println(distance);
+    Serial.print("Alcohol Level: ");
+    Serial.print(alcoholPercentage);
+    Serial.println("% - EMPTY");
+    alcoholStatus = "ALCOHOLEMPTY";
+  } else {
+    Serial.print("Alcohol Level: ");
+    Serial.print(alcoholPercentage);
+    Serial.println("%");
+    alcoholStatus = "FULL";
+  }
+
+  updateBLEStatus();
 }
