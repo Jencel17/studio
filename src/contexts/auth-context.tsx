@@ -80,8 +80,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Sign in with email and password
     const signIn = async (email: string, password: string) => {
         const credential = await signInWithEmailAndPassword(auth, email, password);
-        const role = await fetchUserRole(credential.user.uid);
-        setUserRoleState(role);
+        try {
+            const role = await fetchUserRole(credential.user.uid);
+            setUserRoleState(role);
+        } catch (error) {
+            console.error("Error fetching user role during sign-in:", error);
+            setUserRoleState("user");
+        }
     };
 
     // Sign up with email and password
