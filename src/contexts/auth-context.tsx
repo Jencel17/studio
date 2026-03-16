@@ -93,20 +93,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const signUp = async (email: string, password: string) => {
         const credential = await createUserWithEmailAndPassword(auth, email, password);
 
-        // Check if this is the first user (make them admin)
-        const usersSnapshot = await getDocs(query(collection(db, "users")));
-        const isFirstUser = usersSnapshot.empty;
+        let role: UserRole = "user";
 
-        const role: UserRole = isFirstUser ? "admin" : "user";
+        try {
+            // Check if this is the first user (make them admin)
+            const usersSnapshot = await getDocs(query(collection(db, "users")));
+            const isFirstUser = usersSnapshot.empty;
+            if (isFirstUser) {
+                role = "admin";
+            }
+        } catch (error) {
+            console.error("Error checking for first user (likely permission denied):", error);
+            // Default to 'user' if we can't read the collection
+        }
 
-        // Create user profile in Firestore
-        await setDoc(doc(db, "users", credential.user.uid), {
-            email: credential.user.email,
-            role,
-            createdAt: new Date(),
-        });
-
-        setUserRoleState(role);
+        try {
+            // Create user profile in Firestore
+            await setDoc(doc(db, "users", credential.user.uid), {
+                email: credential.user.email,
+                role,
+                createdAt: new Date(),
+            });
+            setUserRoleState(role);
+        } catch (error) {
+            console.error("Error creating user document in Firestore:", error);
+            // Even if the document creation fails (e.g., due to strict rules), 
+            // the authentication account is already created.
+            setUserRoleState("user");
+        }
     };
 
     // Sign out
