@@ -11,7 +11,7 @@ import { AppStatus, LogEntry, Prediction, ROI } from "@/lib/types";
 import { interpretDetectionsLocal, DetectionState } from "@/lib/detection";
 import { prepareModelInput } from "@/lib/roi";
 import { Card } from "@/components/ui/card";
-import { sendCommand, isConnected, getLatestStatus, type ESP32Status } from "@/lib/bluetooth";
+import { sendCommand, isConnected, getLatestStatus, type ESP32Status, isReconnectingNow } from "@/lib/bluetooth";
 import { getMaterialConfig, getCategoryLabel } from "@/lib/material-config";
 import { incrementCategoryCount, saveMultipleTrainingImages, incrementDailyStat, getSummaryStats } from "@/lib/stats-db";
 import { updateLiveDetection, subscribeToStats, subscribeToManualSortCommand, ackManualSortCommand } from "@/lib/firestore-sync";
@@ -60,6 +60,7 @@ export default function ClientView({
     const [totalSorted, setTotalSorted] = useState<number>(0);
     const [detectionId, setDetectionId] = useState<number>(0);
     const [isBtConnected, setIsBtConnected] = useState(isConnected());
+    const [isReconnectingBle, setIsReconnectingBle] = useState(isReconnectingNow());
     const [alcoholStatus, setAlcoholStatus] = useState<string | null>(null);
     const [alcoholLevel, setAlcoholLevel] = useState<number>(0);
     const [sorterStatus, setSorterStatus] = useState<string>("READY");
@@ -145,7 +146,7 @@ export default function ClientView({
     const sendLightCommand = useCallback(async (state: 'ON' | 'OFF') => {
         if (!isBtConnected) return false;
         try {
-            await sendCommand(`LIGHT:${state}`);
+            await sendCommand(`LIGHT_${state}`);
             if (autoFlashEnabled && streamRef.current) {
                 if (state === 'ON' && !isFlashOn) applyCameraSettings(streamRef.current, { flash: true, focus: isFocusLocked });
                 else if (state === 'OFF' && isFlashOn) applyCameraSettings(streamRef.current, { flash: false, focus: isFocusLocked });
@@ -159,6 +160,21 @@ export default function ClientView({
 
     const handleCorrect = useCallback(async () => {
         setPreCapturedImages([]);
+
+        // Send the sort command to ESP32 via Bluetooth
+        if (isConnected()) {
+            const command = getArduinoCommand(detectedLabel);
+            try {
+                await sendCommand(command);
+                addLog(`Sent sort command: ${command} (confirmed: ${detectedLabel})`);
+            } catch (error: any) {
+                console.error("Failed to send sort command:", error);
+                addLog(`Sort command error: ${error.message}`);
+            }
+        } else {
+            addLog(`Detection confirmed: ${detectedLabel}. Bluetooth not connected — sort command skipped.`);
+        }
+
         try {
             await incrementCategoryCount(detectedLabel, true);
             await incrementDailyStat(true);
@@ -174,7 +190,7 @@ export default function ClientView({
             setStablePrediction(null);
             setDetectedLabel("");
         }, 2000);
-    }, [detectedLabel, addLog, setAppStatus]);
+    }, [detectedLabel, addLog, setAppStatus, getArduinoCommand]);
 
     const handleIncorrect = useCallback(async () => {
         setCapturedImages(preCapturedImages);
@@ -485,9 +501,29 @@ export default function ClientView({
     // --- 3. Effects ---
 
     useEffect(() => {
-        const onConnected = () => setIsBtConnected(true);
+        const onConnected = () => {
+            setIsBtConnected(true);
+            setIsReconnectingBle(false);
+            // Re-seed status from device after reconnect
+            const status = getLatestStatus();
+            if (status.alcoholStatus) setAlcoholStatus(status.alcoholStatus);
+            if (status.alcoholLevel !== undefined) setAlcoholLevel(status.alcoholLevel);
+            if (status.sorterStatus) setSorterStatus(status.sorterStatus.toUpperCase());
+            if (status.bioTrash !== undefined) setBioTrash(status.bioTrash);
+            if (status.nonBioTrash !== undefined) setNonBioTrash(status.nonBioTrash);
+            if (status.eWasteTrash !== undefined) setEWasteTrash(status.eWasteTrash);
+        };
         const onDisconnected = () => {
             setIsBtConnected(false);
+        };
+        const onReconnecting = (e: Event) => {
+            const detail = (e as CustomEvent).detail;
+            console.log(`BLE reconnecting: attempt ${detail.attempt}/${detail.maxAttempts}`);
+            setIsReconnectingBle(true);
+        };
+        const onReconnectFailed = () => {
+            console.log("BLE auto-reconnect failed after all attempts.");
+            setIsReconnectingBle(false);
             setAlcoholStatus(null);
             setAlcoholLevel(0);
             setBioTrash(0);
@@ -505,6 +541,8 @@ export default function ClientView({
         };
         window.addEventListener('bt-connected', onConnected);
         window.addEventListener('bt-disconnected', onDisconnected);
+        window.addEventListener('bt-reconnecting', onReconnecting);
+        window.addEventListener('bt-reconnect-failed', onReconnectFailed);
         window.addEventListener('bt-status-update', onStatusUpdate);
 
         // Seed BLE state from the latest known status on mount
@@ -522,6 +560,8 @@ export default function ClientView({
         return () => {
             window.removeEventListener('bt-connected', onConnected);
             window.removeEventListener('bt-disconnected', onDisconnected);
+            window.removeEventListener('bt-reconnecting', onReconnecting);
+            window.removeEventListener('bt-reconnect-failed', onReconnectFailed);
             window.removeEventListener('bt-status-update', onStatusUpdate);
         }
     }, []);
@@ -755,25 +795,26 @@ export default function ClientView({
             <div className="absolute top-0 left-0 right-0 z-[60] p-4 flex justify-center">
                 <div className={cn(
                     "w-full max-w-xl backdrop-blur-xl border-b border-x rounded-b-2xl px-6 py-3 transition-all duration-500 shadow-2xl flex items-center justify-between",
-                    !isBtConnected ? "bg-rose-500/10 border-rose-500/20 text-rose-400" :
-                        sorterStatus === "BUSY" ? "bg-amber-500/10 border-amber-500/20 text-amber-400" :
+                    !isBtConnected && !isReconnectingBle ? "bg-rose-500/10 border-rose-500/20 text-rose-400" :
+                        (!isBtConnected && isReconnectingBle) || sorterStatus === "BUSY" ? "bg-amber-500/10 border-amber-500/20 text-amber-400" :
                             isAiFallbackActive ? "bg-violet-500/10 border-violet-500/20 text-violet-400" :
                                 "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
                 )}>
                     <div className="flex items-center gap-3">
                         <div className={cn(
                             "w-2.5 h-2.5 rounded-full",
-                            !isBtConnected ? "bg-rose-500" :
-                                sorterStatus === "BUSY" ? "bg-amber-500 animate-pulse" :
+                            !isBtConnected && !isReconnectingBle ? "bg-rose-500" :
+                                (!isBtConnected && isReconnectingBle) || sorterStatus === "BUSY" ? "bg-amber-500 animate-pulse" :
                                     isAiFallbackActive ? "bg-violet-500 animate-pulse" :
                                         "bg-emerald-500"
                         )} />
                         <div className="flex flex-col">
                             <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-50">System Status</span>
                             <span className="text-sm font-bold tracking-tight">
-                                {!isBtConnected ? "Sorter Disconnected" :
-                                    sorterStatus === "BUSY" ? "Sorter Processing..." :
-                                        isAiFallbackActive ? "AI Analyzing..." : "Sorter Ready"}
+                                {!isBtConnected && !isReconnectingBle ? "Sorter Disconnected" :
+                                    !isBtConnected && isReconnectingBle ? "Reconnecting..." :
+                                        sorterStatus === "BUSY" ? "Sorter Processing..." :
+                                            isAiFallbackActive ? "AI Analyzing..." : "Sorter Ready"}
                             </span>
                         </div>
                     </div>

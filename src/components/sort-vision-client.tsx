@@ -1,4 +1,4 @@
-﻿
+
 "use client";
 
 import { useState, useRef, useEffect, useCallback, MutableRefObject } from "react";
@@ -866,10 +866,25 @@ export default function SortVisionClient({
     const onConnected = () => {
       addLog("Bluetooth device connected.");
       setIsBtConnected(true);
+      // Re-seed status from device after reconnect
+      const status = getLatestStatus();
+      if (status.sorterStatus) setSorterStatus(status.sorterStatus.toUpperCase());
+      if (status.alcoholStatus) setAlcoholStatus(status.alcoholStatus);
+      if (status.alcoholLevel !== undefined) setAlcoholLevel(status.alcoholLevel);
+      if (status.bioTrash !== undefined) setBioTrash(status.bioTrash);
+      if (status.nonBioTrash !== undefined) setNonBioTrash(status.nonBioTrash);
+      if (status.eWasteTrash !== undefined) setEWasteTrash(status.eWasteTrash);
     };
     const onDisconnected = () => {
-      addLog("Bluetooth device disconnected.");
+      addLog("Bluetooth device disconnected. Attempting to reconnect...");
       setIsBtConnected(false);
+    };
+    const onReconnecting = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      addLog(`Reconnecting to BLE... (attempt ${detail.attempt}/${detail.maxAttempts})`);
+    };
+    const onReconnectFailed = () => {
+      addLog("Auto-reconnect failed. Please reconnect manually from settings.");
       setSorterStatus("READY");
       setAlcoholStatus(null);
       setAlcoholLevel(0);
@@ -889,6 +904,8 @@ export default function SortVisionClient({
 
     window.addEventListener('bt-connected', onConnected);
     window.addEventListener('bt-disconnected', onDisconnected);
+    window.addEventListener('bt-reconnecting', onReconnecting);
+    window.addEventListener('bt-reconnect-failed', onReconnectFailed);
     window.addEventListener('bt-status-update', onStatusUpdate);
 
     // Seed BLE state from the latest known status on mount
@@ -906,6 +923,8 @@ export default function SortVisionClient({
     return () => {
       window.removeEventListener('bt-connected', onConnected);
       window.removeEventListener('bt-disconnected', onDisconnected);
+      window.removeEventListener('bt-reconnecting', onReconnecting);
+      window.removeEventListener('bt-reconnect-failed', onReconnectFailed);
       window.removeEventListener('bt-status-update', onStatusUpdate);
     }
   }, [addLog]);

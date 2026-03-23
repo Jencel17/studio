@@ -17,7 +17,7 @@ import { saveModelToDb, getModelsFromDb, deleteModelFromDb, getModelFromDb, type
 import { FileUp, BrainCircuit, Loader2, Save, Trash2, Smartphone, TestTube, Bot, Flashlight, RefreshCw, Zap, Bluetooth, BluetoothConnected, Music, BarChart3, LogOut, Home, Download, Crop } from 'lucide-react';
 import { useToast } from "@/hooks/use-toast";
 import { AppStatus, ROI } from "@/lib/types";
-import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected } from "@/lib/bluetooth";
+import { connectToBluetoothDevice, disconnectFromBluetoothDevice, isConnected, isReconnectingNow } from "@/lib/bluetooth";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { playConnectedSound, playDisconnectedSound } from "@/lib/audio";
@@ -83,6 +83,7 @@ export default function SortVisionSettings({
   const [modelFiles, setModelFiles] = useState<{ model: File; metadata: File; weights: File } | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
   const [isBtConnected, setIsBtConnected] = useState(isConnected());
+  const [isReconnectingBle, setIsReconnectingBle] = useState(isReconnectingNow());
   const [cloudModels, setCloudModels] = useState<CloudModel[]>([]);
   const [isUploadingToCloud, setIsUploadingToCloud] = useState(false);
 
@@ -488,15 +489,30 @@ export default function SortVisionSettings({
   };
 
   useEffect(() => {
-    const onConnected = () => setIsBtConnected(true);
-    const onDisconnected = () => setIsBtConnected(false);
+    const onConnected = () => {
+      setIsBtConnected(true);
+      setIsReconnectingBle(false);
+    };
+    const onDisconnected = () => {
+      setIsBtConnected(false);
+    };
+    const onReconnecting = () => {
+      setIsReconnectingBle(true);
+    };
+    const onReconnectFailed = () => {
+      setIsReconnectingBle(false);
+    };
 
     window.addEventListener('bt-connected', onConnected);
     window.addEventListener('bt-disconnected', onDisconnected);
+    window.addEventListener('bt-reconnecting', onReconnecting);
+    window.addEventListener('bt-reconnect-failed', onReconnectFailed);
 
     return () => {
       window.removeEventListener('bt-connected', onConnected);
       window.removeEventListener('bt-disconnected', onDisconnected);
+      window.removeEventListener('bt-reconnecting', onReconnecting);
+      window.removeEventListener('bt-reconnect-failed', onReconnectFailed);
     }
   }, []);
 
@@ -518,6 +534,11 @@ export default function SortVisionSettings({
                 <Button onClick={handleBluetoothDisconnect} className="w-full shadow-lg hover:shadow-red-500/20 landscape:py-1 landscape:text-xs" variant="destructive">
                   <BluetoothConnected className="mr-2 h-4 w-4" />
                   Disconnect Sorter
+                </Button>
+              ) : isReconnectingBle ? (
+                <Button className="w-full shadow-lg landscape:py-1 landscape:text-xs" variant="outline" disabled>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Reconnecting...
                 </Button>
               ) : (
                 <Button onClick={handleBluetoothConnect} className="w-full shadow-lg hover:shadow-primary/20 landscape:py-1 landscape:text-xs" disabled={isConnecting}>
